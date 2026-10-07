@@ -5,6 +5,7 @@ import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
 import { createEyes, type Eye } from '../skin/eyes';
+import { createFurShells } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
 import { QUALITY, type Tier } from './quality';
@@ -20,6 +21,8 @@ export type CreatureObject = {
   eyes: Eye[];
   lod: 0 | 1 | 2;
   setLod(i: 0 | 1 | 2): void;
+  furOn: boolean;
+  setFur(on: boolean): void;
   setMaterial(m: Material): void;
   dispose(): void;
 };
@@ -70,7 +73,8 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   root.add(bones[0]);
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
-  const skin = createSkinMaterial(packRegions(recipe, body.regions));
+  const pack = packRegions(recipe, body.regions);
+  const skin = createSkinMaterial(pack);
   if (variation) {
     const c = new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l);
     skin.tint.value.set(c.r, c.g, c.b);
@@ -84,6 +88,13 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     m.bind(skeleton);
     return m;
   });
+  // fur on the two closer levels of detail (fewer shells on the middle one); none far away
+  const shells = meshes.map((m, k) => {
+    const count = k === 0 ? QUALITY[tier].furShells : k === 1 ? Math.floor(QUALITY[tier].furShells / 2) : 0;
+    const s = createFurShells(m, pack, count);
+    s.forEach((x) => root.add(x));
+    return s;
+  });
   if (variation) root.scale.setScalar(variation.boneScale[0] ?? 1);
   const eyes = createEyes(body, recipe, bones);
 
@@ -92,15 +103,23 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     restStart: defs.map((d) => ({ ...d.start })),
     eyes,
     lod: QUALITY[tier].lod,
+    furOn: true,
+    setFur(on) {
+      obj.furOn = on;
+      obj.setLod(obj.lod);
+    },
     setLod(i) {
       obj.lod = i;
-      meshes.forEach((m, k) => (m.visible = k === Math.min(i, meshes.length - 1)));
+      const shown = Math.min(i, meshes.length - 1);
+      meshes.forEach((m, k) => (m.visible = k === shown));
+      shells.forEach((s, k) => s.forEach((x) => (x.visible = k === shown && obj.furOn)));
     },
     setMaterial(mat) {
       meshes.forEach((m) => (m.material = mat));
     },
     dispose() {
       meshes.forEach((m) => m.geometry.dispose());
+      shells.flat().forEach((s) => (s.material as Material).dispose());
       root.removeFromParent();
     },
   };

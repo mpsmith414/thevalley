@@ -2,8 +2,8 @@ export type Tier = 'low' | 'medium' | 'high';
 export type QualitySettings = { pixelRatio: number; shadowMap: number; furShells: number; lod: 0 | 1 | 2; grass: number };
 
 export const QUALITY: Record<Tier, QualitySettings> = {
-  high: { pixelRatio: 1.5, shadowMap: 2048, furShells: 16, lod: 0, grass: 40000 },
-  medium: { pixelRatio: 1, shadowMap: 1024, furShells: 8, lod: 1, grass: 15000 },
+  high: { pixelRatio: 1, shadowMap: 2048, furShells: 12, lod: 0, grass: 40000 },
+  medium: { pixelRatio: 1, shadowMap: 1024, furShells: 6, lod: 1, grass: 15000 },
   low: { pixelRatio: 0.75, shadowMap: 512, furShells: 0, lod: 2, grass: 4000 },
 };
 
