@@ -1,8 +1,8 @@
-import { DEFAULT_RECIPE } from '../../src/recipe/normalize';
+import { DEFAULT_RECIPE, defaultFlatFacing } from '../../src/recipe/normalize';
 import type { Part, Recipe, Region, Role } from '../../src/recipe/schema';
 
 type V = [number, number, number];
-type Opts = Partial<Pick<Part, 'squash' | 'pointed' | 'mirror' | 'region'>> & { offset?: V };
+type Opts = Partial<Pick<Part, 'squash' | 'pointed' | 'mirror' | 'region' | 'flatFacing'>> & { offset?: V };
 
 /** Compact part maker for tests: P(id, parent, role, attach, dir, length, r0, r1, opts). */
 export function P(id: string, parent: string | null, role: Role, attach: number, dir: V, length: number, r0: number, r1: number, o: Opts = {}): Part {
@@ -14,6 +14,7 @@ export function P(id: string, parent: string | null, role: Role, attach: number,
     dir: { x: dir[0] / l, y: dir[1] / l, z: dir[2] / l },
     length, r0, r1,
     squash: o.squash ?? 1,
+    flatFacing: o.flatFacing ?? defaultFlatFacing(role),
     pointed: o.pointed ?? false,
     mirror: o.mirror ?? false,
     region: o.region ?? 'body',

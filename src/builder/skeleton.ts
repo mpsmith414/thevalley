@@ -1,0 +1,123 @@
+import type { FlatFacing, Recipe, Role } from '../recipe/schema';
+import { add, lerp, scale, v3, type Vec3 } from '../util/vec';
+
+/** One bone in the rest pose, in creature space (metres). */
+export type BoneDef = {
+  name: string;
+  partId: string;
+  mirrored: boolean;
+  parent: number; // -1 for the root
+  role: Role;
+  region: string;
+  start: Vec3;
+  end: Vec3;
+  r0: number;
+  r1: number;
+  squash: number;
+  flatFacing: FlatFacing;
+  pointed: boolean;
+  depth: number;
+};
+
+export type Skeleton = { bones: BoneDef[]; contacts: number[]; min: Vec3; max: Vec3 };
+
+const flipX = (v: Vec3): Vec3 => ({ x: -v.x, y: v.y, z: v.z });
+
+/**
+ * Turn the part tree into bones. A mirrored part makes two bones (the copy has x flipped);
+ * everything that grows from a mirrored part is mirrored with it, attached to its own side.
+ */
+export function expandParts(recipe: Recipe): BoneDef[] {
+  const bones: BoneDef[] = [];
+  const instances = new Map<string, number[]>(); // partId → bone indices [as given, mirror copy?]
+
+  const make = (pi: number, parentIndex: number, mirrored: boolean): number => {
+    const p = recipe.parts[pi];
+    const par = parentIndex >= 0 ? bones[parentIndex] : null;
+    const offset = mirrored ? flipX(p.offset) : p.offset;
+    const dir = mirrored ? flipX(p.dir) : p.dir;
+    const base = par ? lerp(par.start, par.end, p.attach) : v3();
+    const start = add(base, offset);
+    bones.push({
+      name: mirrored ? `${p.id}~m` : p.id,
+      partId: p.id,
+      mirrored,
+      parent: parentIndex,
+      role: p.role,
+      region: p.region,
+      start,
+      end: add(start, scale(dir, p.length)),
+      r0: p.r0,
+      r1: p.r1,
+      squash: p.squash,
+      flatFacing: p.flatFacing,
+      pointed: p.pointed,
+      depth: par ? par.depth + 1 : 0,
+    });
+    return bones.length - 1;
+  };
+
+  recipe.parts.forEach((p, pi) => {
+    if (p.parent === null) {
+      instances.set(p.id, [make(pi, -1, false)]);
+      return;
+    }
+    const parents = instances.get(p.parent)!;
+    if (parents.length === 2) {
+      // inside a mirrored limb: one bone per side
+      instances.set(p.id, [make(pi, parents[0], bones[parents[0]].mirrored), make(pi, parents[1], bones[parents[1]].mirrored)]);
+    } else if (p.mirror) {
+      instances.set(p.id, [make(pi, parents[0], false), make(pi, parents[0], true)]);
+    } else {
+      instances.set(p.id, [make(pi, parents[0], bones[parents[0]].mirrored)]);
+    }
+  });
+  return bones;
+}
+
+const isLimb = (r: Role) => r === 'leg' || r === 'foot';
+
+/** The bones that touch the ground: the tip of every leg chain, else the torso bones, else the root. */
+export function contactBones(bones: BoneDef[]): number[] {
+  const tips: number[] = [];
+  bones.forEach((b, i) => {
+    if (b.role !== 'leg' || (b.parent >= 0 && isLimb(bones[b.parent].role))) return;
+    let cur = i;
+    for (;;) {
+      const next = bones.findIndex((c) => c.parent === cur && isLimb(c.role));
+      if (next < 0) break;
+      cur = next;
+    }
+    tips.push(cur);
+  });
+  if (tips.length) return tips;
+  const torso = bones.flatMap((b, i) => (b.role === 'torso' ? [i] : []));
+  return torso.length ? torso : [0];
+}
+
+const lowY = (b: BoneDef) => Math.min(b.start.y - b.r0, b.end.y - b.r1);
+
+/** Stand the creature up: its lowest contact touches y = 0 and its support centre is at x = z = 0. */
+export function groundFit(input: BoneDef[]): { bones: BoneDef[]; contacts: number[] } {
+  const contacts = contactBones(input);
+  const dy = -Math.min(...contacts.map((i) => lowY(input[i])));
+  const cx = contacts.reduce((s, i) => s + input[i].end.x, 0) / contacts.length;
+  const cz = contacts.reduce((s, i) => s + input[i].end.z, 0) / contacts.length;
+  const shift = v3(Math.abs(cx) < 1e-9 ? 0 : -cx, dy, -cz);
+  const bones = input.map((b) => ({ ...b, start: add(b.start, shift), end: add(b.end, shift) }));
+  return { bones, contacts };
+}
+
+export function buildSkeleton(recipe: Recipe): Skeleton {
+  const { bones, contacts } = groundFit(expandParts(recipe));
+  const min = v3(Infinity, Infinity, Infinity);
+  const max = v3(-Infinity, -Infinity, -Infinity);
+  for (const b of bones) {
+    const r = Math.max(b.r0, b.r1);
+    for (const p of [b.start, b.end]) {
+      min.x = Math.min(min.x, p.x - r); min.y = Math.min(min.y, p.y - r); min.z = Math.min(min.z, p.z - r);
+      max.x = Math.max(max.x, p.x + r); max.y = Math.max(max.y, p.y + r); max.z = Math.max(max.z, p.z + r);
+    }
+  }
+  return { bones, contacts, min, max };
+}

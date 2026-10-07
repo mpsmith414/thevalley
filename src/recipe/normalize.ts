@@ -1,8 +1,8 @@
 import { norm, type Vec3 } from '../util/vec';
 import {
-  ACTIVITY, COVERINGS, DEFAULT_COLOR, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
+  ACTIVITY, COVERINGS, DEFAULT_COLOR, FLAT_FACINGS, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
   PATTERNS, ROLES, SCHEMA_VERSION, SOCIAL,
-  type Part, type Pattern, type Recipe, type Region,
+  type FlatFacing, type Part, type Pattern, type Recipe, type Region, type Role,
 } from './schema';
 
 export class RecipeError extends Error {}
@@ -37,7 +37,10 @@ export const DEFAULT_RECIPE: Omit<Recipe, 'parts'> = {
   inheritance: [{ path: 'life.sizeM', spread: 0.08 }],
 };
 
-const DEFAULT_PART: Omit<Part, 'id' | 'parent'> = {
+/** The natural flat side for each role (ears face forward, fins face sideways, the rest face up). */
+export const defaultFlatFacing = (role: Role): FlatFacing => (role === 'ear' ? 'forward' : role === 'fin' ? 'side' : 'up');
+
+const DEFAULT_PART: Omit<Part, 'id' | 'parent' | 'flatFacing'> = {
   role: 'other', attach: 1, offset: { x: 0, y: 0, z: 0 }, dir: { x: 0, y: 0, z: 1 },
   length: 0.1, r0: 0.03, r1: 0.03, squash: 1, pointed: false, mirror: false, region: 'body',
 };
@@ -128,10 +131,11 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
     if (Math.hypot(dir.x, dir.y, dir.z) < 1e-9) fixes.push(`${name} dir was zero → forward`);
     // already-unit directions are kept bit-for-bit, so normalising is idempotent
     const nd = Math.abs(Math.hypot(dir.x, dir.y, dir.z) - 1) < 1e-9 ? dir : norm(dir);
+    const role = pick(p.role, ROLES, `${name} role`, 'other');
     return {
       id,
       parent: typeof p.parent === 'string' ? p.parent : null,
-      role: pick(p.role, ROLES, `${name} role`, 'other'),
+      role,
       attach: num(p.attach, LIMITS.attach, `${name} attach`, 1),
       offset: vec(p.offset, DEFAULT_PART.offset),
       dir: nd,
@@ -139,6 +143,7 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
       r0: num(p.r0, LIMITS.radius, `${name} r0`, 0.03),
       r1: num(p.r1, LIMITS.radius, `${name} r1`, 0.03),
       squash: num(p.squash, LIMITS.squash, `${name} squash`, 1),
+      flatFacing: pick(p.flatFacing ?? defaultFlatFacing(role), FLAT_FACINGS, `${name} flatFacing`, defaultFlatFacing(role)),
       pointed: bool(p.pointed, false),
       mirror: bool(p.mirror, false),
       region,

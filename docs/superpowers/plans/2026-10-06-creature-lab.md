@@ -55,7 +55,7 @@ drawings.html, src/drawingset/main.ts   the drawing test-set page
 ```ts
 Part = { id: string; parent: string | null; role: Role; attach: number /*0..1 along parent*/; offset: Vec3 /*start shift, m*/;
   dir: Vec3; length: number; r0: number; r1: number; squash: number /*1 round … 0.1 flat*/;
-  pointed: boolean; mirror: boolean; region: string }
+  flatFacing: 'up' | 'side' | 'forward'; pointed: boolean; mirror: boolean; region: string }
 Region = { id: string; covering: Covering; color: string /*#rrggbb*/; belly: string | null;
   furLength: number; fluff: number; pattern: Pattern | null }
 Pattern = { kind: PatternKind; color: string; scale: number; amount: number; along: boolean }

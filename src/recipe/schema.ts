@@ -16,6 +16,7 @@ export const ROLES = [
 ] as const;
 export const COVERINGS = ['fur', 'scales', 'feathers', 'skin', 'shell', 'slime'] as const;
 export const PATTERNS = ['stripes', 'spots', 'patches', 'rings', 'gradient'] as const;
+export const FLAT_FACINGS = ['up', 'side', 'forward'] as const;
 export const GAITS = ['walk', 'hop', 'slither', 'waddle', 'fly', 'swim', 'hover'] as const;
 export const SOCIAL = ['solitary', 'pair', 'herd', 'pack', 'flock'] as const;
 export const ACTIVITY = ['day', 'night', 'twilight'] as const;
@@ -34,6 +35,7 @@ export const PartSchema = z.object({
   r0: z.number().describe('Thickness radius at the start, metres'),
   r1: z.number().describe('Thickness radius at the end, metres'),
   squash: z.number().describe('Cross-section roundness: 1 = round, 0.2 = flat like an ear, fin or wing'),
+  flatFacing: z.enum(FLAT_FACINGS).describe('Which way the flat face points when squashed: "up" (wings, beaver tails), "side" (fish fins, a fish tail), "forward" (ears)'),
   pointed: z.boolean().describe('Ends in a sharp tip (horns, claws, beaks)'),
   mirror: z.boolean().describe('Also make a mirror copy on the other side (x flipped); its children come along'),
   region: z.string().describe('Id of the skin region covering this part'),
@@ -119,6 +121,7 @@ export type Role = (typeof ROLES)[number];
 export type Covering = (typeof COVERINGS)[number];
 export type PatternKind = (typeof PATTERNS)[number];
 export type Gait = (typeof GAITS)[number];
+export type FlatFacing = (typeof FLAT_FACINGS)[number];
 export type Part = z.infer<typeof PartSchema>;
 export type Pattern = z.infer<typeof PatternSchema>;
 export type Region = z.infer<typeof RegionSchema>;
