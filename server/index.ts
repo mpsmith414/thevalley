@@ -1,7 +1,12 @@
 import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
+import { createApp } from './app';
+import { createClaudeModel } from './model';
 
-// Placeholder until the designer service lands (Task 13): health only.
-const app = new Hono();
-app.get('/api/health', (c) => c.json({ ok: true, model: null }));
-serve({ fetch: app.fetch, port: 8787 }, () => console.log('designer service on http://localhost:8787'));
+// Sonnet 5.5 by default; set DESIGNER_MODEL=claude-opus-5-5 for the stronger (pricier) eye.
+const model = process.env.DESIGNER_MODEL || 'claude-sonnet-5-5';
+const app = createApp(createClaudeModel({ model }));
+
+serve({ fetch: app.fetch, port: 8787 }, () => {
+  const key = process.env.ANTHROPIC_API_KEY ? 'key found' : 'no ANTHROPIC_API_KEY yet (the designer will say it is resting)';
+  console.log(`creature designer on http://localhost:8787 using ${model}; ${key}`);
+});
