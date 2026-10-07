@@ -7,6 +7,7 @@ export type SkinData = {
   skinWeight: Float32Array; // 4 per vertex, summing to 1
   region: Float32Array; // index into the region list, per vertex
   partT: Float32Array; // 0..1 along the nearest bone, per vertex
+  partS: Float32Array; // metres along the nearest bone, per vertex
   boneOf: Uint16Array; // nearest bone, per vertex
 };
 
@@ -21,6 +22,7 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
   const skinWeight = new Float32Array(n * 4);
   const region = new Float32Array(n);
   const partT = new Float32Array(n);
+  const partS = new Float32Array(n);
   const boneOf = new Uint16Array(n);
   const bones = sk.bones.map((b, i) => ({ b, i, thin: thinAxis(b) })).filter((x) => x.b.role !== 'eye');
   const regionIndex = new Map(regions.map((r, i) => [r, i]));
@@ -55,6 +57,7 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
     const ab = sub(nb.end, nb.start);
     const l2 = dot(ab, ab);
     partT[v] = l2 > 0 ? Math.min(1, Math.max(0, dot(sub(p, nb.start), ab) / l2)) : 0;
+    partS[v] = partT[v] * Math.sqrt(l2);
   }
-  return { skinIndex, skinWeight, region, partT, boneOf };
+  return { skinIndex, skinWeight, region, partT, partS, boneOf };
 }

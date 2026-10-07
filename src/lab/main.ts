@@ -6,7 +6,7 @@ import { autoQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { createStage } from '../render/stage';
 import type { Recipe } from '../recipe/schema';
-import { quadruped } from '../../tests/fixtures/recipes';
+import * as fixtures from '../../tests/fixtures/recipes';
 import './lab.css';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
@@ -56,7 +56,7 @@ renderer.setAnimationLoop((now: number) => {
 
 // dev hook for checks in the browser
 Object.assign(window, {
-  __lab: { scene, camera, renderer, backend, show, get creature() { return creature; }, fps: () => autoQuality(fps), fpsSamples: fps, builder },
+  __lab: { scene, camera, renderer, backend, show, fixtures, get creature() { return creature; }, fps: () => autoQuality(fps), fpsSamples: fps, builder },
 });
 
-await show(quadruped);
+await show(fixtures.quadruped);

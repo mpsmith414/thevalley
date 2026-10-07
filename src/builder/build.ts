@@ -9,7 +9,7 @@ import { skinWeights } from './weights';
 /** Grid cells along the creature's longest dimension, per level of detail. */
 export const LOD_CELLS = [110, 56, 28] as const;
 
-export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array };
+export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array };
 export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
 
 /** The key that decides whether two recipes share a body (shape and region layout only). */
@@ -25,7 +25,7 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2]): 
   const meshes = lods.map((l) => {
     const mesh = surfaceNets(sdf, min, max, longest / LOD_CELLS[l]);
     const skin = skinWeights(mesh.positions, skeleton, regions);
-    return { ...mesh, skinIndex: skin.skinIndex, skinWeight: skin.skinWeight, region: skin.region, partT: skin.partT };
+    return { ...mesh, skinIndex: skin.skinIndex, skinWeight: skin.skinWeight, region: skin.region, partT: skin.partT, partS: skin.partS, boneOf: skin.boneOf };
   });
   return { key: bodyKey(recipe), skeleton, regions, lods: meshes };
 }
