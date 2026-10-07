@@ -175,10 +175,15 @@ export class SecondaryMotion {
       const side = w.side >= 0 ? 1 : -1;
       const k = w.chain[0];
       const restDir = toV(norm(sub(rest[k].end, rest[k].start)));
-      const fold = new Quaternion().setFromUnitVectors(restDir, new Vector3(side * 0.3, -0.08, -1).normalize());
+      const fold = new Quaternion().setFromUnitVectors(restDir, new Vector3(side * 0.22, 0.05, -1).normalize());
       const flap = new Quaternion().setFromAxisAngle(Z, side * theta);
       this.bones[k].quaternion.copy(fold.slerp(flap, this.wingOpen));
-      w.chain.slice(1).forEach((b) => this.bones[b].quaternion.setFromAxisAngle(Z, side * theta * 0.4 * this.wingOpen));
+      // the outer wing tucks in when folded (a two-part wing can't Z-fold, so it shortens instead)
+      const tuck = 0.5 + 0.5 * this.wingOpen;
+      w.chain.slice(1).forEach((b) => {
+        this.bones[b].quaternion.setFromAxisAngle(Z, side * theta * 0.4 * this.wingOpen);
+        this.bones[b].scale.setScalar(tuck);
+      });
     }
   }
 
