@@ -55,9 +55,11 @@ export async function renderView(ctx: SnapshotContext, body: BodyData, recipe: R
   renderer.setSize(size, size, false);
   renderer.render(studio, camera);
   const url = canvas.toDataURL('image/png'); // same task as the render
-  renderer.setSize(prev.w / prev.ratio, prev.h / prev.ratio, false);
-  renderer.setPixelRatio(prev.ratio);
-  renderer.render(ctx.scene, ctx.camera); // put the stage back before the browser shows a frame
+  if (prev.w > 0 && prev.h > 0) {
+    renderer.setSize(prev.w / prev.ratio, prev.h / prev.ratio, false);
+    renderer.setPixelRatio(prev.ratio);
+    renderer.render(ctx.scene, ctx.camera); // put the stage back before the browser shows a frame
+  }
   creature.dispose();
   return { base64: url.replace(/^data:image\/png;base64,/, ''), mediaType: 'image/png' };
 }
