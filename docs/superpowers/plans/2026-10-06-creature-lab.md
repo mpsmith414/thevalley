@@ -53,7 +53,7 @@ drawings.html, src/drawingset/main.ts   the drawing test-set page
 - `RecipeSchema` (zod) and `type Recipe`, `Part`, `Region`, `Pattern`, `Role`. Shape:
 
 ```ts
-Part = { id: string; parent: string | null; role: Role; attach: number /*0..1 along parent*/;
+Part = { id: string; parent: string | null; role: Role; attach: number /*0..1 along parent*/; offset: Vec3 /*start shift, m*/;
   dir: Vec3; length: number; r0: number; r1: number; squash: number /*1 round … 0.1 flat*/;
   pointed: boolean; mirror: boolean; region: string }
 Region = { id: string; covering: Covering; color: string /*#rrggbb*/; belly: string | null;
@@ -140,7 +140,7 @@ type BoneDef = { name: string; partId: string; mirrored: boolean; parent: number
 type Skeleton = { bones: BoneDef[]; contacts: number[]; min: Vec3; max: Vec3 }
 expandParts(recipe: Recipe): BoneDef[]
 // parent order is preserved: parents come before children.
-// A child's start = lerp(parent.start, parent.end, attach); end = start + dir * length.
+// A child's start = lerp(parent.start, parent.end, attach) + offset; end = start + dir * length.
 // A mirrored part produces the part (x as given) plus a copy with x negated for start/end/dir,
 // named `${id}` and `${id}~m`. Descendants of a mirrored part are mirrored with it,
 // and the copy's children attach to the copy.
