@@ -23,6 +23,9 @@ DESIGNER_MODEL=claude-sonnet-5-5
 ```
 
 `.env` is ignored by git; the key only lives in the small local server, never in the web page.
+The key is the long secret starting with `sk-ant-api` (not the `apikey_…` ID the Console lists). If your key
+works across several workspaces, also set `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (Console → Settings → Workspaces);
+a key created for a single workspace doesn't need it.
 Use `DESIGNER_MODEL=claude-opus-5-5` for the stronger (about twice the price) eye.
 
 ```bash

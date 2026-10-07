@@ -28,8 +28,9 @@ const text = (t: string): Block => ({ type: 'text', text: t });
  * Uses the beta parse path for server-side refusal fallbacks (`fallbacks: 'default'`):
  * if the chosen model declines, the API retries on a fallback model in the same call.
  */
-export function createClaudeModel(opts: { model: string; effort?: Effort; client?: Anthropic }): DesignerModel {
-  const client = opts.client ?? new Anthropic();
+export function createClaudeModel(opts: { model: string; effort?: Effort; client?: Anthropic; workspaceId?: string }): DesignerModel {
+  // a key that works across several workspaces must say which one every request runs in
+  const client = opts.client ?? new Anthropic(opts.workspaceId ? { defaultHeaders: { 'anthropic-workspace-id': opts.workspaceId } } : {});
   const effort = opts.effort ?? 'medium';
 
   async function ask<S extends z.ZodType>(schema: S, content: Block[]): Promise<z.infer<S>> {

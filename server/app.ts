@@ -14,7 +14,9 @@ const MAX_BODY = 12 * 1024 * 1024;
 /** Is this failure the service being unavailable (network, overload, no key) rather than bad output? */
 function isResting(e: unknown): boolean {
   if (e instanceof Anthropic.APIConnectionError) return true;
-  if (e instanceof Anthropic.AuthenticationError) return true;
+  if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return true;
+  // a key that spans workspaces but no (or an unknown) workspace ID
+  if (e instanceof Anthropic.APIError && /anthropic-workspace-id|Workspace .* not found/i.test(e.message)) return true;
   if (e instanceof Anthropic.RateLimitError) return true;
   if (e instanceof Anthropic.APIError && (e.status ?? 0) >= 500) return true;
   return e instanceof Error && /api key|apiKey|ANTHROPIC_API_KEY|credentials/i.test(e.message);
@@ -57,7 +59,11 @@ export function createApp(model: DesignerModel): Hono {
     } catch (e) {
       if (e instanceof Declined) return c.json({ status: 'declined', message: 'Let’s make a different creature!' });
       if (e instanceof Invalid) return c.json({ error: 'invalid' }, 422);
-      if (isResting(e)) return c.json({ error: 'resting' }, 503);
+      if (isResting(e)) {
+        // say why in the server's terminal (a wrong key or missing workspace ID shows up here)
+        console.warn(`designer resting: ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`);
+        return c.json({ error: 'resting' }, 503);
+      }
       console.error(e);
       return c.json({ error: 'resting' }, 503);
     }
