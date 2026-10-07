@@ -1,0 +1,13 @@
+:root {
+  --ink: #2b2620;
+  --paper: #f6f1e7;
+  --accent: #e08a2e;
+  --focus: #ffd34d;
+  font-family: 'Nunito', system-ui, sans-serif;
+  font-size: 22px;
+  color: var(--ink);
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #b9c8cf; }
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#ui { position: fixed; inset: 0; pointer-events: none; }
+#ui > * { pointer-events: auto; }
