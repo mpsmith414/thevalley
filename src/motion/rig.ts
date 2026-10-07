@@ -6,8 +6,13 @@ import { add, dot, len, lerp, norm, scale, sub, v3, type Vec3 } from '../util/ve
 import { chooseGait, phasesFor, STRIDE, type GaitName } from './gait';
 import { fabrik } from './ik';
 import { findLimbs, type Limb } from './limbs';
+import { SecondaryMotion } from './secondary';
 
-export type Ground = { heightAt(x: number, z: number): number; isWater(x: number, z: number): boolean };
+export type Ground = {
+  heightAt(x: number, z: number): number;
+  isWater(x: number, z: number): boolean;
+  waterLevel: number;
+};
 
 type Leg = {
   limb: Limb;
@@ -28,19 +33,28 @@ type Leg = {
 
 const tmpV = new Vector3();
 const tmpQ = new Quaternion();
-const toV = (v: Vec3) => new Vector3(v.x, v.y, v.z);
-const fromV = (v: Vector3): Vec3 => ({ x: v.x, y: v.y, z: v.z });
+const X = new Vector3(1, 0, 0);
+export const toV = (v: Vec3) => new Vector3(v.x, v.y, v.z);
+export const fromV = (v: Vector3): Vec3 => ({ x: v.x, y: v.y, z: v.z });
 const smooth = (t: number) => t * t * (3 - 2 * t);
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const approach = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * Math.min(1, rate * dt);
 
 /**
- * Drives a creature's bones every frame: moves and turns its body, cycles its legs through a gait,
- * plants feet on the real ground and bends each leg to reach them.
+ * Drives a creature's bones every frame: moves and turns its body (on land, in the air or in water),
+ * cycles its legs through a gait, plants feet on the real ground and bends each leg to reach them.
+ * Actions steer it through the intent fields (look, headDown, sleep, calling, wantFly).
  */
 export class CreatureRig {
   readonly legs: Leg[];
   readonly legLength: number;
   readonly bodyLength: number;
+  readonly secondary: SecondaryMotion;
+  readonly canFly: boolean;
+  /** Lives in water (fish and other legless water creatures). */
+  readonly swimmer: boolean;
+  /** Walks on land but floats and paddles on water (ducks). */
+  readonly floater: boolean;
   /** World position of the creature's ground origin, and its heading (radians; 0 faces +z). */
   readonly position = new Vector3();
   yaw = 0;
@@ -49,11 +63,26 @@ export class CreatureRig {
   turnRate = 0;
   phase = 0;
   gait: GaitName = 'walk';
-  /** How much the legs are stepping (0 standing still … 1 moving). */
-  stepping = 0;
-  bodyOffset = 0; // extra height for actions (lying down, rearing)
-  bodyPitch = 0; // extra pitch for actions
+  stepping = 0; // how much the legs are stepping (0 standing … 1 moving)
+  distance = 0; // metres travelled (drives slithering)
+  time = 0;
   target: Vector3 | null = null;
+
+  // intents, set by actions (0..1 unless noted)
+  look: Vec3 | null = null; // a world point to look at
+  headDown = 0;
+  sleep = 0;
+  calling = 0;
+  wantFly = false;
+
+  // smoothed state
+  headDownNow = 0;
+  sleepNow = 0;
+  callNow = 0;
+  flying = false;
+  altitude = 0;
+  inWater = false;
+  private climb = 0;
 
   constructor(
     readonly obj: CreatureObject,
@@ -65,9 +94,10 @@ export class CreatureRig {
     const bones = body.skeleton.bones;
     const min = body.skeleton.min, max = body.skeleton.max;
     this.bodyLength = Math.max(0.05, max.z - min.z);
-    const limbs = findLimbs(body.skeleton).filter((l) => l.kind === 'leg');
-    const perSide = Math.max(1, ...[-1, 0, 1].map((s) => limbs.filter((l) => l.side === s).length));
-    this.legs = limbs.map((limb) => {
+    const limbs = findLimbs(body.skeleton);
+    const legLimbs = limbs.filter((l) => l.kind === 'leg');
+    const perSide = Math.max(1, ...[-1, 0, 1].map((s) => legLimbs.filter((l) => l.side === s).length));
+    this.legs = legLimbs.map((limb) => {
       const last = limb.chain[limb.chain.length - 1];
       const hasFoot = bones[last].role === 'foot' && limb.chain.length > 1;
       const ik = hasFoot ? limb.chain.slice(0, -1) : limb.chain;
@@ -89,6 +119,11 @@ export class CreatureRig {
       };
     });
     this.legLength = this.legs.length ? Math.max(...this.legs.map((l) => l.lengths.reduce((s, x) => s + x, 0))) : this.bodyLength * 0.3;
+    const hab = recipe.mind.habitat;
+    this.canFly = limbs.some((l) => l.kind === 'wing') && (recipe.motion.gait === 'fly' || recipe.motion.gait === 'hover' || hab.includes('air'));
+    this.swimmer = recipe.motion.gait === 'swim' || (this.legs.length === 0 && hab.includes('water'));
+    this.floater = !this.swimmer && this.legs.length > 0 && hab.includes('water');
+    this.secondary = new SecondaryMotion(this, limbs);
   }
 
   moveTo(target: Vec3 | null) {
@@ -98,12 +133,25 @@ export class CreatureRig {
     this.speedFrac = Math.max(0, Math.min(1, frac));
   }
   get topSpeed() {
-    return Math.min(this.recipe.life.topSpeed, this.speedCap);
+    return Math.min(this.recipe.life.topSpeed, this.flying ? this.speedCap * 1.6 : this.speedCap);
+  }
+  /** Close enough to the current target (or no target). */
+  arrived(within = 0.3) {
+    return !this.target || this.target.clone().sub(this.position).setY(0).length() < within;
+  }
+  /** Height of the body's resting point above the ground (creature space). */
+  get restHeight() {
+    return Math.max(0.01, this.body.skeleton.bones[0].start.y);
   }
 
   update(dt: number) {
     const root = this.obj.root;
+    this.time += dt;
+    this.headDownNow = approach(this.headDownNow, this.headDown, 3, dt);
+    this.sleepNow = approach(this.sleepNow, this.sleep, 1.5, dt);
+    this.callNow = approach(this.callNow, this.calling, 6, dt);
     this.locomotion(dt);
+    this.inWater = this.ground.isWater(this.position.x, this.position.z);
     const legLen = this.legLength;
     const speedFrac = this.speed / Math.max(1e-6, this.topSpeed);
     this.gait = chooseGait(this.legs.map((l) => l.limb), this.recipe, speedFrac);
@@ -111,7 +159,8 @@ export class CreatureRig {
     const stride = STRIDE[this.gait] * legLen;
     // turning on the spot still needs steps
     const effective = this.speed + Math.abs(this.turnRate) * this.bodyLength * 0.5;
-    this.stepping += ((effective > 0.03 ? 1 : 0) - this.stepping) * Math.min(1, dt * 4);
+    const onFeet = !this.flying && !(this.inWater && (this.swimmer || this.floater));
+    this.stepping = approach(this.stepping, onFeet && effective > 0.03 && this.sleepNow < 0.5 ? 1 : 0, 4, dt);
     const freq = Math.max(effective, 0.15 * this.stepping) / stride;
     this.phase = (this.phase + freq * dt * (this.stepping > 0.01 ? 1 : 0)) % 1;
 
@@ -124,27 +173,49 @@ export class CreatureRig {
       const sel = this.legs.map((l, i) => (pick(l) ? gAt(homesWorld[i]) : NaN)).filter((h) => !Number.isNaN(h));
       return sel.length ? sel.reduce((s, h) => s + h, 0) / sel.length : groundY;
     };
-    const frontZ = this.legs.filter((l) => l.front).map((l) => l.home.z);
-    const hindZ = this.legs.filter((l) => !l.front).map((l) => l.home.z);
-    const dz = frontZ.length && hindZ.length ? Math.max(...frontZ) - Math.min(...hindZ) : 0;
-    const pitch = dz > 0.05 ? -Math.atan2(avg((l) => l.front) - avg((l) => !l.front), dz) : 0;
-    const lefts = this.legs.filter((l) => l.limb.side > 0).map((l) => l.home.x);
-    const dx = lefts.length ? 2 * Math.max(...lefts) : 0;
-    const roll = dx > 0.05 ? Math.atan2(avg((l) => l.limb.side > 0) - avg((l) => l.limb.side < 0), dx) * 0.6 : 0;
-    let bob = 0;
-    if (this.gait === 'hop') {
-      const hindSwing = this.legPhase(offsets, duty).find((p, i) => !this.legs[i].front && p.swing);
-      bob = hindSwing ? Math.sin(Math.PI * hindSwing.s) * 0.25 * legLen * this.stepping : 0;
+    let pitch = 0, roll = 0, y: number;
+    if (this.flying) {
+      y = gAt(this.position) + this.altitude + Math.sin(this.time * 2 * Math.PI * this.secondary.flapHz) * 0.02;
+      pitch = -this.climb * 0.25;
+      roll = Math.max(-0.6, Math.min(0.6, -this.turnRate * 0.35));
+    } else if (this.inWater && this.swimmer) {
+      // cruise mid-water, never through the bed
+      const bed = gAt(this.position) + this.restHeight;
+      y = Math.max(bed, this.ground.waterLevel - 0.22) - this.restHeight;
+      roll = -this.turnRate * 0.15;
+    } else if (this.inWater && this.floater) {
+      y = this.ground.waterLevel - this.restHeight * 0.85;
     } else {
-      const amp = 0.02 * legLen * (0.5 + this.recipe.motion.bounce) * this.stepping * (this.gait === 'gallop' ? 2.5 : 1);
-      bob = -Math.cos(4 * Math.PI * this.phase) * amp;
+      const frontZ = this.legs.filter((l) => l.front).map((l) => l.home.z);
+      const hindZ = this.legs.filter((l) => !l.front).map((l) => l.home.z);
+      const dz = frontZ.length && hindZ.length ? Math.max(...frontZ) - Math.min(...hindZ) : 0;
+      pitch = dz > 0.05 ? -Math.atan2(avg((l) => l.front) - avg((l) => !l.front), dz) : 0;
+      const lefts = this.legs.filter((l) => l.limb.side > 0).map((l) => l.home.x);
+      const dx = lefts.length ? 2 * Math.max(...lefts) : 0;
+      roll = dx > 0.05 ? Math.atan2(avg((l) => l.limb.side > 0) - avg((l) => l.limb.side < 0), dx) * 0.6 : 0;
+      let bob = 0;
+      if (this.gait === 'hop') {
+        const hindSwing = this.legPhase(offsets, duty).find((p, i) => !this.legs[i].front && p.swing);
+        bob = hindSwing ? Math.sin(Math.PI * hindSwing.s) * 0.25 * legLen * this.stepping : 0;
+      } else {
+        const amp = 0.02 * legLen * (0.5 + this.recipe.motion.bounce) * this.stepping * (this.gait === 'gallop' ? 2.5 : 1);
+        bob = -Math.cos(4 * Math.PI * this.phase) * amp;
+      }
+      const lie = this.legs.length ? -this.sleepNow * this.restHeight * 0.55 : 0;
+      y = (this.legs.length ? groundY : gAt(this.position)) + bob + lie;
     }
-    const legless = this.legs.length === 0;
-    root.position.set(this.position.x, (legless ? gAt(this.position) : groundY) + bob + this.bodyOffset, this.position.z);
-    root.rotation.copy(new Euler(pitch + this.bodyPitch, this.yaw, roll, 'YXZ'));
+    root.position.set(this.position.x, y, this.position.z);
+    root.rotation.copy(new Euler(pitch, this.yaw, roll, 'YXZ'));
     root.updateMatrixWorld(true);
 
+    // tails, necks, wings, breathing… before the legs, which read the body's pose
+    this.secondary.update(dt);
+
     // legs
+    if (!onFeet || this.altitude > 0.05) {
+      this.tuckLegs();
+      return;
+    }
     const phases = this.legPhase(offsets, duty);
     const lift = (this.gait === 'gallop' || this.gait === 'hop' ? 0.22 : 0.14) * legLen;
     const D = stride * duty;
@@ -162,8 +233,7 @@ export class CreatureRig {
         if (leg.swinging || !leg.planted) leg.planted = onGround(leg, (D / 2 - s * D) * this.stepping);
         if (this.stepping < 0.05) {
           // standing still: settle the feet under the body, too slowly to notice
-          const home = onGround(leg, 0);
-          leg.planted = lerp(leg.planted, home, Math.min(1, dt * 1.5));
+          leg.planted = lerp(leg.planted, onGround(leg, 0), Math.min(1, dt * 1.5));
         }
         leg.lift = 0;
         world = { ...leg.planted };
@@ -190,24 +260,57 @@ export class CreatureRig {
   }
 
   private locomotion(dt: number) {
+    // take off and land
+    if (this.canFly && this.wantFly && !this.flying && this.sleepNow < 0.1) this.flying = true;
+    if (this.flying) {
+      const cruise = this.wantFly ? 2.2 + this.bodyLength * 2 : 0;
+      const before = this.altitude;
+      this.altitude += Math.max(-1.2, Math.min(1.5, (cruise - this.altitude) * 1.2)) * dt;
+      this.climb = (this.altitude - before) / Math.max(dt, 1e-6);
+      if (!this.wantFly && this.altitude < 0.03) {
+        this.flying = false;
+        this.altitude = 0;
+        this.climb = 0;
+        this.legs.forEach((l) => (l.planted = null));
+      }
+    }
     let want = 0;
-    if (this.target) {
+    const lying = this.sleepNow > 0.1;
+    if (this.target && !lying) {
       const to = this.target.clone().sub(this.position).setY(0);
       const d = to.length();
       if (d > 0.05) {
         const heading = Math.atan2(to.x, to.z);
         const diff = wrapAngle(heading - this.yaw);
-        const maxTurn = Math.min(4, Math.max(0.8, 2.5 / this.bodyLength));
+        const maxTurn = Math.min(4, Math.max(0.8, 2.5 / this.bodyLength)) * (this.flying ? 0.5 : 1);
         this.turnRate = Math.max(-maxTurn, Math.min(maxTurn, diff * 3));
         this.yaw = wrapAngle(this.yaw + this.turnRate * dt);
-        // slow for sharp turns and when arriving
-        want = this.speedFrac * this.topSpeed * Math.max(0.15, Math.cos(Math.min(Math.PI / 2, Math.abs(diff)))) * Math.min(1, d / 0.6);
+        // slow for sharp turns and when arriving (fliers keep gliding)
+        const arrive = this.flying && this.wantFly ? 1 : Math.min(1, d / 0.6);
+        want = this.speedFrac * this.topSpeed * Math.max(0.15, Math.cos(Math.min(Math.PI / 2, Math.abs(diff)))) * arrive;
       } else this.turnRate = 0;
     } else this.turnRate *= Math.max(0, 1 - dt * 6);
+    if (this.flying && this.altitude > 0.3) want = Math.max(want, this.recipe.motion.gait === 'hover' ? 0 : 1.2);
     const accel = this.topSpeed * 1.5;
     this.speed += Math.max(-accel * dt, Math.min(accel * dt, want - this.speed));
     this.position.x += Math.sin(this.yaw) * this.speed * dt;
     this.position.z += Math.cos(this.yaw) * this.speed * dt;
+    this.distance += this.speed * dt;
+  }
+
+  /** In the air or in water the legs fold back out of the way (and paddle a little when floating). */
+  private tuckLegs() {
+    const bones = this.obj.bones;
+    const paddle = this.inWater && this.floater ? Math.sin(this.time * 6) * 0.4 : 0;
+    this.legs.forEach((leg) => {
+      leg.planted = null;
+      leg.limb.chain.forEach((k, j) => {
+        const q = new Quaternion();
+        if (j === 0) q.setFromAxisAngle(X, (this.flying ? 0.9 : 0.5) + paddle * (leg.left ? 1 : -1));
+        bones[k].quaternion.copy(q);
+      });
+    });
+    this.obj.root.updateMatrixWorld(true);
   }
 
   private solveLeg(leg: Leg, targetLocal: Vector3, yawQ: Quaternion) {
@@ -220,16 +323,21 @@ export class CreatureRig {
     const mid = init[Math.floor(init.length / 2)];
     const pole = add(mid, scale(leg.bend, leg.lengths.reduce((s, x) => s + x, 0)));
     const joints = fabrik(init, leg.lengths, fromV(targetLocal), init.length > 2 ? pole : null);
+    this.poseChain(leg.ik, joints);
+    // feet stay flat on the ground, facing the way the body faces
+    if (leg.foot !== null) this.setWorldRotation(bones[leg.foot], yawQ.clone());
+  }
+
+  /** Point each bone of a chain along solved joint positions (creature space). */
+  poseChain(chain: number[], joints: Vec3[]) {
     const restBones = this.body.skeleton.bones;
-    const rootQ = root.getWorldQuaternion(new Quaternion());
-    leg.ik.forEach((k, j) => {
+    const rootQ = this.obj.root.getWorldQuaternion(new Quaternion());
+    chain.forEach((k, j) => {
       const restDir = norm(sub(restBones[k].end, restBones[k].start));
       const newDir = norm(sub(joints[j + 1], joints[j]));
       const qd = new Quaternion().setFromUnitVectors(toV(restDir), toV(newDir));
-      this.setWorldRotation(bones[k], rootQ.clone().multiply(qd));
+      this.setWorldRotation(this.obj.bones[k], rootQ.clone().multiply(qd));
     });
-    // feet stay flat on the ground, facing the way the body faces
-    if (leg.foot !== null) this.setWorldRotation(bones[leg.foot], yawQ.clone());
   }
 
   /** Give a bone this world rotation by setting its local rotation relative to its parent. */

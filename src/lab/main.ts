@@ -1,7 +1,9 @@
 import { PerspectiveCamera, Scene } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BuilderClient } from '../builder/client';
+import { ActionController, type Action } from '../motion/actions';
 import { CreatureRig } from '../motion/rig';
+import { mulberry32 } from '../util/rng';
 import { createCreatureObject, type CreatureObject } from '../render/creature';
 import { autoQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
@@ -27,14 +29,16 @@ const builder = new BuilderClient();
 
 let creature: CreatureObject | null = null;
 let rig: CreatureRig | null = null;
-let circling = true;
+let actions: ActionController | null = null;
 async function show(recipe: Recipe) {
   const body = await builder.build(recipe);
   creature?.dispose();
   creature = createCreatureObject(body, recipe, tier);
   scene.add(creature.root);
   rig = new CreatureRig(creature, body, recipe, stage);
-  rig.setSpeed(0.25);
+  if (rig.swimmer) rig.position.set(stage.pond.x, 0, stage.pond.z);
+  actions = new ActionController(rig, stage, mulberry32(recipe.seed));
+  actions.set('wander');
 }
 
 function resize() {
@@ -54,12 +58,8 @@ let simTime = 0;
 /** Advance the world by dt seconds (no drawing). */
 function tick(dt: number) {
   simTime += dt;
-  if (rig) {
-    if (circling) {
-      // walk a circle that crosses the slope
-      const a = Math.atan2(rig.position.z, rig.position.x) + 0.5;
-      rig.moveTo({ x: Math.cos(a) * 2.6, y: 0, z: Math.sin(a) * 2.6 });
-    }
+  if (rig && actions) {
+    actions.update(dt, camera.position);
     rig.update(dt);
     controls.target.lerp(rig.obj.root.position.clone().setY(rig.obj.root.position.y + 0.4), 0.1);
   }
@@ -91,14 +91,14 @@ async function shot(name: string) {
 }
 
 /** Dev: freeze the live loop and step the world by hand (works while the window is hidden). */
-async function step(frames: number, dt = 1 / 60) {
+function step(frames: number, dt = 1 / 60) {
   paused = true;
   for (let i = 0; i < frames; i++) tick(dt);
 }
 
 // dev hook for checks in the browser
 Object.assign(window, {
-  __lab: { scene, camera, renderer, backend, show, fixtures, get creature() { return creature; }, get rig() { return rig; }, setCircling(v: boolean) { circling = v; }, step, shot, resume() { paused = false; }, controls, fps: () => autoQuality(fps), fpsSamples: fps, builder },
+  __lab: { scene, camera, renderer, backend, show, fixtures, get creature() { return creature; }, get rig() { return rig; }, act(a: Action) { actions?.set(a, camera.position); }, get actions() { return actions; }, step, shot, resume() { paused = false; }, controls, fps: () => autoQuality(fps), fpsSamples: fps, builder },
 });
 
 await show(fixtures.quadruped);

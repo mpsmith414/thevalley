@@ -64,15 +64,19 @@ export function findChains(sk: Skeleton): { kind: ChainKind; chain: number[] }[]
     }
     return chain;
   };
+  // a torso made of several bones in a row (snakes, long bodies) bends as a spine, head included
+  const torso = follow(0, ['torso', 'head']);
+  const hasSpine = torso.length > 2;
   bones.forEach((b, i) => {
     const parentRole = b.parent >= 0 ? bones[b.parent].role : null;
+    // a head straight on the body (no neck) still turns to look
+    if (b.role === 'head' && parentRole !== 'neck' && parentRole !== 'head' && !(hasSpine && torso.includes(i)))
+      out.push({ kind: 'neck', chain: follow(i, ['head']) });
     if (b.role === 'tail' && parentRole !== 'tail') out.push({ kind: 'tail', chain: follow(i, ['tail']) });
     if (b.role === 'neck' && parentRole !== 'neck') out.push({ kind: 'neck', chain: follow(i, ['neck', 'head']) });
     if (b.role === 'ear') out.push({ kind: 'ear', chain: follow(i, ['ear']) });
     if (b.role === 'antenna' && parentRole !== 'antenna') out.push({ kind: 'antenna', chain: follow(i, ['antenna']) });
   });
-  // a torso made of several bones in a row (snakes, long bodies) bends as a spine
-  const torso = follow(0, ['torso', 'head']);
-  if (torso.length > 2) out.push({ kind: 'spine', chain: torso });
+  if (hasSpine) out.push({ kind: 'spine', chain: torso });
   return out;
 }
