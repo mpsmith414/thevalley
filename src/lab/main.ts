@@ -10,6 +10,7 @@ import { createRenderer } from '../render/renderer';
 import { createStage } from '../render/stage';
 import type { Recipe } from '../recipe/schema';
 import * as fixtures from '../../tests/fixtures/recipes';
+import { CAST } from '../cast';
 import './lab.css';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
@@ -98,7 +99,13 @@ function step(frames: number, dt = 1 / 60) {
 
 // dev hook for checks in the browser
 Object.assign(window, {
-  __lab: { scene, camera, renderer, backend, show, fixtures, get creature() { return creature; }, get rig() { return rig; }, act(a: Action) { actions?.set(a, camera.position); }, get actions() { return actions; }, step, shot, resume() { paused = false; }, controls, fps: () => autoQuality(fps), fpsSamples: fps, builder },
+  __lab: { scene, camera, renderer, backend, show, fixtures, CAST, get creature() { return creature; }, get rig() { return rig; }, act(a: Action) { actions?.set(a, camera.position); }, get actions() { return actions; }, step, shot, resume() { paused = false; }, controls, fps: () => autoQuality(fps), fpsSamples: fps, builder },
 });
 
-await show(fixtures.quadruped);
+// temporary cast picker until the lab UI lands: number keys 1-8
+window.addEventListener('keydown', (e) => {
+  const i = Number(e.key) - 1;
+  if (i >= 0 && i < CAST.length) void show(CAST[i].recipe);
+});
+
+await show(CAST[0].recipe);

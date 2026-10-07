@@ -27,9 +27,11 @@ function shellMaterial(pack: RegionPack, shellT: number): MeshStandardNodeMateri
   // (both computed per vertex: shells repeat 8–16 times, so the pixel work must stay tiny)
   const cellPos = varying(r.bp.mul(DENSITY).add(1000).add(mx_noise_vec3(r.bp.mul(25)).mul(1.5)));
   const cell = floor(cellPos);
-  const inCell = length(fract(cellPos).sub(0.5));
+  // each strand sits somewhere random in its cell, so the coat doesn't show the grid
+  const jitter = vec3(hash(cell.x.add(cell.y.mul(31)).add(cell.z.mul(17))), hash(cell.y.add(cell.z.mul(29)).add(cell.x.mul(13))), hash(cell.z.add(cell.x.mul(23)).add(cell.y.mul(19)))).mul(0.5).add(0.25);
+  const inCell = length(fract(cellPos).sub(jitter));
   const present = hash(cell.x.add(cell.y.mul(57)).add(cell.z.mul(113))).greaterThan(0.12);
-  const radius = float(0.5).mul(float(1).sub(t.mul(0.85)));
+  const radius = float(0.42).mul(float(1).sub(t.mul(0.85)));
   const strand = float(1).sub(smoothstep(radius.sub(0.05), radius, inCell));
   m.opacityNode = select(present.and(varying(len).greaterThan(0.0005)), strand, float(0));
   m.alphaTest = 0.5;

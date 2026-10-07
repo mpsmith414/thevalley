@@ -63,7 +63,7 @@ export function regionNodes(pack: RegionPack) {
           select(kind.lessThan(3.5), rings, gradient))))) as unknown as F;
 
   // a lighter underside where the rest-pose surface faces down
-  const bellyAmt = float(1).sub(smoothstep(-0.55, -0.1, rn.y)).mul(colA.w).mul(info.w);
+  const bellyAmt = float(1).sub(smoothstep(-0.75, -0.3, rn.y)).mul(colA.w).mul(info.w);
   const mottle = mx_noise_float(bp.mul(18)).mul(0.06).add(0.97);
   const base = mix(colA.xyz, colB.xyz, bellyAmt);
   const colorNode = mix(base, colC.xyz, mask.mul(float(1).sub(bellyAmt.mul(0.6)))).mul(mottle).mul(tint) as unknown as C;
