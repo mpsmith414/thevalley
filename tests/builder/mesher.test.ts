@@ -1,20 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { surfaceNets, type MeshData } from '../../src/builder/mesher';
+import { surfaceNets } from '../../src/builder/mesher';
+import { topology } from '../fixtures/mesh';
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { bodySdf, boneSdf, roundCone, smin } from '../../src/builder/sdf';
 import { v3 } from '../../src/util/vec';
 import { quadruped } from '../fixtures/recipes';
-
-export function topology(m: MeshData) {
-  const edges = new Map<string, number>();
-  for (let t = 0; t < m.indices.length; t += 3)
-    for (let e = 0; e < 3; e++) {
-      const a = m.indices[t + e], b = m.indices[t + ((e + 1) % 3)];
-      const key = a < b ? `${a},${b}` : `${b},${a}`;
-      edges.set(key, (edges.get(key) ?? 0) + 1);
-    }
-  return { edges, euler: m.positions.length / 3 - edges.size + m.indices.length / 3 };
-}
 
 describe('distance functions', () => {
   it('round cone is negative inside, ~0 on the surface, positive outside', () => {
