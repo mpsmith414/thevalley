@@ -106,3 +106,24 @@ describe('normalizeRecipe', () => {
     expect(() => normalizeRecipe({ parts: [] })).toThrow(RecipeError);
   });
 });
+
+describe('inferRole', () => {
+  it('guesses a missing role from the part id', async () => {
+    const { inferRole } = await import('../../src/recipe/normalize');
+    expect(inferRole('leg2_low')).toBe('leg');
+    expect(inferRole('leg1_foot')).toBe('foot');
+    expect(inferRole('ear1')).toBe('ear');
+    expect(inferRole('eye_left')).toBe('eye');
+    expect(inferRole('nose')).toBe('mouth');
+    expect(inferRole('chest')).toBe('torso');
+    expect(inferRole('sparkle')).toBe('other');
+  });
+
+  it('fills a missing role with a fix note', () => {
+    const r = clone(quadruped) as unknown as { parts: Record<string, unknown>[] };
+    delete r.parts[6].role; // shin_f
+    const { recipe, fixes } = normalizeRecipe(r);
+    expect(recipe.parts[6].role).toBe('leg');
+    expect(fixes.some((f) => f.includes('role missing'))).toBe(true);
+  });
+});

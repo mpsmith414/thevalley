@@ -2,10 +2,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { z } from 'zod';
+import type { RecipeEdit } from '../src/recipe/edits';
 import { normalizeRecipe, RecipeError } from '../src/recipe/normalize';
 import {
-  LookAgainRequestSchema, LookAgainWire, ReadRequestSchema, ReadWire, TweakRequestSchema, TweakWire,
-  type LookAgainRequest, type ReadResult, type TweakRequest, type TweakResult,
+  LookAgainCheck, LookAgainRequestSchema, ReadCheck, ReadRequestSchema, TweakCheck, TweakRequestSchema,
+  type LookAgainRequest, type LookAgainResult, type ReadResult, type TweakRequest, type TweakResult,
 } from '../src/designer/types';
 import { Declined, type DesignerModel } from './model';
 
@@ -73,7 +74,7 @@ export function createApp(model: DesignerModel): Hono {
     const req = ReadRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!req.success || (!req.data.image && !req.data.words.trim())) return c.json({ error: 'bad request' }, 400);
     return handle(c, () =>
-      twice(() => model.read(req.data), ReadWire, (w): ReadResult => {
+      twice(() => model.read(req.data), ReadCheck, (w): ReadResult => {
         if (w.status !== 'ok') return { status: w.status, message: w.message || 'Let’s try another drawing!' };
         if (!w.recipe) throw new Invalid('no recipe');
         const { recipe, fixes } = normalizeRecipe(w.recipe);
@@ -92,7 +93,7 @@ export function createApp(model: DesignerModel): Hono {
       return c.json({ error: 'bad request' }, 400);
     }
     const r: LookAgainRequest = { ...req.data, recipe };
-    return handle(c, () => twice(() => model.lookAgain(r), LookAgainWire, (w) => ({ status: 'ok' as const, ...w })));
+    return handle(c, () => twice(() => model.lookAgain(r), LookAgainCheck, (w) => ({ status: 'ok' as const, ...w }) as LookAgainResult));
   });
 
   app.post('/api/tweak', async (c) => {
@@ -106,8 +107,8 @@ export function createApp(model: DesignerModel): Hono {
     }
     const r: TweakRequest = { ...req.data, recipe };
     return handle(c, () =>
-      twice(() => model.tweak(r), TweakWire, (w): TweakResult =>
-        w.status === 'declined' ? { status: 'declined', message: w.message || 'Let’s try a different change!' } : { status: 'ok', edits: w.edits, cards: w.cards, note: w.note }),
+      twice(() => model.tweak(r), TweakCheck, (w): TweakResult =>
+        w.status === 'declined' ? { status: 'declined', message: w.message || 'Let’s try a different change!' } : { status: 'ok', edits: w.edits as RecipeEdit[], cards: w.cards, note: w.note }),
     );
   });
 

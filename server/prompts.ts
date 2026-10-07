@@ -36,7 +36,7 @@ Worked examples (adapt sizes to the creature):
 - A curly tail: a chain of 3-5 tail parts, each from the last (attach 1), each turning a little more.
 - A wing pair: role wing from the upper torso, dir {1,0.1,-0.3}, squash 0.12, flatFacing "up", mirror true, plus a second wing part from it. Creatures with wings and the "air" habitat can fly.
 - Legless bodies (snakes, worms) are a chain of 6-10 torso parts with the head at the front, gait "slither".
-Keep to at most 40 parts. Everything mirrored counts twice; stay under 90 bones in total.
+Every part must include every field, role included. Keep to at most 40 parts. Everything mirrored counts twice; stay under 90 bones in total.
 
 # Skin
 Regions (at most 8) give coverings and colours: fur (with furLength 0.005-0.05 m and fluff 0-1), feathers, scales, skin, shell or slime. "belly" is an optional lighter underside colour. Patterns: stripes, spots, patches, rings (bands around a part) or gradient; scale is the size of one repeat in metres; amount is how much of the region it covers (0-1). Colours are "#rrggbb". Eyes: colour, pupil (round, slit, bar, none) and size (0.2-1).

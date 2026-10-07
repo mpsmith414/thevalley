@@ -109,3 +109,14 @@ describe('the system prompt', () => {
     expect(SYSTEM_PROMPT).toMatch(/Never turn a drawing into a known animal/);
   });
 });
+
+describe('extractJson', () => {
+  it('finds the object in a reply, with or without fences', async () => {
+    const { extractJson } = await import('../../server/model');
+    expect(extractJson('{"a":1}')).toEqual({ a: 1 });
+    expect(extractJson('```json\n{"a":{"b":[1,2]}}\n```')).toEqual({ a: { b: [1, 2] } });
+    expect(extractJson('Here you go: {"a":1} hope it helps')).toEqual({ a: 1 });
+    expect(extractJson('no json here')).toBeUndefined();
+    expect(extractJson('{broken')).toBeUndefined();
+  });
+});

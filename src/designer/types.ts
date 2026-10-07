@@ -64,6 +64,16 @@ export const TweakWire = z.object({
   note: z.string().describe('One short, friendly sentence saying what changed'),
 });
 
+// ---- what the app accepts (lenient: normalising repairs recipes and parts afterwards) ----
+const LooseEdit = z.union([
+  z.object({ op: z.literal('set'), path: z.string(), valueJson: z.string() }),
+  z.object({ op: z.literal('addPart'), part: z.object({ id: z.string() }).passthrough() }),
+  z.object({ op: z.literal('removePart'), id: z.string() }),
+]);
+export const ReadCheck = ReadWire.extend({ recipe: z.object({ parts: z.array(z.unknown()) }).passthrough().nullable() });
+export const LookAgainCheck = LookAgainWire.extend({ edits: z.array(LooseEdit) });
+export const TweakCheck = TweakWire.extend({ edits: z.array(LooseEdit) });
+
 // ---- responses ----
 export type ReadResult =
   | { status: 'ok'; recipe: z.infer<typeof RecipeSchema>; checklist: string[]; view: View; cards: KidCards; fixes: string[] }

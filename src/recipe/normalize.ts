@@ -37,6 +37,26 @@ export const DEFAULT_RECIPE: Omit<Recipe, 'parts'> = {
   inheritance: [{ path: 'life.sizeM', spread: 0.08 }],
 };
 
+/** Guess a part's role from its id when it's missing ("leg2_low" is a leg, "ear1" an ear). */
+export function inferRole(id: string): Role {
+  const s = id.toLowerCase();
+  const has = (...w: string[]) => w.some((x) => s.includes(x));
+  if (has('eye')) return 'eye';
+  if (has('foot', 'feet', 'paw', 'hoof', 'claw', 'talon')) return 'foot';
+  if (has('leg', 'thigh', 'shin', 'arm', 'knee', 'calf')) return 'leg';
+  if (has('wing')) return 'wing';
+  if (has('fin')) return 'fin';
+  if (has('tail')) return 'tail';
+  if (has('horn', 'spike', 'antler')) return 'horn';
+  if (has('antenna', 'feeler')) return 'antenna';
+  if (has('ear')) return 'ear';
+  if (has('neck')) return 'neck';
+  if (has('head', 'skull', 'face')) return 'head';
+  if (has('mouth', 'nose', 'snout', 'beak', 'bill', 'muzzle', 'jaw', 'trunk')) return 'mouth';
+  if (has('torso', 'body', 'chest', 'belly', 'hip', 'rump', 'back', 'shell', 'seg')) return 'torso';
+  return 'other';
+}
+
 /** The natural flat side for each role (ears face forward, fins face sideways, the rest face up). */
 export const defaultFlatFacing = (role: Role): FlatFacing => (role === 'ear' ? 'forward' : role === 'fin' ? 'side' : 'up');
 
@@ -131,7 +151,8 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
     if (Math.hypot(dir.x, dir.y, dir.z) < 1e-9) fixes.push(`${name} dir was zero → forward`);
     // already-unit directions are kept bit-for-bit, so normalising is idempotent
     const nd = Math.abs(Math.hypot(dir.x, dir.y, dir.z) - 1) < 1e-9 ? dir : norm(dir);
-    const role = pick(p.role, ROLES, `${name} role`, 'other');
+    const role = pick(p.role ?? inferRole(id), ROLES, `${name} role`, inferRole(id));
+    if (p.role === undefined) fixes.push(`${name} role missing → ${role}`);
     return {
       id,
       parent: typeof p.parent === 'string' ? p.parent : null,
