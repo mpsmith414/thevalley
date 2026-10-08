@@ -33,7 +33,7 @@ const smin = (a: number, b: number, k: number) => 0.5 * (a + b - Math.sqrt((a - 
 
 /** Crest wander: the ridge and rim distance fields are domain-warped by WARP·fbm (about ±60 m typical, 180 m at most; two octaves, so faces are not squeezed too steep) at WARP_SCALE m. */
 const WARP = 250, WARP_SCALE = 600;
-/** The warp fades to zero within about PIN m of each viewpoint, so a viewpoint keeps its place on (or off) the ridges. */
+/** Near each viewpoint the warp is shifted by minus the warp sampled at the viewpoint, weighted by a Gaussian of width PIN m. The weights are normalised once they sum past 1, so overlapping viewpoints never over-correct. A lone viewpoint therefore keeps its place on (or off) the ridges while the local variation around it survives. */
 const PIN = 160;
 /** Spurs and side valleys: ridge distance is scaled by 1 + SPUR·fbm (about ±10%, ±35% at most) at SPUR_SCALE m. */
 const SPUR = 0.5, SPUR_SCALE = 150;
@@ -99,11 +99,14 @@ export function baseShape(layout: Layout, grid: number): HeightGrid {
     const z = -half + jz * cc;
     for (let jx = 0; jx < cg; jx++) {
       const x = -half + jx * cc;
-      let [wx, wz] = warpAt(x, z);
+      // Subtract the viewpoints' own warp, weighted by Gaussian e_i and normalised by max(1, sum e_i): a lone viewpoint cancels its warp exactly, and where Gaussians overlap the correction is a weighted average, never more than full.
+      let [wx, wz] = warpAt(x, z), sum = 0, cx = 0, cz = 0;
       for (const [px, pz, pwx, pwz] of pins) {
         const e = Math.exp(-((x - px) ** 2 + (z - pz) ** 2) / (PIN * PIN));
-        wx -= pwx * e; wz -= pwz * e;
+        sum += e; cx += e * pwx; cz += e * pwz;
       }
+      const norm = Math.max(1, sum);
+      wx -= cx / norm; wz -= cz / norm;
       // Rim: a rounded square (superellipse) on the warped coordinates, so the bowl has no straight edge.
       const ux = Math.abs(x + wx) / half, uz = Math.abs(z + wz) / half;
       let land = rim * smoothstep(0.55, 1.05, Math.sqrt(Math.sqrt(Math.sqrt(ux ** 8 + uz ** 8)))) * (1 + 0.9 * fbm(ns, x / 400 + 11.3, z / 400, 2));

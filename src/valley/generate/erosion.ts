@@ -18,6 +18,7 @@ const SPIKE = 0.25;
 /**
  * Clamp every sample to [min − SPIKE, max + SPIKE] of its 8 neighbours (read from a copy, so the order does not matter).
  * Deposits land on single samples, and this flattens the needles they leave without touching gullies or slopes.
+ * It is a single Jacobi pass, so two adjacent spikes support each other and may need a second pass.
  */
 export function despike(h: Float32Array, grid: number, margin = SPIKE): void {
   const src = h.slice();
