@@ -66,11 +66,12 @@ spec → plan → build cycle and ends with something the family can enjoy.
 
 1. **Creature Lab:** the recipe format, the body builder, procedural movement, the skin system, the Creature Designer with "look again", the turntable lab, and the native cast. Spec: `2026-10-06-creature-lab-design.md`.
 2. **The Valley:** terrain, water, sky, day and night, vegetation, the free-fly camera, controls and quality tiers.
-3. **The Living Ecosystem:** needs and behaviours, plants, the life cycle and inheritance, populations, time controls, save and reset.
-4. **Views and Eyes:** follow, lock-on, sense lenses, taking the reins, and the overview map.
-5. **Bring It to Life:** the phone companion (QR or pairing code, photo, draw pad, voice), the lab as the preview step, and releasing creatures into the valley.
-6. **Weather and Events:** natural weather, event recipes, consequences and recovery.
-7. **The Director:** moment detection, pop-up invitations, the auto-documentary camera and narration.
+3. **Lifeform Polish (committed):** a heavy pass on how creatures look and move, once they can be seen in the valley. After the first Creature Lab review (2026-10-07) the owner's biggest concerns were **shapes** (blobby, tube-like bodies with no muscle, joint or jaw definition) and **faces** (no eyelids, noses, ear insides or expression), so those come first. Then fur (direction, strand lighting, guard hairs), motion (spine flex, weight shift, head bob) and post-processing (ambient occlusion, depth of field, colour grading). Target: the "living museum diorama" ceiling chosen in brainstorming.
+4. **The Living Ecosystem:** needs and behaviours, plants, the life cycle and inheritance, populations, time controls, save and reset.
+5. **Views and Eyes:** follow, lock-on, sense lenses, taking the reins, and the overview map.
+6. **Bring It to Life:** the phone companion (QR or pairing code, photo, draw pad, voice), the lab as the preview step, and releasing creatures into the valley.
+7. **Weather and Events:** natural weather, event recipes, consequences and recovery.
+8. **The Director:** moment detection, pop-up invitations, the auto-documentary camera and narration.
 
 Later ideas, deliberately out of scope for now: swapping creatures between friends' valleys,
 several saved valleys, a "while you were away" recap, a magical hybrid event, a hand-drawn
