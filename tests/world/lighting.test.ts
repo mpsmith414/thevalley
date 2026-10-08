@@ -33,6 +33,7 @@ describe('lightingAt', () => {
     expect(half.keyIntensity).toBeGreaterThan(newMoon.keyIntensity);
     expect(newMoon.keyIntensity).toBeGreaterThan(0);
     expect(lightingAt(0, sun, below, 0.5).keyIntensity).toBe(0);
+    expect(lightingAt(0, sun, { x: 0, y: -0.2, z: 1 }, 0.5).keyIntensity).toBe(0); // well below the horizon
   });
 
   it('has its dawn mist peak near 5.5 h and none at noon', () => {
@@ -45,8 +46,8 @@ describe('lightingAt', () => {
     expect(best).toBeGreaterThan(0.9);
     expect(at(12).mist).toBe(0);
     expect(at(2).mist).toBe(0);
-    expect(at(12).fogDensity).toBeCloseTo(0.00028, 9);
-    expect(at(5.5).fogDensity).toBeGreaterThan(0.00028);
+    expect(at(12).fogDensity).toBeCloseTo(0.00018, 9);
+    expect(at(5.5).fogDensity).toBeGreaterThan(0.00018);
   });
 
   it('switches the key to the moon below −3° of sun elevation', () => {
@@ -74,5 +75,29 @@ describe('lightingAt', () => {
       for (const c of [s.keyColor, s.skyColor, s.groundColor, s.fogColor]) expect(c).toMatch(/^#[0-9a-f]{6}$/);
       for (const n of [s.keyIntensity, s.hemiIntensity, s.exposure, s.fogDensity, s.stars, s.mist]) expect(Number.isFinite(n)).toBe(true);
     }
+  });
+
+  it('has no jump in the key intensity across sunrise, the key switch or moonrise', () => {
+    const dir = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
+    const sun = dir(-30), farMoon = dir(90);
+    let prev = lightingAt(20, dir(-20), farMoon, 0.5).keyIntensity;
+    for (let d = -19.95; d <= 70; d += 0.05) {
+      const k = lightingAt(20, dir(d), farMoon, 0.5).keyIntensity;
+      expect(Math.abs(k - prev)).toBeLessThanOrEqual(0.05);
+      prev = k;
+    }
+    prev = lightingAt(0, sun, dir(-10), 0.5).keyIntensity;
+    for (let d = -9.95; d <= 10; d += 0.05) {
+      const k = lightingAt(0, sun, dir(d), 0.5).keyIntensity;
+      expect(Math.abs(k - prev)).toBeLessThanOrEqual(0.05);
+      prev = k;
+    }
+  });
+
+  it('has the key intensity reach 0 at the sun-to-moon switch', () => {
+    const dir = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
+    expect(lightingAt(20, dir(-3), dir(60), 0.5).keyIntensity).toBeCloseTo(0, 6);
+    expect(lightingAt(20, dir(-2), dir(60), 0.5).keyIntensity).toBeGreaterThan(0);
+    expect(lightingAt(20, dir(-4), dir(60), 0.5).keyIntensity).toBeGreaterThan(0);
   });
 });

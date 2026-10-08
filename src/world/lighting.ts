@@ -25,12 +25,18 @@ const TABLE: Row[] = [
 /** Below this sun elevation the moon takes over as the key light. */
 const MOON_BELOW = -3;
 /** Clear-air fog density per metre, and the extra the dawn mist adds. */
-const FOG_DENSITY = 0.00028, MIST_DENSITY = 0.0002;
+const FOG_DENSITY = 0.00018, MIST_DENSITY = 0.0002;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const hex = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
-const mixHex = (a: string, b: string, t: number) =>
-  '#' + hex(a).map((v, i) => Math.round(lerp(v, hex(b)[i], t)).toString(16).padStart(2, '0')).join('');
+/** Each table colour parsed once, at load, so `lightingAt` never parses strings per call. */
+const RGB = new Map<string, number[]>();
+const parse = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+for (const r of TABLE) for (const c of [r.key, r.sky, r.ground, r.fog]) RGB.set(c, parse(c));
+const hex = (c: string) => RGB.get(c) ?? parse(c);
+const mixHex = (a: string, b: string, t: number) => {
+  const x = hex(a), y = hex(b);
+  return '#' + x.map((v, i) => Math.round(lerp(v, y[i], t)).toString(16).padStart(2, '0')).join('');
+};
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -38,12 +44,12 @@ const smooth = (a: number, b: number, x: number) => {
 /** A bell curve centred on `c` with width `w`. */
 const bell = (x: number, c: number, w: number) => Math.exp(-(((x - c) / w) ** 2));
 
-/** How much light the moon gives: none below the horizon, 0.3 for a new moon up to 1 when full. */
-export const moonLit = (moon: Vec3, phase: number) => (elevationDeg(moon) > 0 ? 0.3 + 0.7 * (1 - Math.abs(phase - 0.5) * 2) : 0);
+/** How much light the moon gives: fading in across the horizon (−2° to 4°), 0.3 for a new moon up to 1 when full. */
+export const moonLit = (moon: Vec3, phase: number) => smooth(-2, 4, elevationDeg(moon)) * (0.3 + 0.7 * (1 - Math.abs(phase - 0.5) * 2));
 
 /**
  * The light at `hour` with the sun and moon at `sun` and `moon` (unit vectors) and the moon at `phase`:
- * the table above interpolated by sun elevation, the key on the moon below −3°, and the dawn mist (3:30 to 8:00, peaking at 5:30).
+ * the table above interpolated by sun elevation, the key on the moon below −3° (its intensity dipping to 0 at the switch so the flip is invisible), and the dawn mist (3:30 to 8:00, peaking at 5:30).
  */
 export function lightingAt(hour: number, sun: Vec3, moon: Vec3, phase: number): LightState {
   const elev = elevationDeg(sun), lit = moonLit(moon, phase);
@@ -58,7 +64,7 @@ export function lightingAt(hour: number, sun: Vec3, moon: Vec3, phase: number): 
     key: moonKey ? 'moon' : 'sun',
     keyDir: moonKey ? moon : sun,
     keyColor: moonKey ? MOON_COLOR : mixHex(a.key, b.key, t),
-    keyIntensity: lerp(keyI(a), keyI(b), t),
+    keyIntensity: lerp(keyI(a), keyI(b), t) * smooth(0, 1.5, Math.abs(elev - MOON_BELOW)),
     skyColor: mixHex(a.sky, b.sky, t),
     groundColor: mixHex(a.ground, b.ground, t),
     hemiIntensity: lerp(a.hemi, b.hemi, t),

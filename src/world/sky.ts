@@ -207,9 +207,11 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
 
   // ---------- fog: aerial perspective, glowing towards the key light, and dawn mist hugging the water ----------
   const fogColor = uniform(new Color()), keyColor = uniform(new Color()), keyDir = uniform(new Vector3(0, 1, 0));
-  const density = uniform(0.00028), mist = uniform(0);
+  const density = uniform(0.00018), mist = uniform(0);
   const toFrag = positionWorld.sub(cameraPosition), dist = toFrag.length(), viewDir = toFrag.div(max(dist, 1e-3));
-  const haze = float(1).sub(exp(dist.mul(density).negate()));
+  // thinner with height: the density at the average height of the camera and the fragment, falling off above 40 m
+  const thin = exp(max(positionWorld.y.add(cameraPosition.y).mul(0.5).sub(40), 0).div(-250));
+  const haze = float(1).sub(exp(dist.mul(density).mul(thin).negate()));
   const tint = mix(fogColor, keyColor, pow(max(dot(viewDir, keyDir), 0), 8).mul(0.5));
   // the thicker the haze, the more it takes the sky's own colour at the horizon, so distant ridges dissolve into the sky behind them
   const horizon = pmremTexture(env.texture, normalize(vec3(viewDir.x, max(viewDir.y, 0.03), viewDir.z)), float(0.4)) as Node<'vec3'>;
@@ -238,6 +240,8 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
       night.value.set(state.skyColor).multiplyScalar(state.stars);
       // stars and moon
       starLevel.value = state.stars;
+      nightSky.visible = state.stars >= 0.001; // nothing to draw by day
+      moon.visible = nightSky.visible || moonDir.y > 0; // the moon stays up in the day sky while it is above the horizon
       pxToMetres.value = (2 * STAR_R * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, renderer.domElement.height);
       nightSky.position.copy(p);
       nightSky.quaternion.copy(quat.setFromAxisAngle(axis, (-2 * Math.PI * hours * SIDEREAL) / 24));
@@ -245,6 +249,7 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
       // key light and ambient
       light.color.set(state.keyColor);
       light.intensity = state.keyIntensity;
+      light.castShadow = state.keyIntensity > 0.02;
       const k = state.keyDir;
       if (csm) {
         light.target.position.copy(p);
