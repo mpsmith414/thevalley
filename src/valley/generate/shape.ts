@@ -53,7 +53,7 @@ export function baseShape(layout: Layout, grid: number): HeightGrid {
       for (let s = 0; s < ns; s++) {
         const ax = segs[s * 4], az = segs[s * 4 + 1], dx = segs[s * 4 + 2], dz = segs[s * 4 + 3], l2 = dx * dx + dz * dz;
         const t = l2 < 1e-12 ? 0 : Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / l2));
-        const d = Math.hypot(x - ax - t * dx, z - az - t * dz), k = segRidge[s];
+        const d = Math.sqrt((x - ax - t * dx) ** 2 + (z - az - t * dz) ** 2), k = segRidge[s];
         if (d < dmin[k]) dmin[k] = d;
       }
       let up = 0, rocky = 0;

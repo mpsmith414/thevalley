@@ -1,35 +1,48 @@
 import { mulberry32 } from '../../util/rng';
 import type { HeightGrid } from './shape';
 
-const INERTIA = 0.05, CAPACITY = 4, MIN_SLOPE = 0.01, ERODE = 0.3, DEPOSIT = 0.3, EVAPORATE = 0.02, GRAVITY = 4, MAX_STEPS = 64, RADIUS = 2;
+const INERTIA = 0.05, CAPACITY = 4, MIN_SLOPE = 0.01, ERODE = 0.3, DEPOSIT = 0.3, EVAPORATE = 0.02, GRAVITY = 4, MAX_STEPS = 64;
+/** Changed from the Beyer defaults: brush radius 3 (was 2), so each droplet cuts a smoother channel and trenches stay shallower. */
+const RADIUS = 3;
+/**
+ * Droplets per half-resolution cell. Changed from 0.7: with heights in metres the slopes here are far steeper than
+ * Beyer's defaults assume, so droplets reach high speed and 0.7/cell cut trenches over 100 m deep (grid 257) and moved
+ * the mean land height by -4 m. At 0.02/cell the gullies are still plain to see (about a quarter of the cells in the hills
+ * drop more than 1 m at grid 2049) and the deepest cut is about 10 m.
+ */
+const DROPLETS_PER_CELL = 0.02;
 
 /**
  * Beyer-style droplet erosion, in place. Droplets roll downhill carving gullies and dropping scree fans.
- * It runs on a half-resolution copy (every second sample, ~0.7 droplets per cell instead of ~0.04 at the
+ * It runs on a half-resolution copy (every second sample, finer droplet coverage than at full resolution for the
  * same cost); the bilinearly upsampled change is then added to the full grid, so full-resolution detail
  * stays and the carving is layered on top. `g.grid` must be odd.
  */
 export function erode(g: HeightGrid, seed: number, droplets?: number): void {
   const { grid, h } = g, m = (grid - 1) / 2 + 1;
+  if ((grid - 1) % 2) throw new Error(`erode needs an odd grid size, got ${grid}`);
   const half = new Float32Array(m * m);
   for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) half[j * m + i] = h[2 * j * grid + 2 * i];
   const before = half.slice();
-  simulate(half, m, seed, droplets ?? Math.round(0.7 * m * m));
+  simulate(half, m, seed, droplets ?? Math.round(DROPLETS_PER_CELL * m * m));
   for (let i = 0; i < half.length; i++) half[i] -= before[i]; // now the change
   for (let j = 0; j < m; j++)
     for (let i = 0; i < m; i++) {
       const k = j * m + i, d00 = half[k], o = 2 * j * grid + 2 * i;
-      const d10 = i < m - 1 ? half[k + 1] : d00, d01 = j < m - 1 ? half[k + m] : d00, d11 = i < m - 1 && j < m - 1 ? half[k + m + 1] : i < m - 1 ? d10 : d01;
       h[o] += d00;
-      if (i < m - 1) h[o + 1] += (d00 + d10) / 2;
+      if (i < m - 1) h[o + 1] += (d00 + half[k + 1]) / 2;
       if (j < m - 1) {
-        h[o + grid] += (d00 + d01) / 2;
-        if (i < m - 1) h[o + grid + 1] += (d00 + d10 + d01 + d11) / 4;
+        h[o + grid] += (d00 + half[k + m]) / 2;
+        if (i < m - 1) h[o + grid + 1] += (d00 + half[k + 1] + half[k + m] + half[k + m + 1]) / 4;
       }
     }
 }
 
-/** The droplet simulation on a square grid of `grid` samples, in cell units. */
+/**
+ * The droplet simulation on a square grid of `grid` samples, in cell units. A droplet that stops (flat ground),
+ * leaves the grid or runs out of MAX_STEPS loses its remaining sediment (it is never deposited), which is why the mean height
+ * drifts slightly negative instead of being exactly conserved.
+ */
 function simulate(h: Float32Array, grid: number, seed: number, droplets: number): void {
   const max = grid - 1;
   const rng = mulberry32(seed ^ 0x9e3779b9);
@@ -38,7 +51,7 @@ function simulate(h: Float32Array, grid: number, seed: number, droplets: number)
   let total = 0;
   for (let dz = -RADIUS; dz <= RADIUS; dz++)
     for (let dx = -RADIUS; dx <= RADIUS; dx++) {
-      const w = RADIUS - Math.hypot(dx, dz);
+      const w = RADIUS - Math.sqrt(dx * dx + dz * dz);
       if (w > 0) { bx.push(dx); bz.push(dz); bw.push(w); total += w; }
     }
   const nb = bw.length;
@@ -54,7 +67,7 @@ function simulate(h: Float32Array, grid: number, seed: number, droplets: number)
       const hOld = h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz) + h01 * (1 - fx) * fz + h11 * fx * fz;
       dirX = dirX * INERTIA - gx * (1 - INERTIA);
       dirZ = dirZ * INERTIA - gz * (1 - INERTIA);
-      const len = Math.hypot(dirX, dirZ);
+      const len = Math.sqrt(dirX * dirX + dirZ * dirZ);
       if (len < 1e-9) break;
       dirX /= len; dirZ /= len;
       const nx = px + dirX, nz = pz + dirZ;
@@ -77,7 +90,8 @@ function simulate(h: Float32Array, grid: number, seed: number, droplets: number)
         for (let b = 0; b < nb; b++) h[i + brushOff[b]] -= amount * brushW[b];
         sediment += amount;
       }
-      speed = Math.sqrt(Math.max(0, speed * speed + dh * GRAVITY));
+      // dh is negative downhill, so subtracting it speeds the droplet up going down and slows it going up.
+      speed = Math.sqrt(Math.max(0, speed * speed - dh * GRAVITY));
       water *= 1 - EVAPORATE;
       px = nx; pz = nz;
     }
