@@ -36,25 +36,52 @@ const KEYS: Record<string, Button> = {
  */
 export class Input {
   private prev: PadState = { ...EMPTY_PAD };
-  private held = new Set<string>();
+  private keys = new Set<string>();
+  private last: PadState = { ...EMPTY_PAD };
+  private mx = 0;
+  private my = 0;
   private repeatAt = 0;
   onPress: (b: Button) => void = () => {};
   /** Set by the gamepad hook in dev checks to stand in for a real controller. */
   padStub: PadState | null = null;
 
-  constructor(target: Window = window) {
-    target.addEventListener('keydown', (e) => {
+  constructor(target: EventTarget = window) {
+    target.addEventListener('keydown', (ev) => {
+      const e = ev as KeyboardEvent;
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (typing && e.key !== 'Escape') return;
-      this.held.add(e.key.toLowerCase());
+      this.keys.add(e.key.toLowerCase());
       const b = KEYS[e.key];
       if (b) {
         e.preventDefault();
         this.onPress(b);
       }
     });
-    target.addEventListener('keyup', (e) => this.held.delete(e.key.toLowerCase()));
-    target.addEventListener('blur', () => this.held.clear());
+    target.addEventListener('keyup', (e) => this.keys.delete((e as KeyboardEvent).key.toLowerCase()));
+    target.addEventListener('blur', () => this.keys.clear());
+    target.addEventListener('mousemove', (ev) => {
+      if (typeof document === 'undefined' || !document.pointerLockElement) return;
+      const e = ev as MouseEvent;
+      this.mx += e.movementX;
+      this.my += e.movementY;
+    });
+  }
+
+  /** The gamepad state from the last poll. */
+  pad(): PadState {
+    return this.last;
+  }
+
+  /** Is this key down right now (case-insensitive)? */
+  held(key: string): boolean {
+    return this.keys.has(key.toLowerCase());
+  }
+
+  /** Mouse movement since the last call; only counts while the pointer is locked. */
+  mouse(): { dx: number; dy: number } {
+    const m = { dx: this.mx, dy: this.my };
+    this.mx = this.my = 0;
+    return m;
   }
 
   /** Call once per frame; returns how far to orbit (radians) and zoom (factor change) this frame. */
@@ -67,8 +94,8 @@ export class Input {
       this.repeatAt = now + 220;
       this.onPress(Math.abs(pad.lx) > Math.abs(pad.ly) ? (pad.lx > 0 ? 'right' : 'left') : pad.ly > 0 ? 'down' : 'up');
     }
-    this.prev = pad;
-    const k = (key: string) => (this.held.has(key) ? 1 : 0);
+    this.prev = this.last = pad;
+    const k = (key: string) => (this.keys.has(key) ? 1 : 0);
     const stickX = menuOpen ? 0 : pad.lx, stickY = menuOpen ? 0 : pad.ly;
     return {
       orbitX: (stickX + k('d') - k('a')) * 1.8 * dt,

@@ -26,6 +26,6 @@ export default defineConfig({
   plugins: [shots()],
   server: { port: 5180, strictPort: true, proxy: { '/api': 'http://localhost:8787' } },
   worker: { format: 'es' },
-  build: { target: 'es2023', chunkSizeWarningLimit: 1500, rollupOptions: { input: { lab: 'index.html', drawings: 'drawings.html' } } },
+  build: { target: 'es2023', chunkSizeWarningLimit: 1500, rollupOptions: { input: { valley: 'index.html', lab: 'lab.html', drawings: 'drawings.html' } } },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] },
 });

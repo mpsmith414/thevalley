@@ -1,9 +1,9 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { CAST } from '../../src/cast';
-import { nextFocus, type Rect } from '../../src/lab/focus';
+import { nextFocus, type Rect } from '../../src/shared/focus';
 import { Gallery, type GalleryItem } from '../../src/lab/gallery';
-import { EMPTY_PAD, edges, readPad } from '../../src/lab/input';
+import { EMPTY_PAD, Input, edges, readPad } from '../../src/shared/input';
 import { quadruped } from '../fixtures/recipes';
 
 describe('readPad', () => {
@@ -25,6 +25,15 @@ describe('readPad', () => {
     const b = readPad(pad([0, 0, 0, 0], [0, 1]));
     expect(edges(a, b)).toEqual(['b']);
     expect(edges(b, b)).toEqual([]);
+  });
+});
+
+describe('Input.mouse', () => {
+  it('returns zero when nothing moved', () => {
+    const input = new Input(new EventTarget());
+    expect(input.mouse()).toEqual({ dx: 0, dy: 0 });
+    expect(input.pad()).toEqual(EMPTY_PAD);
+    expect(input.held('W')).toBe(false);
   });
 });
 

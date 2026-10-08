@@ -15,6 +15,7 @@ export type Stage = {
   heightAt: (x: number, z: number) => number;
   isWater: (x: number, z: number) => boolean;
   waterLevel: number;
+  waterLevelAt: () => number;
   pond: { x: number; z: number; r: number };
   radius: number;
   sun: DirectionalLight;
@@ -136,7 +137,7 @@ export function createStage(scene: Scene, renderer: WebGPURenderer, tier: Tier):
   scene.add(new HemisphereLight('#cfe3ff', '#5a4a30', 0.35));
 
   return {
-    heightAt, isWater, waterLevel: WATER_LEVEL, pond: { x: POND.x, z: POND.z, r: POND.r }, radius: STAGE_RADIUS, sun,
+    heightAt, isWater, waterLevel: WATER_LEVEL, waterLevelAt: () => WATER_LEVEL, pond: { x: POND.x, z: POND.z, r: POND.r }, radius: STAGE_RADIUS, sun,
     update() {},
   };
 }

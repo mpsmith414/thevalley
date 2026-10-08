@@ -32,6 +32,7 @@ export function createShell(root: HTMLElement, on: ShellHandlers) {
       h('button', { class: 'tool primary', 'data-focus': true, onclick: on.newCreature }, h('span', { class: 'icon' }, '✨'), 'New creature'),
       h('button', { class: 'tool', 'data-focus': true, onclick: on.change }, h('span', { class: 'icon' }, '✏️'), 'Change it'),
       h('button', { class: 'tool', 'data-focus': true, onclick: on.gallery }, h('span', { class: 'icon' }, '🖼️'), 'Gallery'),
+      h('button', { class: 'tool', 'data-focus': true, onclick: () => (location.href = '/') }, h('span', { class: 'icon' }, '🏞️'), 'Valley'),
     ),
   );
   const layer = h('div', { class: 'layers' });

@@ -15,9 +15,10 @@ import { createRenderer } from '../render/renderer';
 import { renderView } from '../render/snapshot';
 import { createStage } from '../render/stage';
 import { mulberry32 } from '../util/rng';
-import { FocusRing } from './focus';
+import { FocusRing } from '../shared/focus';
 import { Gallery, newId, type GalleryItem } from './gallery';
-import { Input, type Button } from './input';
+import { Input, type Button } from '../shared/input';
+import { remember, stored } from '../shared/settings';
 import { openGallery } from './ui/galleryPanel';
 import { openNewCreature } from './ui/newCreature';
 import { openProgress } from './ui/progress';
@@ -27,21 +28,6 @@ import { createWorkshop, type WorkshopInfo } from './ui/workshop';
 import './lab.css';
 
 // ---------- settings (remembered per browser) ----------
-const stored = <T>(key: string, fallback: T): T => {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : (JSON.parse(v) as T);
-  } catch {
-    return fallback;
-  }
-};
-const remember = (key: string, v: unknown) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(v));
-  } catch {
-    /* private mode: settings just won't stick */
-  }
-};
 const settings = { tier: stored<Tier>('lab.tier', 'high'), passes: stored('lab.passes', 3) };
 
 // ---------- the 3D stage ----------

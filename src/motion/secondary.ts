@@ -133,7 +133,7 @@ export class SecondaryMotion {
     const shift = sub(start, joints0[0]);
     const init = joints0.map((p) => ({ x: p.x + shift.x, y: p.y + shift.y, z: p.z + shift.z }));
     const ahead = root.localToWorld(new Vector3(start.x, start.y, start.z + total * 0.55));
-    const groundY = r.ground.isWater(ahead.x, ahead.z) ? r.ground.waterLevel : r.ground.heightAt(ahead.x, ahead.z);
+    const groundY = r.ground.isWater(ahead.x, ahead.z) ? r.ground.waterLevelAt(ahead.x, ahead.z) : r.ground.heightAt(ahead.x, ahead.z);
     ahead.y = groundY + rest[chain[n - 1]].r1;
     const target = fromV(root.worldToLocal(ahead));
     const pole = v3(start.x, start.y + total, start.z + total * 0.5);

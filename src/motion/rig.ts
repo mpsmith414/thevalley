@@ -11,7 +11,7 @@ import { SecondaryMotion } from './secondary';
 export type Ground = {
   heightAt(x: number, z: number): number;
   isWater(x: number, z: number): boolean;
-  waterLevel: number;
+  waterLevelAt(x: number, z: number): number;
 };
 
 type Leg = {
@@ -181,10 +181,10 @@ export class CreatureRig {
     } else if (this.inWater && this.swimmer) {
       // cruise mid-water, never through the bed
       const bed = gAt(this.position) + this.restHeight;
-      y = Math.max(bed, this.ground.waterLevel - 0.22) - this.restHeight;
+      y = Math.max(bed, this.ground.waterLevelAt(this.position.x, this.position.z) - 0.22) - this.restHeight;
       roll = -this.turnRate * 0.15;
     } else if (this.inWater && this.floater) {
-      y = this.ground.waterLevel - this.restHeight * 0.85;
+      y = this.ground.waterLevelAt(this.position.x, this.position.z) - this.restHeight * 0.85;
     } else {
       const frontZ = this.legs.filter((l) => l.front).map((l) => l.home.z);
       const hindZ = this.legs.filter((l) => !l.front).map((l) => l.home.z);
