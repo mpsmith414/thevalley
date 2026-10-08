@@ -21,8 +21,13 @@ export function ringCells(k: number): number[] {
   return out;
 }
 
-/** Geomorph blend at Chebyshev distance `d` from a level's centre: 0 inside 80% of `half`, rising to 1 at the edge. */
+/**
+ * Geomorph blend at Chebyshev distance `d` from a level's centre: 0 inside 80% of `half`, rising to 1 at the edge.
+ * `morphNode` below is the same formula in TSL (the vertex shader's); the two must change together.
+ */
 export const morphFactor = (d: number, half: number) => Math.min(1, Math.max(0, (d / half - MORPH_START) / (1 - MORPH_START)));
+/** TSL twin of `morphFactor` (keep them in step). */
+const morphNode = (d: Node<'float'>, half: number) => clamp(d.div(half).sub(MORPH_START).div(1 - MORPH_START), 0, 1);
 
 export type LevelPlace = { spacing: number; centre: { x: number; z: number }; shift: { x: number; z: number } };
 
@@ -89,7 +94,7 @@ export function createTerrain(tex: ValleyTextures, _tier: Tier): { object: Group
   const levels = Array.from({ length: LEVELS }, (_, k) => {
     const centre = uniform(new Vector2()), shift = uniform(new Vector2()), spacing = tex.cell * 2 ** k;
     const local = positionLocal.xz, d = max(abs(local.x), abs(local.y));
-    const morph = clamp(d.div(N / 2).sub(MORPH_START).div(1 - MORPH_START), 0, 1);
+    const morph = morphNode(d, N / 2); // mirrors morphFactor(): change both together
     const morphed = local.sub(fract(local.mul(0.5)).mul(2).mul(morph)); // odd vertices slide onto their even neighbour
     const edged = morphed.add(shift.mul(step(d, N / 4 + 0.5))); // hole-edge vertices follow the finer square
     const xz = clamp(centre.add(edged.mul(spacing)), -half, half); // outside the valley: collapse onto the border

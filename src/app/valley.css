@@ -24,6 +24,13 @@ body { background: #b9c8cf; color: #14405c; }
 .loading-stages li.done { background: #5fae4a; color: #fff; }
 .loading-stages li.done::before { content: '✓ '; }
 .loading.failed .loading-bar, .loading.failed .loading-stages { display: none; }
+.loading-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin-top: 8px; }
+.loading-button {
+  padding: 16px 34px; border: 0; border-radius: 999px; background: #fff; color: #14405c; font: inherit; font-weight: 800; font-size: 24px;
+  text-decoration: none; cursor: pointer; box-shadow: 0 4px 14px #0003;
+}
+.loading-button:first-child { background: #5fae4a; color: #fff; }
+.loading-button:hover, .loading-button:focus-visible { outline: 4px solid #14405c; outline-offset: 2px; }
 
 /* ---------- notes ---------- */
 .toast {

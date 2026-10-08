@@ -20,16 +20,18 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = '
 
 /**
  * The full-screen loading screen: a big progress bar, the current stage in friendly words, and all six stages
- * ticking off. Generation only reports the start and end of each stage, so the bar glides through a stage over
+ * ticking off. `fail` turns it into a friendly error with "Try again" and "Creature Lab" buttons. Generation only reports the start and end of each stage, so the bar glides through a stage over
  * about the time it usually takes.
  */
 export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: number): void; close(): void; fail(message: string): void } {
   const screen = el('div', 'loading');
-  screen.setAttribute('role', 'progressbar');
-  screen.setAttribute('aria-valuemin', '0');
-  screen.setAttribute('aria-valuemax', '100');
   const title = el('h1', 'loading-title', 'Making your valley');
   const bar = el('div', 'loading-bar'), fill = el('div', 'loading-fill');
+  bar.setAttribute('role', 'progressbar');
+  bar.setAttribute('aria-label', 'Making your valley');
+  bar.setAttribute('aria-valuemin', '0');
+  bar.setAttribute('aria-valuemax', '100');
+  bar.setAttribute('aria-valuenow', '0');
   bar.append(fill);
   const label = el('p', 'loading-label', 'Getting ready…');
   label.setAttribute('aria-live', 'polite');
@@ -41,7 +43,7 @@ export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: nu
   const setFill = (frac: number, ms: number) => {
     fill.style.transition = `width ${ms}ms ${ms > 400 ? 'cubic-bezier(.2,.6,.4,1)' : 'ease-out'}`;
     fill.style.width = `${(frac * 100).toFixed(1)}%`;
-    screen.setAttribute('aria-valuenow', String(Math.round(frac * 100)));
+    bar.setAttribute('aria-valuenow', String(Math.round(frac * 100)));
   };
 
   return {
@@ -68,6 +70,15 @@ export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: nu
       screen.classList.add('failed');
       title.textContent = 'Oh no!';
       label.textContent = message;
+      const again = el('button', 'loading-button', 'Try again');
+      again.type = 'button';
+      again.addEventListener('click', () => location.reload());
+      const lab = el('a', 'loading-button', 'Creature Lab');
+      lab.href = '/lab.html';
+      const buttons = el('div', 'loading-buttons');
+      buttons.append(again, lab);
+      screen.append(buttons);
+      again.focus();
     },
   };
 }
