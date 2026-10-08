@@ -183,7 +183,7 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
     csm = new CSMShadowNode(light, { cascades: q.cascades, maxFar: q.shadowFar, mode: 'practical', lightMargin: 200 });
     // The cascade tests are shader branches, and three declares `normalWorld` where it is first used: inside one of them. Beyond the last
     // cascade no branch runs, so the ambient light would see a zero normal and jump brighter/darker at the shadow limit. Use it up front.
-    const cascaded = csm;
+    const cascaded = csm as unknown as Node<'vec4'>;
     light.shadow.shadowNode = normalWorld.x.mul(0).add(1).mul(cascaded);
   } catch (e) {
     console.warn('cascaded shadows unavailable; one shadow map instead', e);
