@@ -75,7 +75,7 @@ export function computeBiomes(g: HeightGrid, water: WaterMaps, layout: Layout): 
         else if (r.a.kind === 'rock') rockArea = Math.max(rockArea, s);
         else beachArea = Math.max(beachArea, s);
       }
-      const rock = Math.max(smoothstep(28, 40, slope), smoothstep(150, 175, height), rockArea * smoothstep(10, 25, slope));
+      const rock = Math.max(smoothstep(36, 48, slope), smoothstep(165, 195, height), rockArea * smoothstep(10, 25, slope));
       const beach = beachArea * smoothstep(60, 20, wd);
       const shore = (1 - rock) * smoothstep(12, 2, wd) * (1 - beach);
       const meadow = meadowArea * (1 - rock) * (1 - shore) * (1 - beach);

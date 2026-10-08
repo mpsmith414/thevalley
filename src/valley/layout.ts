@@ -20,11 +20,11 @@ export const VALLEY: Layout = {
   floor: 3,
   rim: 60,
   ridges: [
-    { points: [P(-800, -700), P(0, -640), P(800, -680)], height: 170, width: 260, rocky: 0.4 },
-    { points: [P(-760, -600), P(-720, 0), P(-700, 700)], height: 140, width: 220, rocky: 0.3 },
-    { points: [P(560, -520), P(620, -100), P(650, 450)], height: 150, width: 200, rocky: 0.9 },
-    { points: [P(-250, 350)], height: 45, width: 90, rocky: 0.8 },
-    { points: [P(-700, 760), P(700, 750)], height: 70, width: 200, rocky: 0.2 },
+    { points: [P(-800, -700), P(0, -640), P(800, -680)], height: 136, width: 260, rocky: 0.4 },
+    { points: [P(-760, -600), P(-720, 0), P(-700, 700)], height: 112, width: 220, rocky: 0.3 },
+    { points: [P(560, -520), P(620, -100), P(650, 450)], height: 120, width: 200, rocky: 0.9 },
+    { points: [P(-250, 350)], height: 36, width: 90, rocky: 0.8 },
+    { points: [P(-700, 760), P(700, 750)], height: 56, width: 200, rocky: 0.2 },
   ],
   lake: { outline: lakeOutline(150, 200, 190, 130), depth: 9, level: 0 },
   river: {
