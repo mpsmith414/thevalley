@@ -7,8 +7,8 @@ import {
   UnsignedByteType, type Node, type NodeBuilder,
 } from 'three/webgpu';
 import {
-  Fn, If, abs, cameraPosition, cameraViewMatrix, clamp, color, dFdx, dFdy, diffuseColor, float, floor, fract, int, ivec2, max, mix,
-  mx_noise_float, normalize, positionWorld, pow, round, select, sin, smoothstep, step, texture, vec2, vec3, vec4,
+  Fn, If, abs, cameraPosition, cameraViewMatrix, clamp, dFdx, dFdy, diffuseColor, float, floor, fract, int, ivec2, max, mix,
+  mx_noise_float, normalize, positionWorld, pow, select, sin, smoothstep, texture, vec2, vec3, vec4,
 } from 'three/tsl';
 import type { Tier } from '../render/quality';
 import { WORLD_QUALITY } from './quality';
@@ -157,7 +157,7 @@ class GroundMaterial extends MeshStandardNodeMaterial {
  * The biome-blended ground: weights from `biomeA`/`biomeB`, moss on rock tops and in damp forest, planar sets with
  * anti-tiling, triplanar granite, macro tint, cavity, wet margins by the water, and detail normals whiteout-blended into the
  * terrain normal. Sets whose weight is near zero are not sampled, and far ground uses each set's average colour. Low tier
- * skips the detail normals and the second (anti-tiling) sample. The water is tinted until the lake gets its own surface.
+ * skips the detail normals and the second (anti-tiling) sample.
  */
 export function createGroundMaterial(tex: ValleyTextures, sets: GroundSets, tier: Tier): MeshStandardNodeMaterial {
   const low = tier === 'low';
@@ -272,17 +272,22 @@ export function createGroundMaterial(tex: ValleyTextures, sets: GroundSets, tier
   let colour: Node<'vec3'> = surf.rgb.mul(float(1).add(macro.mul(0.1)));
   colour = colour.mul(vec3(float(1).add(hue.mul(0.04)), 1, float(1).sub(hue.mul(0.04))));
   colour = colour.mul(clamp(float(1).sub(nt.a.sub(0.5).mul(1.6)), 0.75, 1)); // 128 is flat; hollows hold more, so darker
-  const wet = smoothstep(0.76, 0.9, biomeB.g); // fully wet within about 4 m of the water, dry by 11 m (moisture = e^(−d/40))
-  colour = colour.mul(mix(1, 0.6, wet));
+  // Moisture is e^(−d/40), d metres from the water. A broad damp margin (full within about 4 m, dry by 11 m), and the
+  // soaked strip the water laps (full within 1.5 m, gone by 3 m), so the waterline reads darker next to the real water.
+  const wet = smoothstep(0.76, 0.9, biomeB.g), soaked = smoothstep(0.928, 0.963, biomeB.g);
+  colour = colour.mul(mix(1, 0.72, wet)).mul(mix(1, 0.62, soaked));
   // Dry ground is never glossy. Wet ground is smoother, but not so smooth that the sky's sheen at a low angle outshines the
   // darkening (at 0.35 the wet band read lighter than the dry sand).
-  let roughness: Node<'float'> = mix(mix(0.75, 1, surf.a), 0.55, wet);
-  // under water: the lake's own colour, deeper is bluer (until the water surface arrives)
-  const m = tex.mapGrid, node = clamp(round(xz.add(tex.size / 2).div(tex.size / (m - 1))), 0, m - 1);
-  const level = texture(tex.waterTex).load(ivec2(int(node.x), int(node.y))).r, depth = level.sub(y);
-  const under = step(0.02, depth).mul(mix(0.35, 0.9, smoothstep(0, 4, depth)));
-  colour = mix(colour, color('#1d4a5e'), under);
-  roughness = mix(roughness, 0.9, step(0.02, depth)); // the stand-in lake bed stays matt, without the shore's sheen
+  let roughness: Node<'float'> = mix(mix(0.75, 1, surf.a), 0.6, wet);
+  // Under water: the bed is wet and matt, and a little darker and greener the deeper it lies (the water's own colour and
+  // opacity come from the lake and river surfaces). The level is the highest of the four nearest map nodes, so the cells
+  // along the shore count as water and the line is drawn by the full-resolution ground height, without stair-steps.
+  const m = tex.mapGrid, f = clamp(xz.add(tex.size / 2).div(tex.size / (m - 1)), 0, m - 2), i0 = floor(f);
+  const wt = texture(tex.waterTex), lv = (dx: number, dz: number) => wt.load(ivec2(int(i0.x).add(dx), int(i0.y).add(dz))).r;
+  const depth = max(max(lv(0, 0), lv(1, 0)), max(lv(0, 1), lv(1, 1))).sub(y);
+  const under = smoothstep(0, 0.15, depth);
+  colour = mix(colour, colour.mul(mix(vec3(0.9), vec3(0.6, 0.74, 0.72), smoothstep(0.3, 3, depth))), under);
+  roughness = mix(roughness, 0.9, under); // no sky sheen from the bed under the water
 
   const mat = new GroundMaterial({ metalness: 0 });
   mat.groundColorNode = colour;

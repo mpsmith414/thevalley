@@ -13,6 +13,8 @@ import { createBackdrop } from '../world/backdrop';
 import { ValleyClock, moonDirection, moonPhase, sunDirection } from '../world/clock';
 import { lightingAt } from '../world/lighting';
 import { loadGroundSets } from '../world/ground';
+import { createLake } from '../world/lake';
+import { createRiver } from '../world/river';
 import { createSky } from '../world/sky';
 import { createTerrain } from '../world/terrain';
 import { valleyTextures } from '../world/textures';
@@ -53,10 +55,18 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // ---------- time of day: the clock drives the sun, moon, sky, light and fog ----------
   const clock = new ValleyClock();
   const sky = createSky(scene, renderer, tier, tex);
+  // the water (after the sky: it mirrors the sky's environment map)
+  const lake = createLake(data, tex, tier, scene), river = createRiver(data, tex, tier, scene);
+  scene.add(lake.object, river.object);
+  let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
   const light = (dt: number) => {
     const hour = clock.hour, sun = sunDirection(hour), moon = moonDirection(clock.hours);
-    sky.update(lightingAt(hour, sun, moon, moonPhase(clock.hours)), sun, moon, camera, clock.hours, dt);
+    const state = lightingAt(hour, sun, moon, moonPhase(clock.hours));
+    sky.update(state, sun, moon, camera, clock.hours, dt);
+    if (Number.isFinite(dt)) waterTime += dt;
+    lake.update(waterTime, state);
+    river.update(waterTime, state);
   };
 
   // ---------- the camera: free-fly, with gliding viewpoints ----------
@@ -149,7 +159,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   light(Infinity);
   await renderer.compileAsync(scene, camera);
   performance.mark('valley-ready');
-  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, view, goTo, fly, input, tick };
+  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -220,6 +230,12 @@ function devHooks(w: World) {
     __valley: {
       ...w, tier, step, shot, screen,
       resume: () => (paused = false),
+      /** Put the camera `h` m above the ground (or water) at (x, z), looking at the point `lh` m above (lx, lz). */
+      at: (x: number, z: number, h: number, lx: number, lz: number, lh = 0) => {
+        const p = viewpointPose({ name: 'dev', pos: { x, z, h }, look: { x: lx, z: lz, h: lh } }, w.valley);
+        Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
+        w.fly.apply(camera);
+      },
       /** Jump the clock forward to `hour` o'clock and relight at once (a following `shot` shows it). */
       time: (hour: number) => {
         clock.jumpTo(hour);

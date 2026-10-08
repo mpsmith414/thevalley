@@ -14,6 +14,15 @@ const smoothstep = (a: number, b: number, x: number) => {
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 /** River banks reach BANK m past the water's edge and the lake shore SHORE m from the outline; then they blend back into the terrain over BLEND m. */
 const BANK = 8, SHORE = 40, BLEND = 16;
+/**
+ * Metres the ground sits below the water just inside the shore and above it just outside. Small, so the ground runs
+ * through the waterline as one gentle slope: a step there would follow the height grid and draw a stair-stepped shore.
+ */
+const EDGE = 0.02;
+/** Slope of the lake's shelf just inside the shore (it meets the old basin profile 0.3 m down). */
+const SHELF = 0.08;
+/** Metres of bank beside the river kept above the water (rising 6%: a low levee only where the ground falls away). */
+const LEVEE = 3;
 /** Lower `h` to `cap`, fully up to the edge of the zone (`past` <= 0) and fading out over BLEND m past it, so no cliff forms at the edge. */
 const cut = (h: number, cap: number, past: number) => (h <= cap ? h : past <= 0 ? cap : cap + (h - cap) * smoothstep(0, BLEND, past));
 
@@ -23,8 +32,10 @@ function riverProfile(g: HeightGrid, layout: Layout): RiverSample[] {
   const cs = catmullRom(river.points, 2), n = cs.length, total = cs[n - 1].s || 1;
   const surface = new Float64Array(n), raw = new Float64Array(n);
   for (let k = 0; k < n; k++) {
-    const { p, s } = cs[k], t = sampleHeight(g, p.x, p.z) - 0.3;
-    if (k === n - 1 || sdPolygon(p, lake.outline) < 0) surface[k] = lake.level;
+    const { p, s } = cs[k], sd = sdPolygon(p, lake.outline);
+    // below the ground, and below the lake's shore, which is lowered to a gentle slope later
+    const t = Math.min(sampleHeight(g, p.x, p.z), sd < SHORE ? lake.level + EDGE + Math.max(0, sd) * 0.12 : Infinity) - 0.3;
+    if (k === n - 1 || sd < 0) surface[k] = lake.level;
     else surface[k] = Math.max(lake.level, k === 0 ? t : Math.min(surface[k - 1] - 0.002 * (s - cs[k - 1].s), t));
   }
   for (let k = 1; k < n; k++) raw[k] = (surface[k - 1] - surface[k]) / ((cs[k].s - cs[k - 1].s) || 1);
@@ -37,6 +48,25 @@ function riverProfile(g: HeightGrid, layout: Layout): RiverSample[] {
       slope: sum / c, tx: q.t.x, tz: q.t.z,
     };
   });
+}
+
+/**
+ * Where `p` sits against the course near sample `k`: its distance square to the course (to the nearer of the two segments
+ * either side of `k`), and the water surface and width there, interpolated along that segment. Measuring to the sample
+ * points instead would scallop the banks every 2 m, and taking the nearest sample's surface would terrace a steep bed.
+ */
+export function onCourse(p: Pt, river: RiverSample[], k: number): { d: number; surface: number; width: number } {
+  let best = { d: Infinity, surface: river[k].surface, width: river[k].width };
+  for (const j of [k - 1, k]) {
+    const a = river[j], b = river[j + 1];
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+    const t = l2 < 1e-12 ? 0 : clamp(((p.x - a.x) * dx + (p.z - a.z) * dz) / l2, 0, 1);
+    const d = Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
+    if (d < best.d) best = { d, surface: a.surface + (b.surface - a.surface) * t, width: a.width + (b.width - a.width) * t };
+  }
+  if (best.d === Infinity) best.d = Math.hypot(p.x - river[k].x, p.z - river[k].z); // a single sample
+  return best;
 }
 
 /**
@@ -91,7 +121,8 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
   const grid = g.grid, half = g.size / 2, h = g.h;
   const index = buildPolylineIndex(river.map((r) => ({ p: { x: r.x, z: r.z }, s: r.s, t: { x: r.tx, z: r.tz } })));
   const channel = new Uint8Array(grid * grid), inLake = new Uint8Array(grid * grid);
-  const nearest = new Int32Array(grid * grid).fill(-1); // only filled for channel cells
+  const nearest = new Int32Array(grid * grid).fill(-1), surf = new Float32Array(grid * grid); // only filled for channel cells
+  const bankFloor = new Float32Array(grid * grid).fill(-Infinity); // the least height of the banks, applied after the lake
 
   // 2. River bed and banks, only where a sample can be near enough (a bucket mask skips the far cells cheaply).
   const reach = Math.max(course.width0, course.width1) / 2 + BANK + BLEND, R = Math.ceil(reach / index.bucket);
@@ -107,12 +138,17 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
     for (let ix = rb.i0; ix <= rb.i1; ix++) {
       const x = -half + ix * g.cell, bx = Math.floor(x / index.bucket) - index.minCx + R;
       if (bx < 0 || bx >= mw || !near[bz * mw + bx]) continue;
-      const { i: k, d } = nearestOnPolyline({ x, z }, index);
-      const r = river[k], w2 = r.width / 2, c = iz * grid + ix;
+      const { i: k } = nearestOnPolyline({ x, z }, index);
+      const { d, surface, width } = onCourse({ x, z }, river, k), w2 = width / 2, c = iz * grid + ix;
       if (d < w2) {
-        h[c] = Math.min(h[c], r.surface - course.depth * (1 - (d / w2) ** 2) - 0.05);
-        channel[c] = 1; nearest[c] = k;
-      } else if (d < w2 + BANK + BLEND) h[c] = cut(h[c], r.surface + 0.3 + (d - w2) * 0.35, d - w2 - BANK);
+        h[c] = Math.min(h[c], surface - course.depth * (1 - (d / w2) ** 2) - EDGE);
+        channel[c] = 1; nearest[c] = k; surf[c] = surface;
+      } else if (d < w2 + BANK + BLEND) {
+        h[c] = cut(h[c], surface + EDGE + (d - w2) * 0.35, d - w2 - BANK);
+        // where the ground falls away (across a hillside, or the lowered lake shore) the bank still holds the water
+        const f = surface + EDGE + Math.min(d - w2, LEVEE) * 0.06 - Math.max(0, d - w2 - LEVEE) * 0.5;
+        bankFloor[c] = Math.max(bankFloor[c], f);
+      }
     }
   }
 
@@ -127,17 +163,17 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
       const p = { x: -half + ix * g.cell, z: -half + iz * g.cell }, sd = row(p.x), c = iz * grid + ix;
       if (sd < 0) {
         inLake[c] = 1;
-        h[c] = Math.min(h[c], level - 0.3 - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
+        h[c] = Math.min(h[c], level - EDGE - Math.min(-sd * SHELF, 0.3 - EDGE) - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
       } else if (sd < 60) {
-        if (sd < SHORE + BLEND) h[c] = cut(h[c], level + 0.2 + sd * 0.12, sd - SHORE);
+        if (sd < SHORE + BLEND) h[c] = cut(h[c], level + EDGE + sd * 0.12, sd - SHORE);
         const sb = beach ? sdPolygon(p, beach.points) : Infinity;
-        if (sb < BLEND) h[c] = cut(h[c], level + 0.15 + sd * 0.05, sb);
+        if (sb < BLEND) h[c] = cut(h[c], level + EDGE + sd * 0.05, sb);
       }
     }
   }
 
-  // 5. Dry land stays dry.
-  for (let c = 0; c < h.length; c++) if (!inLake[c] && !channel[c]) h[c] = Math.max(h[c], level + 0.2);
+  // 5. Dry land stays dry, and the river's banks hold it.
+  for (let c = 0; c < h.length; c++) if (!inLake[c] && !channel[c]) h[c] = Math.max(h[c], level + EDGE, bankFloor[c]);
 
   // Water maps at the map-cell centres (every second height sample).
   const m = (grid - 1) / 2 + 1, levelMap = new Float32Array(m * m).fill(NaN), flow = new Float32Array(m * m * 2), kind = new Uint8Array(m * m);
@@ -145,7 +181,7 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
     const c = iz * m + ix, gc = 2 * iz * grid + 2 * ix;
     if (inLake[gc]) { kind[c] = 1; levelMap[c] = level; } else if (channel[gc]) {
       const r = river[nearest[gc]], speed = clamp(0.4 + 6 * r.slope, 0.4, 2.5);
-      kind[c] = 2; levelMap[c] = r.surface; flow[2 * c] = r.tx * speed; flow[2 * c + 1] = r.tz * speed;
+      kind[c] = 2; levelMap[c] = surf[gc]; flow[2 * c] = r.tx * speed; flow[2 * c + 1] = r.tz * speed;
     }
   }
   return { river, water: { mapGrid: m, level: levelMap, flow, kind } };

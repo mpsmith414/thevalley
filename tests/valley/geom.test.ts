@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mulberry32 } from '../../src/util/rng';
-import { pointInPolygon, sdPolygon, catmullRom, catmullRomAt, nearestOnPolyline, buildPolylineIndex } from '../../src/valley/geom';
+import { pointInPolygon, sdPolygon, catmullRom, catmullRomAt, nearestOnPolyline, buildPolylineIndex, offsetPolygon } from '../../src/valley/geom';
+import { VALLEY } from '../../src/valley/layout';
 
 const square = [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 1, z: 1 }, { x: 0, z: 1 }];
 
@@ -76,5 +77,47 @@ describe('nearestOnPolyline', () => {
     const samples = catmullRom([{ x: 0, z: 0 }, { x: 40, z: 10 }], 2);
     const got = nearestOnPolyline({ x: 5000, z: -3000 }, buildPolylineIndex(samples));
     expect(got.i).toBe(samples.length - 1);
+  });
+});
+
+describe('offsetPolygon', () => {
+  const area = (poly: { x: number; z: number }[]) =>
+    Math.abs(poly.reduce((s, a, i) => { const b = poly[(i + 1) % poly.length]; return s + a.x * b.z - b.x * a.z; }, 0)) / 2;
+  /** True when no two non-adjacent edges cross. */
+  const simple = (poly: { x: number; z: number }[]) => {
+    const n = poly.length, cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue;
+      const a = poly[i], b = poly[(i + 1) % n], c = poly[j], d = poly[(j + 1) % n];
+      if (cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0) return false;
+    }
+    return true;
+  };
+  type Pt = { x: number; z: number };
+  const sq10 = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+
+  it('grows a square by the offset on every side (either winding), keeping its corners', () => {
+    for (const poly of [sq10, [...sq10].reverse()]) {
+      const out = offsetPolygon(poly, 1);
+      expect(out).toHaveLength(4);
+      expect(Math.abs(area(out) - 144) / 144).toBeLessThan(0.01);
+      expect(simple(out)).toBe(true);
+      for (const p of out) expect(sdPolygon(p, poly)).toBeCloseTo(Math.SQRT2, 6); // the miter corner
+    }
+  });
+  it('shrinks with a negative offset', () => {
+    expect(Math.abs(area(offsetPolygon(sq10, -1)) - 64) / 64).toBeLessThan(0.01);
+  });
+  it('keeps the lake shore simple 30 m out, about 30 m from the shore everywhere', () => {
+    const shore = VALLEY.lake.outline, out = offsetPolygon(shore, 30);
+    expect(out).toHaveLength(shore.length);
+    expect(simple(out)).toBe(true);
+    for (const p of out) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.z)).toBe(true);
+      const d = sdPolygon(p, shore);
+      expect(d).toBeGreaterThan(29);
+      expect(d).toBeLessThan(31.5);
+    }
+    expect(area(out)).toBeGreaterThan(area(shore));
   });
 });

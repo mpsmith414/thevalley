@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { VALLEY } from '../../src/valley/layout';
 import { baseShape, sampleHeight, type HeightGrid } from '../../src/valley/generate/shape';
 import { erode } from '../../src/valley/generate/erosion';
-import { carveWater, type RiverSample, type WaterMaps } from '../../src/valley/generate/carve';
-import { pointInPolygon, sdPolygon } from '../../src/valley/geom';
+import { carveWater, onCourse, type RiverSample, type WaterMaps } from '../../src/valley/generate/carve';
+import { buildPolylineIndex, nearestOnPolyline, pointInPolygon, sdPolygon } from '../../src/valley/geom';
 import { hashNumbers } from '../../src/util/hash';
 import { mulberry32 } from '../../src/util/rng';
 
@@ -45,14 +45,43 @@ describe('carveWater', () => {
     for (const r of wide) expect(sampleHeight(g, r.x, r.z)).toBeLessThan(r.surface);
   });
 
-  it('sinks every cell inside the lake outline below the water', () => {
+  it('keeps the banks above the water all the way down, on side slopes and by the lake too', () => {
+    const index = buildPolylineIndex(river.map((r) => ({ p: { x: r.x, z: r.z }, s: r.s, t: { x: r.tx, z: r.tz } })));
+    let n = 0, worst = Infinity;
+    for (let iz = 0; iz < GRID; iz++) for (let ix = 0; ix < GRID; ix++) {
+      const p = xz(ix, iz, g);
+      if (p.x < -620 || p.x > 120 || p.z < -560 || p.z > 160) continue; // the river's box
+      if (sdPolygon(p, VALLEY.lake.outline) < 0) continue; // lake water there
+      const k = nearestOnPolyline(p, index).i, q = onCourse(p, river, k);
+      if (q.d < q.width / 2 + 0.5 || q.d > q.width / 2 + 3) continue; // the first 3 m of bank
+      n++;
+      worst = Math.min(worst, g.h[iz * GRID + ix] - q.surface);
+    }
+    expect(n).toBeGreaterThan(200);
+    expect(worst).toBeGreaterThan(0);
+  });
+
+  it('sinks every cell inside the lake outline below the water, 0.3 m and more once 3.5 m in', () => {
     let n = 0;
     for (let iz = 0; iz < GRID; iz++) for (let ix = 0; ix < GRID; ix++) {
-      if (!pointInPolygon(xz(ix, iz, g), VALLEY.lake.outline)) continue;
+      const p = xz(ix, iz, g);
+      if (!pointInPolygon(p, VALLEY.lake.outline)) continue;
       n++;
-      expect(g.h[iz * GRID + ix]).toBeLessThan(level - 0.25);
+      expect(g.h[iz * GRID + ix]).toBeLessThan(level - 0.0199);
+      if (sdPolygon(p, VALLEY.lake.outline) < -3.5) expect(g.h[iz * GRID + ix]).toBeLessThan(level - 0.299);
     }
     expect(n).toBeGreaterThan(1000);
+  });
+
+  it('runs the ground through the shore line without a step (so the water meets it in a clean line)', () => {
+    let n = 0;
+    for (let iz = 0; iz < GRID; iz++) for (let ix = 0; ix < GRID; ix++) {
+      const p = xz(ix, iz, g), sd = sdPolygon(p, VALLEY.lake.outline);
+      if (Math.abs(sd) > 0.6 || river.some((r) => Math.hypot(r.x - p.x, r.z - p.z) < r.width / 2 + 3)) continue;
+      n++;
+      expect(Math.abs(g.h[iz * GRID + ix] - level)).toBeLessThan(0.1);
+    }
+    expect(n).toBeGreaterThan(50);
   });
 
   it('keeps every dry map cell above the waterline', () => {
@@ -64,7 +93,7 @@ describe('carveWater', () => {
       if (k === 0) {
         dry++;
         expect(Number.isNaN(water.level[c])).toBe(true);
-        expect(g.h[2 * iz * GRID + 2 * ix]).toBeGreaterThanOrEqual(level + 0.19);
+        expect(g.h[2 * iz * GRID + 2 * ix]).toBeGreaterThanOrEqual(level + 0.0199);
       } else if (k === 1) {
         lake++;
         expect(water.level[c]).toBe(level);
@@ -91,7 +120,7 @@ describe('carveWater', () => {
       if (sd > 0 && sd < 30) near.push(iz * GRID + ix);
     }
     expect(near.length).toBeGreaterThan(500);
-    for (let i = 0; i < 500; i++) expect(g.h[near[Math.floor(rng() * near.length)]]).toBeLessThan(level + 0.2 + 30 * 0.12 + 0.01);
+    for (let i = 0; i < 500; i++) expect(g.h[near[Math.floor(rng() * near.length)]]).toBeLessThan(level + 0.02 + 30 * 0.12 + 0.01);
   });
 
   it('is deterministic', () => {
@@ -100,5 +129,23 @@ describe('carveWater', () => {
     expect(hashNumbers(g2.h)).toBe(hashNumbers(g.h));
     expect(hashNumbers(r2.water.level)).toBe(hashNumbers(water.level));
     expect(r2.river.length).toBe(river.length);
+  });
+});
+
+describe('onCourse', () => {
+  // a straight course along +x, falling 0.1 m per 2 m sample and widening by 0.2 m
+  const course: RiverSample[] = Array.from({ length: 5 }, (_, k) => ({ x: 2 * k, z: 0, s: 2 * k, surface: 5 - 0.1 * k, width: 3 + 0.2 * k, slope: 0.05, tx: 1, tz: 0 }));
+  it('measures the distance square to the course, not to the nearest sample', () => {
+    const q = onCourse({ x: 3, z: 0.5 }, course, 1); // halfway between samples 1 and 2
+    expect(q.d).toBeCloseTo(0.5, 9);
+    expect(q.surface).toBeCloseTo(4.85, 9);
+    expect(q.width).toBeCloseTo(3.3, 9);
+  });
+  it('works from either neighbouring sample and clamps at the ends', () => {
+    expect(onCourse({ x: 3, z: -1 }, course, 2).surface).toBeCloseTo(4.85, 9);
+    const end = onCourse({ x: 9, z: 0 }, course, 4);
+    expect(end.d).toBeCloseTo(1, 9);
+    expect(end.surface).toBeCloseTo(4.6, 9);
+    expect(onCourse({ x: -2, z: 0 }, course, 0).surface).toBeCloseTo(5, 9);
   });
 });

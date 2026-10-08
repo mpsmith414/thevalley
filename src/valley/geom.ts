@@ -110,3 +110,26 @@ export function nearestOnPolyline(p: Pt, index: PolylineIndex): { i: number; d: 
   }
   return { i: bi, d: bd };
 }
+
+/**
+ * The polygon moved `d` metres outward (inward when negative), whatever its winding: each vertex slides along the bisector of
+ * its two edges' normals by the miter length `d / cos(half the turn)`, capped at 4·|d| so a sharp spike cannot shoot off.
+ */
+export function offsetPolygon(poly: Pt[], d: number): Pt[] {
+  const n = poly.length;
+  let twice = 0;
+  for (let i = 0; i < n; i++) { const a = poly[i], b = poly[(i + 1) % n]; twice += a.x * b.z - b.x * a.z; }
+  const s = twice >= 0 ? 1 : -1; // counter-clockwise in (x, z): the outward normal of edge (dx, dz) is (dz, −dx)
+  const normal = (a: Pt, b: Pt): Pt => {
+    const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
+    return { x: (s * dz) / l, z: (-s * dx) / l };
+  };
+  return poly.map((p, i) => {
+    const n0 = normal(poly[(i - 1 + n) % n], p), n1 = normal(p, poly[(i + 1) % n]);
+    let mx = n0.x + n1.x, mz = n0.z + n1.z;
+    const l = Math.hypot(mx, mz);
+    if (l < 1e-9) { mx = n1.x; mz = n1.z; } else { mx /= l; mz /= l; } // a full reversal: push along the next edge's normal
+    const k = Math.min(4, 1 / Math.max(1e-9, mx * n1.x + mz * n1.z));
+    return { x: p.x + mx * d * k, z: p.z + mz * d * k };
+  });
+}
