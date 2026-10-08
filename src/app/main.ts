@@ -1,7 +1,10 @@
 import { Color, DirectionalLight, Fog, HemisphereLight, PerspectiveCamera, Scene, Vector3 } from 'three/webgpu';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
+import { FreeFly, intentFrom, toggleDown } from '../camera/freefly';
+import { Glide, viewpointPose } from '../camera/viewpoints';
 import { isTier, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
+import { Input } from '../shared/input';
 import { stored } from '../shared/settings';
 import { loadValley } from '../valley/cache';
 import { VALLEY } from '../valley/layout';
@@ -52,15 +55,70 @@ async function start(step: Parameters<typeof loadValley>[2]) {
   const backdrop = createBackdrop(data);
   scene.add(sky, sun, sun.target, hemi, terrain.object, backdrop);
 
-  /** Put the camera at viewpoint `n` (1–8): eye and target are metres above the ground (or the water). */
-  const view = (n: number) => {
-    const v = VALLEY.viewpoints[Math.min(VALLEY.viewpoints.length, Math.max(1, Math.round(n))) - 1];
-    const ground = (x: number, z: number) => Math.max(valley.heightAt(x, z), valley.isWater(x, z) ? valley.waterLevelAt(x, z) : -Infinity);
-    camera.position.set(v.pos.x, ground(v.pos.x, v.pos.z) + v.pos.h, v.pos.z);
-    camera.lookAt(v.look.x, ground(v.look.x, v.look.z) + v.look.h, v.look.z);
-    return v.name;
+  // ---------- the camera: free-fly, with gliding viewpoints ----------
+  const input = new Input();
+  const views = VALLEY.viewpoints;
+  const start0 = viewpointPose(views[views.length - 1], valley); // Valley Overview
+  const fly = new FreeFly(start0.pos, start0.yaw, start0.pitch);
+  let current = views.length - 1; // the viewpoint we are at or flying to
+  let glide: { g: Glide; t: number } | null = null;
+  let wasToggle = false;
+  const setPose = (p: { pos: { x: number; y: number; z: number }; yaw: number; pitch: number }) => {
+    fly.pos = { ...p.pos };
+    fly.yaw = p.yaw;
+    fly.pitch = p.pitch;
+    fly.vel = { x: 0, y: 0, z: 0 };
   };
-  view(8); // Valley Overview
+  /** Viewpoint number `n` (1-8, wrapping) as an index. */
+  const index = (n: number) => (((Math.round(n) - 1) % views.length) + views.length) % views.length;
+  /** Glide to viewpoint `n` (1-8). */
+  const goTo = (n: number) => {
+    current = index(n);
+    fly.walk = false; // a viewpoint is up in the air, so don't drop back to walking height on arrival
+    glide = { g: new Glide(fly, views[current], valley), t: 0 };
+    return views[current].name;
+  };
+  /** Jump straight to viewpoint `n` (1-8): eye and target are metres above the ground (or the water). */
+  const view = (n: number) => {
+    current = index(n);
+    fly.walk = false;
+    glide = null;
+    setPose(viewpointPose(views[current], valley));
+    fly.apply(camera);
+    return views[current].name;
+  };
+  fly.apply(camera);
+  input.onPress = (b) => {
+    if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
+    else if (b === 'right') goTo(current + 2);
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || !/^[1-8]$/.test(e.key)) return;
+    goTo(+e.key);
+  });
+  canvas.addEventListener('click', () => canvas.requestPointerLock?.());
+
+  /** One frame of camera control: gamepad and keys in, a glide or a free-fly step out. */
+  const drive = (dt: number) => {
+    input.poll(dt, false);
+    const pad = input.pad(), held = (k: string) => input.held(k);
+    const intent = intentFrom(pad, held, input.mouse(), dt, wasToggle);
+    wasToggle = toggleDown(pad, held);
+    if (glide) {
+      const stirred = pad.lx !== 0 || pad.ly !== 0 || pad.rx !== 0 || pad.ry !== 0 || ['w', 'a', 's', 'd'].some(held);
+      if (!stirred) {
+        glide.t += dt;
+        const s = glide.g.sample(glide.t);
+        setPose(s);
+        if (s.done) glide = null;
+        fly.apply(camera);
+        return;
+      }
+      glide = null; // the camera stays where the glide left it
+    }
+    fly.update(dt, intent, valley);
+    fly.apply(camera);
+  };
 
   const resize = () => {
     let w = canvas.clientWidth, h = canvas.clientHeight;
@@ -75,14 +133,15 @@ async function start(step: Parameters<typeof loadValley>[2]) {
   window.addEventListener('resize', resize);
   resize();
 
-  const tick = (_dt: number) => {
+  const tick = (dt: number) => {
+    drive(dt);
     terrain.update(camera);
     sky.position.copy(camera.position);
   };
   tick(0);
   await renderer.compileAsync(scene, camera);
   performance.mark('valley-ready');
-  return { renderer, backend, data, cached, valley, scene, camera, sky, sun, tex, terrain, backdrop, view, tick };
+  return { renderer, backend, data, cached, valley, scene, camera, sky, sun, tex, terrain, backdrop, view, goTo, fly, input, tick };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
