@@ -18,8 +18,17 @@ import { createRiver } from '../world/river';
 import { createSky } from '../world/sky';
 import { createTerrain } from '../world/terrain';
 import { valleyTextures } from '../world/textures';
+import { WORLD_QUALITY } from '../world/quality';
+import { MID_LAYER, NEAR_LAYER, VegetationTiles } from '../world/tiles';
+import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '../plants/material';
+import { createWind, setWind, updateWind, windUniforms } from '../plants/wind';
 import { openLoading, toast } from './loading';
 import './valley.css';
+
+/** The lake's mirror shows the forest only within this many metres of the shore (beyond, the lake is a sliver on screen). */
+const MIRROR_PLANTS = 400;
+/** Metres from (x, z) to the nearest point of the lake's outline. */
+const lakeDistance = (x: number, z: number) => VALLEY.lake.outline.reduce((m, p) => Math.min(m, Math.hypot(p.x - x, p.z - z)), Infinity);
 
 // ---------- settings (remembered per browser) ----------
 const saved = stored<unknown>('valley.tier', 'high');
@@ -31,6 +40,7 @@ const ui = document.querySelector<HTMLElement>('#ui')!;
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
+  const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
     createRenderer(canvas, tier),
     loadValley(VALLEY, DEFAULT_GRID, step),
@@ -41,6 +51,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   performance.mark('valley-data');
   say('Rolling out the meadows…');
   const sets = await ground;
+  const [barks, cards] = await plantTex;
   performance.mark('valley-ground');
   const valley = createValley(data);
 
@@ -58,6 +69,20 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // the water (after the sky: it mirrors the sky's environment map)
   const lake = createLake(data, tex, tier, scene), river = createRiver(data, tex, tier, scene);
   scene.add(lake.object, river.object);
+  // the mirror draws the mid plants (the far shores' forest) only when the lake is near enough to show them
+  lake.mirrorLayers((cam) => (lakeDistance(cam.position.x, cam.position.z) < MIRROR_PLANTS ? 1 | (1 << MID_LAYER) : 1));
+  // ---------- the vegetation, swaying in one shared wind ----------
+  const wind = createWind(), windU = windUniforms();
+  const plants = createPlantMaterials(cards, barks, windU, tier, sets);
+  const veg = new VegetationTiles(data, data.plantModels, plants, WORLD_QUALITY[tier]);
+  scene.add(veg.object);
+  camera.layers.enable(NEAR_LAYER);
+  camera.layers.enable(MID_LAYER);
+  // Shadow casters by cascade (about 0–75, 75–154, 154–260 and 260–600 m on High): near plants (within ~60 m) in the first two,
+  // mid plants (from ~60 m) in all but the first. The land everywhere.
+  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER;
+  sky.cascadeLayers([1 | NEAR, 1 | NEAR | MID, 1 | MID, 1 | MID]);
+
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
   const light = (dt: number) => {
@@ -65,7 +90,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     const state = lightingAt(hour, sun, moon, moonPhase(clock.hours));
     sky.update(state, sun, moon, camera, clock.hours, dt);
     if (Number.isFinite(dt)) waterTime += dt;
-    lake.update(waterTime, state);
+    lake.update(waterTime, state, wind);
+    setPlantLight(plants.light, state);
     river.update(waterTime, state);
   };
 
@@ -153,13 +179,18 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     clock.update(dt);
     drive(dt);
     terrain.update(camera);
+    updateWind(wind, dt, VALLEY.seed);
+    setWind(windU, wind);
+    veg.update(camera, dt);
     light(dt);
   };
   tick(0);
   light(Infinity);
-  await renderer.compileAsync(scene, camera);
+  performance.mark('valley-scene');
+  await veg.compile(() => renderer.compileAsync(scene, camera)); // every plant material, not just those in view now
   performance.mark('valley-ready');
-  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick };
+  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
+    wind, veg, plants };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -265,7 +296,7 @@ function devHooks(w: World) {
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
       /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
-      get timings() { return { data: mark('valley-data'), ground: mark('valley-ground'), ready: mark('valley-ready') }; },
+      get timings() { return { data: mark('valley-data'), ground: mark('valley-ground'), scene: mark('valley-scene'), ready: mark('valley-ready') }; },
     },
   });
 }

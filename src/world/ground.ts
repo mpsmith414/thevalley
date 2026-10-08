@@ -26,10 +26,7 @@ const FLAT: Record<GroundSetName, [number, number, number]> = {
  * The loaded ground: per layer, `albedo` holds the diffuse colour (sRGB) with roughness in alpha; `normal` the GL normal map.
  * `average` is each set's mean colour (linear) and roughness: what its texture blurs to far away.
  */
-export type GroundSets = {
-  size: number; albedo: DataArrayTexture; normal: DataArrayTexture; average: Record<GroundSetName, [number, number, number, number]>;
-  missing: GroundSetName[];
-};
+export type GroundSets = PhotoSets<GroundSetName>;
 
 const toLinear = (b: number) => (b / 255) ** 2.2;
 /** Mean linear colour and roughness of RGBA bytes (sRGB diffuse in RGB, roughness in A), from a sparse sample. */
@@ -74,18 +71,25 @@ function arrayTexture(data: Uint8Array, size: number, layers: number, srgb: bool
   return t;
 }
 
+/** Photo sets loaded into two array textures (a layer per set): diffuse with roughness in alpha, and the GL normal map. */
+export type PhotoSets<N extends string> = {
+  size: number; albedo: DataArrayTexture; normal: DataArrayTexture; average: Record<N, [number, number, number, number]>; missing: N[];
+};
+
 /**
- * Load the ground sets for `tier` (2k or 1k files) into two array textures. The files download in parallel but decode one at
- * a time, each straight into its layer, so only one image's pixels live beside the two arrays (decoding all 18 at once peaked
- * near 500 MB). A set whose files fail falls back to a flat colour (and a warning), so the valley always renders.
+ * Load `<base>/<name>_{diff,nor_gl,rough}_<res>.jpg` for each of `names` into two array textures at `size` px, plus `extra`
+ * layers filled by the caller (painted sets). The files download in parallel but decode one at a time, each straight into
+ * its layer, so only one image's pixels live beside the two arrays (decoding all at once peaked near 500 MB). A set whose
+ * files fail falls back to its `flat` colour (and a warning), so the valley always renders.
  */
-export async function loadGroundSets(tier: Tier, base = `${import.meta.env.BASE_URL}assets/textures/ground`): Promise<GroundSets> {
-  const size = WORLD_QUALITY[tier].textureSize, res = size === 2048 ? '2k' : '1k', px = size * size * 4, n = GROUND_SETS.length;
-  const albedo = new Uint8Array(px * n), normal = new Uint8Array(px * n), missing: GroundSetName[] = [];
-  const files = GROUND_SETS.map((name) => (['diff', 'nor_gl', 'rough'] as const).map((m) => download(`${base}/${name}_${m}_${res}.jpg`)));
+export async function loadPhotoSets<N extends string>(names: readonly N[], base: string, size: number, flat: Record<N, [number, number, number]>,
+  extra: { name: N; fill(albedo: Uint8Array, normal: Uint8Array): void }[] = []): Promise<PhotoSets<N>> {
+  const res = size === 2048 ? '2k' : '1k', px = size * size * 4, n = names.length + extra.length;
+  const albedo = new Uint8Array(px * n), normal = new Uint8Array(px * n), missing: N[] = [];
+  const files = names.map((name) => (['diff', 'nor_gl', 'rough'] as const).map((m) => download(`${base}/${name}_${m}_${res}.jpg`)));
   for (const f of files.flat()) f.catch(() => {}); // a failure is handled when its set comes up, not reported as unhandled first
   const g = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true })!;
-  for (const [i, name] of GROUND_SETS.entries()) {
+  for (const [i, name] of names.entries()) {
     const at = i * px, [diff, nor, rough] = files[i];
     try {
       const d = await pixels(await diff, g);
@@ -94,9 +98,9 @@ export async function loadGroundSets(tier: Tier, base = `${import.meta.env.BASE_
       for (let p = 3; p < px; p += 4) albedo[at + p] = r[p - 3];
       normal.set(await pixels(await nor, g), at);
     } catch (e) {
-      console.warn(`ground set "${name}" failed to load; using a flat colour`, e);
+      console.warn(`photo set "${name}" failed to load; using a flat colour`, e);
       missing.push(name);
-      const [cr, cg, cb] = FLAT[name];
+      const [cr, cg, cb] = flat[name];
       for (let p = 0; p < px; p += 4) {
         albedo[at + p] = cr; albedo[at + p + 1] = cg; albedo[at + p + 2] = cb; albedo[at + p + 3] = 235;
         normal[at + p] = 128; normal[at + p + 1] = 128; normal[at + p + 2] = 255; normal[at + p + 3] = 255;
@@ -104,9 +108,18 @@ export async function loadGroundSets(tier: Tier, base = `${import.meta.env.BASE_
     }
   }
   g.canvas.width = g.canvas.height = 0; // let the canvas's backing store go now, not at the next collection
-  const average = Object.fromEntries(GROUND_SETS.map((s, i) => [s, mean(albedo, i * px, (i + 1) * px)])) as GroundSets['average'];
+  extra.forEach((e, k) => {
+    const at = (names.length + k) * px;
+    e.fill(albedo.subarray(at, at + px), normal.subarray(at, at + px));
+  });
+  const all = [...names, ...extra.map((e) => e.name)];
+  const average = Object.fromEntries(all.map((s, i) => [s, mean(albedo, i * px, (i + 1) * px)])) as PhotoSets<N>['average'];
   return { size, albedo: arrayTexture(albedo, size, n, true), normal: arrayTexture(normal, size, n, false), average, missing };
 }
+
+/** Load the ground sets for `tier` (2k or 1k files) into two array textures. */
+export const loadGroundSets = (tier: Tier, base = `${import.meta.env.BASE_URL}assets/textures/ground`): Promise<GroundSets> =>
+  loadPhotoSets(GROUND_SETS, base, WORLD_QUALITY[tier].textureSize, FLAT);
 
 /** Metres per tile of each set. Against tiling, the tile is shifted by an offset that changes over about `BIG` metres. */
 const TILE: Record<GroundSetName, number> = { meadow: 4, forest: 4, granite: 6, moss: 3, sand: 4, mud: 4 };

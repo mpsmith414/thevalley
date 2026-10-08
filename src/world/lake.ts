@@ -1,18 +1,19 @@
-import { Mesh, NodeMaterial, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
+import { Mesh, NodeMaterial, type Camera, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
 import { cameraPosition, float, positionWorld, reflector, screenSize, smoothstep, vec2 } from 'three/tsl';
 import type { Tier } from '../render/quality';
 import { offsetPolygon } from '../valley/geom';
 import { VALLEY } from '../valley/layout';
 import type { Lake, ValleyData } from '../valley/types';
 import type { LightState } from './lighting';
+import type { WindState } from '../plants/wind';
 import { WORLD_QUALITY } from './quality';
 import type { ValleyTextures } from './textures';
-import { RIPPLE_SPEED, WIND, rippleNormal, setWater, shadeWater, skyReflection, waterUniforms } from './water';
+import { rippleNormal, setWater, shadeWater, skyReflection, waterUniforms } from './water';
 
 /** How far past the shore line the lake's surface reaches (under the land, where it is hidden), in metres. */
 const SKIRT = 30;
 
-type Updater = { updateBefore(frame: unknown): unknown };
+type Updater = { updateBefore(frame: { camera: Camera }): unknown; getVirtualCamera(camera: Camera): Camera };
 /**
  * The mirror renders the scene again from below the water, and three would re-render every shadow map for that camera
  * (doubling the shadow passes). Hold the shadow maps during the mirror's render: it uses the main view's.
@@ -33,10 +34,11 @@ function keepShadows(mirror: Updater, scene: Scene) {
  * The lake: a flat sheet over the shore outline grown by `SKIRT` m, coloured and made see-through by its depth over the
  * full-resolution ground, rippled by the wind, mirroring the hills (High: a planar reflection at half resolution) or the
  * sky (other tiers: the environment map), with a foam line where it meets the land.
- * `update(t, light)`: the time in seconds and the light of the moment.
+ * `update(t, light, wind)`: the time in seconds, the light of the moment and the wind. `mirrorLayers(f)`: the layers the
+ * mirror draws for a camera (High tier only), so costly layers (the plants) can be left out when the lake is far away.
  */
 export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene: Scene, lake: Lake = VALLEY.lake):
-  { object: Mesh; update(t: number, light: LightState): void } {
+  { object: Mesh; update(t: number, light: LightState, wind?: WindState): void; mirrorLayers(layers: (camera: Camera) => number): void } {
   void d; // the ground under the lake is read from `tex`
   const level = lake.level;
   const shape = new Shape(offsetPolygon(lake.outline, SKIRT).map((p) => new Vector2(p.x, -p.z)));
@@ -46,8 +48,8 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
   const u = waterUniforms();
   const xz = positionWorld.xz;
   const depth = float(level).sub(tex.heightAtNode(xz));
-  const drift = xz.sub(vec2(WIND.x, WIND.y).mul(u.time.mul(RIPPLE_SPEED))); // the ripples drift downwind
-  const N = rippleNormal(drift, u.time, 1);
+  const drift = xz.sub(u.drift); // the ripples drift downwind
+  const N = rippleNormal(drift, u.time, u.rough);
 
   const mat = new NodeMaterial();
   mat.transparent = true;
@@ -55,6 +57,7 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
   const env = scene.environment as Texture;
   let reflection: (R: Node<'vec3'>, lit: Node<'vec3'>) => Node<'vec3'> = (R, lit) => skyReflection(env, R, lit, 0.05);
   const mesh = new Mesh(geo, mat);
+  let layers: ((camera: Camera) => number) | null = null;
   if (WORLD_QUALITY[tier].reflections === 'planar') {
     const mirror = reflector({ resolutionScale: 0.5, bounces: false, samples: 4 });
     // Above the waterline the mirror holds its view from under the land: the sky, as the land's underside is culled. A
@@ -65,7 +68,13 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
     mirror.uvNode = (mirror.uvNode as Node<'vec2'>).add(N.xz.mul(0.03).mul(nudge)).add(vec2(0, float(3).div(screenSize.y)));
     mirror.target.rotation.x = -Math.PI / 2; // the reflector's plane faces its target's +z: turn it to face up
     mesh.add(mirror.target);
-    keepShadows(mirror.reflector as unknown as Updater, scene);
+    const base = mirror.reflector as unknown as Updater;
+    keepShadows(base, scene);
+    const render = base.updateBefore.bind(base);
+    base.updateBefore = (frame) => {
+      if (layers) base.getVirtualCamera(frame.camera).layers.mask = layers(frame.camera);
+      return render(frame);
+    };
     reflection = () => mirror.rgb as Node<'vec3'>;
   }
   mat.colorNode = shadeWater(u, depth, N, reflection);
@@ -73,5 +82,5 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
   mesh.name = 'lake';
   mesh.position.y = level;
   mesh.renderOrder = 1; // after the ground (opaque) and before the river where it runs in
-  return { object: mesh, update: (t, light) => setWater(u, t, light) };
+  return { object: mesh, update: (t, light, wind) => setWater(u, t, light, wind), mirrorLayers: (f) => (layers = f) };
 }

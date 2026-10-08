@@ -8,16 +8,14 @@ import {
   uniform, vec3, vec4,
 } from 'three/tsl';
 import type { LightState } from './lighting';
+import type { WindState } from '../plants/wind';
 
 /** About the brightest a reflection gets (linear): roughly where the sky ends up on screen after tone mapping. */
 const SKY_CAP = 1.5;
 /** Water colour in the shallows and in deep water (6 m and more). */
 export const SHALLOW = '#7a9a84', DEEP = '#0e2a33';
-/**
- * The wind's direction (unit, x and z) and the speed the ripples drift at (m/s).
- * TODO(Task 15): take both from the wind once there is one.
- */
-export const WIND = new Vector2(0.8, 0.6), RIPPLE_SPEED = 0.6;
+/** The speed the ripples drift downwind at (m/s). */
+export const RIPPLE_SPEED = 0.6;
 
 /** What the water's shaders read each frame: the time and the light. */
 export type WaterUniforms = {
@@ -26,6 +24,9 @@ export type WaterUniforms = {
   key: Node<'color'> & { value: Color };
   keyDir: Node<'vec3'> & { value: Vector3 };
   ambient: Node<'color'> & { value: Color };
+  /** How far (m, x and z) the ripples have drifted downwind, and how rough the wind makes them (about 0.8–1.2). */
+  drift: Node<'vec2'> & { value: Vector2 };
+  rough: Node<'float'> & { value: number };
 };
 
 export function waterUniforms(): WaterUniforms {
@@ -34,11 +35,18 @@ export function waterUniforms(): WaterUniforms {
     key: uniform(new Color()) as WaterUniforms['key'],
     keyDir: uniform(new Vector3(0, 1, 0)) as WaterUniforms['keyDir'],
     ambient: uniform(new Color()) as WaterUniforms['ambient'],
+    drift: uniform(new Vector2()) as WaterUniforms['drift'],
+    rough: uniform(1) as WaterUniforms['rough'],
   };
 }
 
-/** Bring the water's time (seconds) and light up to date. */
-export function setWater(u: WaterUniforms, t: number, light: LightState): void {
+/** Bring the water's time (seconds), light and wind up to date; the ripples drift on with the wind since the last call. */
+export function setWater(u: WaterUniforms, t: number, light: LightState, wind?: WindState): void {
+  const dt = t - u.time.value;
+  if (wind) {
+    if (dt > 0 && dt < 1) u.drift.value.set(u.drift.value.x + wind.dirX * RIPPLE_SPEED * dt, u.drift.value.y + wind.dirZ * RIPPLE_SPEED * dt);
+    u.rough.value = 0.6 + 0.8 * wind.strength;
+  }
   u.time.value = t;
   u.key.value.set(light.keyColor).multiplyScalar(light.keyIntensity);
   u.keyDir.value.set(light.keyDir.x, light.keyDir.y, light.keyDir.z);

@@ -45,6 +45,11 @@ export type Sky = {
    * `dt` (seconds) eases the exposure and paces the environment map; `Infinity` snaps both (after a jump in time).
    */
   update(state: LightState, sun: Vec3, moon: Vec3, camera: PerspectiveCamera, hours: number, dt: number): void;
+  /**
+   * Which layers each shadow cascade (nearest first) draws: `masks[i]` is a `Layers` mask. The cascades are made on the first
+   * render, so the masks are applied once they exist. Without cascades, the one map draws every layer in any mask.
+   */
+  cascadeLayers(masks: number[]): void;
 };
 
 /** A vertex at the far plane (or `depth` in clip space), like the sky dome, so it sits behind the whole world. */
@@ -235,10 +240,19 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
   const v = new Vector3(), quat = new Quaternion(), axis = new Vector3(0, Math.sin((LATITUDE * Math.PI) / 180), -Math.cos((LATITUDE * Math.PI) / 180));
   let aspect = 0, fov = 0;
   let exposure = renderer.toneMappingExposure;
+  let masks: number[] | null = null;
 
   return {
     light, hemi, shadows: csm ? 'csm' : 'single',
+    cascadeLayers(m) {
+      masks = m;
+      if (!csm) light.shadow.camera.layers.mask = m.reduce((a, b) => a | b, 0);
+    },
     update(state, sun, moonDir, camera, hours, dt) {
+      if (csm && masks && csm.lights.length) {
+        csm.lights.forEach((l, i) => (l.shadow!.camera.layers.mask = masks![Math.min(i, masks!.length - 1)]));
+        masks = null;
+      }
       const p = camera.position;
       // sky and sun
       v.set(sun.x, sun.y, sun.z);
