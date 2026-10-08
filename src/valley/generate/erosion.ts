@@ -4,11 +4,34 @@ import type { HeightGrid } from './shape';
 const INERTIA = 0.05, CAPACITY = 4, MIN_SLOPE = 0.01, ERODE = 0.3, DEPOSIT = 0.3, EVAPORATE = 0.02, GRAVITY = 4, MAX_STEPS = 64, RADIUS = 2;
 
 /**
- * Beyer-style droplet erosion, in place. Each droplet rolls downhill, picking up sediment where it is
- * fast and dropping it where it slows, which carves gullies and softens spikes. Work is in grid-cell units.
+ * Beyer-style droplet erosion, in place. Droplets roll downhill carving gullies and dropping scree fans.
+ * It runs on a half-resolution copy (every second sample, ~0.7 droplets per cell instead of ~0.04 at the
+ * same cost); the bilinearly upsampled change is then added to the full grid, so full-resolution detail
+ * stays and the carving is layered on top. `g.grid` must be odd.
  */
-export function erode(g: HeightGrid, seed: number, droplets = Math.round(160_000 * ((g.grid - 1) / 2048) ** 2)): void {
-  const { grid, h } = g, max = grid - 1;
+export function erode(g: HeightGrid, seed: number, droplets?: number): void {
+  const { grid, h } = g, m = (grid - 1) / 2 + 1;
+  const half = new Float32Array(m * m);
+  for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) half[j * m + i] = h[2 * j * grid + 2 * i];
+  const before = half.slice();
+  simulate(half, m, seed, droplets ?? Math.round(0.7 * m * m));
+  for (let i = 0; i < half.length; i++) half[i] -= before[i]; // now the change
+  for (let j = 0; j < m; j++)
+    for (let i = 0; i < m; i++) {
+      const k = j * m + i, d00 = half[k], o = 2 * j * grid + 2 * i;
+      const d10 = i < m - 1 ? half[k + 1] : d00, d01 = j < m - 1 ? half[k + m] : d00, d11 = i < m - 1 && j < m - 1 ? half[k + m + 1] : i < m - 1 ? d10 : d01;
+      h[o] += d00;
+      if (i < m - 1) h[o + 1] += (d00 + d10) / 2;
+      if (j < m - 1) {
+        h[o + grid] += (d00 + d01) / 2;
+        if (i < m - 1) h[o + grid + 1] += (d00 + d10 + d01 + d11) / 4;
+      }
+    }
+}
+
+/** The droplet simulation on a square grid of `grid` samples, in cell units. */
+function simulate(h: Float32Array, grid: number, seed: number, droplets: number): void {
+  const max = grid - 1;
   const rng = mulberry32(seed ^ 0x9e3779b9);
   // Brush: cells within RADIUS of the droplet, weighted by closeness, summing to 1.
   const bx: number[] = [], bz: number[] = [], bw: number[] = [];

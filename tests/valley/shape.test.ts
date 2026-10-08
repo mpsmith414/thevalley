@@ -82,6 +82,32 @@ describe('erode', () => {
   it('softens the east hills', () => {
     expect(meanSlope(e, EAST)).toBeLessThan(meanSlope(base, EAST));
   });
+  it('carves visible gullies in the hills (grid 513)', () => {
+    // Thresholds are calibrated to grid 513 (3.1 m cells), where this measured ~43% (east hills) and ~35% (north ridge)
+    // of cells lowered by more than 1 m, and a land-wide mean |dh| of ~1.0 m; the asserted floors are about a quarter of that.
+    // At grid 2049 the cells are 4x smaller, so the same carving spreads thinner (mean |dh| ~0.19 m over land).
+    const b = baseShape(VALLEY, 513), g: HeightGrid = { ...b, h: b.h.slice() };
+    erode(g, VALLEY.seed);
+    const half = b.size / 2, lowered = (x0: number, x1: number, z0: number, z1: number) => {
+      let c = 0, t = 0;
+      for (let j = 0; j < 513; j++) {
+        const z = -half + j * b.cell;
+        if (z < z0 || z > z1) continue;
+        for (let i = 0; i < 513; i++) {
+          const x = -half + i * b.cell;
+          if (x < x0 || x > x1) continue;
+          t++;
+          if (b.h[j * 513 + i] - g.h[j * 513 + i] > 1) c++;
+        }
+      }
+      return c / t;
+    };
+    expect(lowered(EAST.x0, EAST.x1, EAST.z0, EAST.z1)).toBeGreaterThan(0.1);
+    expect(lowered(-400, 400, -760, -520)).toBeGreaterThan(0.1);
+    let sum = 0;
+    for (let i = 0; i < g.h.length; i++) sum += Math.abs(g.h[i] - b.h[i]);
+    expect(sum / g.h.length).toBeGreaterThan(0.25);
+  });
   it('wears a lone spike down', () => {
     const grid = 129, size = 800, cell = size / (grid - 1), h = new Float32Array(grid * grid);
     for (let j = 0; j < grid; j++)
