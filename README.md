@@ -32,7 +32,8 @@ Use `DESIGNER_MODEL=claude-opus-5-5` for the stronger (about twice the price) ey
 npm run dev
 ```
 
-- The lab: http://localhost:5180/
+- The valley: http://localhost:5180/
+- The lab: http://localhost:5180/lab.html
 - The drawing test set: http://localhost:5180/drawings.html
 
 Without a key everything works except making new creatures (the designer says it is resting).

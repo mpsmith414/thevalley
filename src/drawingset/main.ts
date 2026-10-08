@@ -112,7 +112,7 @@ async function runOne(r: (typeof rows)[number]) {
         id: newId(), recipe: out.recipe, cards: out.cards, drawing: image, words: '', thumb,
         history: out.history.map(({ render: _render, ...rest }) => rest), createdAt: Date.now(), native: false,
       });
-      location.href = '/';
+      location.href = '/lab.html';
     };
   } catch (e) {
     r.status.textContent = e instanceof DesignerResting ? 'The designer is resting (is the API key set?)' : e instanceof DesignerInvalid ? 'The designer got muddled' : `Error: ${String(e)}`;
