@@ -81,17 +81,17 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
     }
   }
 
-  // 3. Lake basin, and 4. beach: only within 40 m of the outline (everything farther is dry by definition).
+  // 3. Lake basin, and 4. beach: only within 60 m of the outline (everything farther is dry by definition).
   const beach = areas.find((a) => a.kind === 'beach');
-  const lb = bounds(lake.outline, 40), bb = beach ? bounds(beach.points, 0) : lb;
+  const lb = bounds(lake.outline, 60), bb = beach ? bounds(beach.points, 0) : lb;
   const lr = cellRange(g, Math.min(lb.x0, bb.x0), Math.max(lb.x1, bb.x1), Math.min(lb.z0, bb.z0), Math.max(lb.z1, bb.z1));
   for (let iz = lr.j0; iz <= lr.j1; iz++) for (let ix = lr.i0; ix <= lr.i1; ix++) {
     const p = { x: -half + ix * g.cell, z: -half + iz * g.cell }, sd = sdPolygon(p, lake.outline), c = iz * grid + ix;
     if (sd < 0) {
       inLake[c] = 1;
       h[c] = Math.min(h[c], level - 0.3 - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
-    } else if (sd < 40) {
-      h[c] = Math.min(h[c], level + 0.2 + sd * 0.12);
+    } else if (sd < 60) {
+      if (sd < 40) h[c] = Math.min(h[c], level + 0.2 + sd * 0.12);
       if (beach && pointInPolygon(p, beach.points)) h[c] = Math.min(h[c], level + 0.15 + sd * 0.05);
     }
   }
