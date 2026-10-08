@@ -61,6 +61,7 @@ describe('loadValley', () => {
     expect(first.data.key).toBe(cacheKey(VALLEY, GRID));
     expect(gen).toHaveBeenCalledTimes(1);
     expect(stages.length).toBeGreaterThan(0);
+    await first.saved;
 
     const second = await loadValley(VALLEY, GRID, () => {}, gen);
     expect(second.cached).toBe(true);

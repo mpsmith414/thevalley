@@ -1,4 +1,8 @@
 export type Tier = 'low' | 'medium' | 'high';
+export const TIERS: readonly Tier[] = ['low', 'medium', 'high'];
+/** True for a known tier (remembered settings can hold anything). */
+export const isTier = (v: unknown): v is Tier => TIERS.includes(v as Tier);
+/** Per-tier settings for creatures and the lab stage; the Valley's world settings are `WORLD_QUALITY` in `src/world/quality.ts`. */
 export type QualitySettings = { pixelRatio: number; shadowMap: number; furShells: number; lod: 0 | 1 | 2; grass: number };
 
 export const QUALITY: Record<Tier, QualitySettings> = {

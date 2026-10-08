@@ -23,9 +23,9 @@ export async function saveCached(data: ValleyData): Promise<void> {
     const db = await open();
     try {
       const tx = db.transaction(STORE, 'readwrite');
+      tx.done.catch(() => {}); // a failed request also rejects `done`; the request's own error is the one we report
       await tx.store.clear();
-      await tx.store.put(data);
-      await tx.done;
+      await Promise.all([tx.store.put(data), tx.done]);
     } finally { db.close(); }
   } catch (e) {
     console.warn('could not save the valley cache', e);
@@ -38,13 +38,15 @@ const viaWorker: Generate = async (l, g, p) => {
   try { return await client.generate(l, g, p); } finally { client.dispose(); }
 };
 
-/** The Valley for this layout and grid: from the cache if it is there, otherwise generated in the worker and then saved. */
+/**
+ * The Valley for this layout and grid: from the cache if it is there, otherwise generated in the worker.
+ * A fresh Valley is saved in the background (it is returned at once); `saved` settles when that is done and never rejects.
+ */
 export async function loadValley(
   layout: Layout, grid: number, onProgress: (stage: GenStage, frac: number) => void, generate: Generate = viaWorker,
-): Promise<{ data: ValleyData; cached: boolean }> {
+): Promise<{ data: ValleyData; cached: boolean; saved: Promise<void> }> {
   const hit = await loadCached(cacheKey(layout, grid));
-  if (hit) return { data: hit, cached: true };
+  if (hit) return { data: hit, cached: true, saved: Promise.resolve() };
   const data = await generate(layout, grid, onProgress);
-  await saveCached(data);
-  return { data, cached: false };
+  return { data, cached: false, saved: saveCached(data) };
 }
