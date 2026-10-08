@@ -106,7 +106,7 @@ export function createTerrain(tex: ValleyTextures, _tier: Tier): { object: Group
     const mesh = new Mesh(levelGeometry(ringCells(k)), mat);
     mesh.name = `terrain-level-${k}`;
     mesh.frustumCulled = false; // positions are made in the shader
-    mesh.receiveShadow = true;
+    mesh.castShadow = mesh.receiveShadow = true; // ridges shade the valley at low sun
     object.add(mesh);
     return { centre, shift };
   });

@@ -1,5 +1,4 @@
-import { Color, DirectionalLight, Fog, HemisphereLight, PerspectiveCamera, Scene, Vector3 } from 'three/webgpu';
-import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
+import { PerspectiveCamera, Scene } from 'three/webgpu';
 import { FreeFly, intentFrom, toggleDown } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { isTier, type Tier } from '../render/quality';
@@ -11,6 +10,9 @@ import { VALLEY } from '../valley/layout';
 import { DEFAULT_GRID } from '../valley/types';
 import { createValley } from '../valley/valley';
 import { createBackdrop } from '../world/backdrop';
+import { ValleyClock, moonDirection, moonPhase, sunDirection } from '../world/clock';
+import { lightingAt } from '../world/lighting';
+import { createSky } from '../world/sky';
 import { createTerrain } from '../world/terrain';
 import { valleyTextures } from '../world/textures';
 import { openLoading, toast } from './loading';
@@ -22,7 +24,6 @@ const tier: Tier = isTier(saved) ? saved : 'high';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const ui = document.querySelector<HTMLElement>('#ui')!;
-const SUN_DIR = new Vector3(0.5, 0.6, 0.3).normalize(); // fixed until the clock arrives (Task 12)
 
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2]) {
@@ -34,26 +35,21 @@ async function start(step: Parameters<typeof loadValley>[2]) {
   const valley = createValley(data);
 
   const scene = new Scene();
-  scene.fog = new Fog(new Color('#b9c8cf'), 600, 5000);
   const camera = new PerspectiveCamera(55, 1, 0.1, 8000);
-
-  const sky = new SkyMesh();
-  sky.scale.setScalar(4000);
-  sky.turbidity.value = 3;
-  sky.rayleigh.value = 1.2;
-  sky.mieCoefficient.value = 0.004;
-  sky.mieDirectionalG.value = 0.8;
-  sky.sunPosition.value.copy(SUN_DIR);
-  sky.cloudCoverage.value = 0.35;
-
-  const sun = new DirectionalLight('#fff3df', 2.6);
-  sun.position.copy(SUN_DIR).multiplyScalar(1000);
-  const hemi = new HemisphereLight('#cfe3ff', '#5a4a30', 0.6);
 
   const tex = valleyTextures(data);
   const terrain = createTerrain(tex, tier);
   const backdrop = createBackdrop(data);
-  scene.add(sky, sun, sun.target, hemi, terrain.object, backdrop);
+  scene.add(terrain.object, backdrop);
+
+  // ---------- time of day: the clock drives the sun, moon, sky, light and fog ----------
+  const clock = new ValleyClock();
+  const sky = createSky(scene, renderer, tier, tex);
+  /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
+  const light = (dt: number) => {
+    const hour = clock.hour, sun = sunDirection(hour), moon = moonDirection(clock.hours);
+    sky.update(lightingAt(hour, sun, moon, moonPhase(clock.hours)), sun, moon, camera, clock.hours, dt);
+  };
 
   // ---------- the camera: free-fly, with gliding viewpoints ----------
   const input = new Input();
@@ -136,14 +132,16 @@ async function start(step: Parameters<typeof loadValley>[2]) {
   resize();
 
   const tick = (dt: number) => {
+    clock.update(dt);
     drive(dt);
     terrain.update(camera);
-    sky.position.copy(camera.position);
+    light(dt);
   };
   tick(0);
+  light(Infinity);
   await renderer.compileAsync(scene, camera);
   performance.mark('valley-ready');
-  return { renderer, backend, data, cached, valley, scene, camera, sky, sun, tex, terrain, backdrop, view, goTo, fly, input, tick };
+  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, terrain, backdrop, view, goTo, fly, input, tick };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -164,7 +162,7 @@ function run(w: World) {
 
 // ---------- dev hooks (checks in the browser) ----------
 function devHooks(w: World) {
-  const { renderer, scene, camera, tick } = w;
+  const { renderer, scene, camera, tick, clock, light } = w;
   const fps: number[] = [];
   onFrame = (dt) => {
     if (dt > 0) fps.push(1 / dt);
@@ -214,6 +212,12 @@ function devHooks(w: World) {
     __valley: {
       ...w, tier, step, shot, screen,
       resume: () => (paused = false),
+      /** Jump the clock forward to `hour` o'clock and relight at once (a following `shot` shows it). */
+      time: (hour: number) => {
+        clock.jumpTo(hour);
+        light(Infinity);
+        return clock.hour;
+      },
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
       /** Milliseconds since navigation until the data arrived and until the first frame was ready. */
