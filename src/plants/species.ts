@@ -67,7 +67,7 @@ export const SPECIES: Record<PlantKind, { spec: PlantSpec; scatter: ScatterRule 
     spec: { form: 'tree', height: [6, 12], trunkRadius: 0.22, taper: 1.1, trunkWander: 0.6, crownStart: 0.25, levels: 3, branches: [22, 6, 3],
       angle: 48, angleTop: 25, length: 0.4, lengthProfile: 'oval', gravity: -0.5,
       leaf: { type: 'broad', card: 'willow', size: 0.5, perTwig: 5, flutter: 0.8 }, bark: 'generic' },
-    scatter: { perHa: 40, spacing: 3.0, trunk: 0.22, suit: dry((c) => c.b.shore + c.moisture * 0.5) },
+    scatter: { perHa: 40, spacing: 3.0, trunk: 0.22, suit: dry((c) => c.b.shore + Math.max(0, c.moisture - 0.3) * 0.5) },
   },
   juniper: {
     spec: { form: 'shrub', height: [0.6, 2.5], stems: 7, spread: 0.25, leaf: { type: 'needle', card: 'juniper', size: 0.35, perTwig: 5, flutter: 0.2 } },
