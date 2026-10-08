@@ -1,5 +1,8 @@
 /** World types for the Valley: the hand-authored layout and what generators share. */
 import type { RiverSample, WaterMaps } from './generate/carve';
+import type { PlantModelSet } from '../plants/generator';
+
+export type { PlantModelSet };
 
 /** Bump whenever any generator output changes; part of the cache key. */
 export const GENERATOR_VERSION = 1;
@@ -23,8 +26,6 @@ export type Biomes = { forest: number; meadow: number; rock: number; shore: numb
 export type PlantInstances = { kind: Uint8Array; variant: Uint8Array; data: Float32Array };
 /** One 64 m tile: its plants, and tree trunks as x, z, r triples (for collision and path-finding). */
 export type TileData = { tx: number; tz: number; plants: PlantInstances; trunks: Float32Array };
-/** Plant models (Task 5 narrows this). */
-export type PlantModelSet = unknown[];
 /** Everything generated for the Valley: the terrain, water, biome maps, river course and plants. */
 export type ValleyData = {
   version: number; key: string; size: number; grid: number; height: Float32Array; normals: Uint8Array;
