@@ -500,7 +500,7 @@ function toTexture(img: ImageData, srgb: boolean, tile: boolean): DataTexture {
 /** An owner-supplied atlas at `public/assets/textures/leaves/<kind>.png`, as colour, with height from its brightness (null if absent). */
 async function suppliedCard(kind: CardKind, size: number): Promise<{ color: ImageData; height: ImageData } | null> {
   try {
-    const res = await fetch(`/assets/textures/leaves/${kind}.png`);
+    const res = await fetch(`${import.meta.env.BASE_URL}assets/textures/leaves/${kind}.png`);
     if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) return null; // the dev server answers missing files with HTML
     const bmp = await createImageBitmap(await res.blob(), { resizeWidth: size, resizeHeight: size, premultiplyAlpha: 'none' });
     const g = new OffscreenCanvas(size, size).getContext('2d')!;

@@ -43,15 +43,20 @@ function mean(d: Uint8Array, from: number, to: number): [number, number, number,
   return [m[0] / n, m[1] / n, m[2] / n, m[3] / n];
 }
 
-/** Decode a JPG into RGBA bytes at `size`², rows flipped so the image's top lands at v = 1 (three's convention). */
-async function pixels(url: string, size: number): Promise<Uint8ClampedArray> {
+/** Fetch an image file (the dev server answers a missing file with HTML, so check the type). */
+async function download(url: string): Promise<Blob> {
   const res = await fetch(url);
   if (!res.ok || !res.headers.get('content-type')?.startsWith('image/')) throw new Error(`${url}: ${res.status}`);
-  const bmp = await createImageBitmap(await res.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none', imageOrientation: 'flipY' });
-  const g = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true })!;
-  g.drawImage(bmp, 0, 0, size, size);
+  return res.blob();
+}
+
+/** Decode a JPG into RGBA bytes at the canvas's size, rows flipped so the image's top lands at v = 1 (three's convention). */
+async function pixels(blob: Blob, g: OffscreenCanvasRenderingContext2D): Promise<Uint8ClampedArray> {
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none', imageOrientation: 'flipY' });
+  const { width, height } = g.canvas;
+  g.drawImage(bmp, 0, 0, width, height);
   bmp.close();
-  return g.getImageData(0, 0, size, size).data;
+  return g.getImageData(0, 0, width, height).data;
 }
 
 function arrayTexture(data: Uint8Array, size: number, layers: number, srgb: boolean): DataArrayTexture {
@@ -70,20 +75,24 @@ function arrayTexture(data: Uint8Array, size: number, layers: number, srgb: bool
 }
 
 /**
- * Load the ground sets for `tier` (2k or 1k files) into two array textures, all files in parallel. A set whose files fail
- * falls back to a flat colour (and a warning), so the valley always renders.
+ * Load the ground sets for `tier` (2k or 1k files) into two array textures. The files download in parallel but decode one at
+ * a time, each straight into its layer, so only one image's pixels live beside the two arrays (decoding all 18 at once peaked
+ * near 500 MB). A set whose files fail falls back to a flat colour (and a warning), so the valley always renders.
  */
-export async function loadGroundSets(tier: Tier, base = '/assets/textures/ground'): Promise<GroundSets> {
+export async function loadGroundSets(tier: Tier, base = `${import.meta.env.BASE_URL}assets/textures/ground`): Promise<GroundSets> {
   const size = WORLD_QUALITY[tier].textureSize, res = size === 2048 ? '2k' : '1k', px = size * size * 4, n = GROUND_SETS.length;
   const albedo = new Uint8Array(px * n), normal = new Uint8Array(px * n), missing: GroundSetName[] = [];
-  await Promise.all(GROUND_SETS.map(async (name, i) => {
-    const at = i * px;
+  const files = GROUND_SETS.map((name) => (['diff', 'nor_gl', 'rough'] as const).map((m) => download(`${base}/${name}_${m}_${res}.jpg`)));
+  for (const f of files.flat()) f.catch(() => {}); // a failure is handled when its set comes up, not reported as unhandled first
+  const g = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true })!;
+  for (const [i, name] of GROUND_SETS.entries()) {
+    const at = i * px, [diff, nor, rough] = files[i];
     try {
-      const [d, nr, r] = await Promise.all(['diff', 'nor_gl', 'rough'].map((m) => pixels(`${base}/${name}_${m}_${res}.jpg`, size)));
-      for (let p = 0; p < px; p += 4) {
-        albedo[at + p] = d[p]; albedo[at + p + 1] = d[p + 1]; albedo[at + p + 2] = d[p + 2]; albedo[at + p + 3] = r[p];
-      }
-      normal.set(nr, at);
+      const d = await pixels(await diff, g);
+      for (let p = 0; p < px; p += 4) { albedo[at + p] = d[p]; albedo[at + p + 1] = d[p + 1]; albedo[at + p + 2] = d[p + 2]; }
+      const r = await pixels(await rough, g);
+      for (let p = 3; p < px; p += 4) albedo[at + p] = r[p - 3];
+      normal.set(await pixels(await nor, g), at);
     } catch (e) {
       console.warn(`ground set "${name}" failed to load; using a flat colour`, e);
       missing.push(name);
@@ -93,7 +102,8 @@ export async function loadGroundSets(tier: Tier, base = '/assets/textures/ground
         normal[at + p] = 128; normal[at + p + 1] = 128; normal[at + p + 2] = 255; normal[at + p + 3] = 255;
       }
     }
-  }));
+  }
+  g.canvas.width = g.canvas.height = 0; // let the canvas's backing store go now, not at the next collection
   const average = Object.fromEntries(GROUND_SETS.map((s, i) => [s, mean(albedo, i * px, (i + 1) * px)])) as GroundSets['average'];
   return { size, albedo: arrayTexture(albedo, size, n, true), normal: arrayTexture(normal, size, n, false), average, missing };
 }
