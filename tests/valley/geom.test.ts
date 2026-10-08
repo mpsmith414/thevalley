@@ -32,9 +32,20 @@ describe('catmullRom', () => {
     const s = catmullRom([{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 20, z: 0 }], 1);
     for (const c of [0, 10, 20]) expect(Math.min(...s.map((q) => Math.abs(q.p.x - c)))).toBeLessThan(1e-6);
   });
+  it('always ends exactly on the last control point', () => {
+    for (const step of [0.5, 4, 7.3]) {
+      const s = catmullRom(ctrl, step), last = s[s.length - 1];
+      expect(last.p).toEqual(ctrl[ctrl.length - 1]);
+      expect(last.s).toBeGreaterThan(s[s.length - 2].s);
+      expect(Math.hypot(last.t.x, last.t.z)).toBeCloseTo(1, 6);
+    }
+  });
+  it('catmullRomAt tolerates a single point', () => {
+    expect(catmullRomAt([{ x: 3, z: 4 }], 0)).toEqual({ x: 3, z: 4 });
+  });
   it('resamples to the step', () => {
     const step = 4, s = catmullRom(ctrl, step);
-    for (let i = 1; i < s.length; i++) {
+    for (let i = 1; i < s.length - 1; i++) {
       const d = Math.hypot(s[i].p.x - s[i - 1].p.x, s[i].p.z - s[i - 1].p.z);
       expect(d).toBeGreaterThan(step * 0.95);
       expect(d).toBeLessThan(step * 1.05);
@@ -57,5 +68,13 @@ describe('nearestOnPolyline', () => {
       expect(got.d).toBeCloseTo(bd, 9);
       expect(got.i).toBe(bi);
     }
+  });
+  it('handles an empty index', () => {
+    expect(nearestOnPolyline({ x: 1, z: 2 }, buildPolylineIndex([]))).toEqual({ i: -1, d: Infinity });
+  });
+  it('finds samples far outside the index bounds', () => {
+    const samples = catmullRom([{ x: 0, z: 0 }, { x: 40, z: 10 }], 2);
+    const got = nearestOnPolyline({ x: 5000, z: -3000 }, buildPolylineIndex(samples));
+    expect(got.i).toBe(samples.length - 1);
   });
 });
