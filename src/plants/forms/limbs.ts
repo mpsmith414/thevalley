@@ -3,9 +3,10 @@ import { type Vec3, v3, add, sub, scale, dot, cross, norm, lerp } from '../../ut
 import { between } from '../../util/rng';
 import type { LeafSpec } from '../species';
 import type { PlantMesh } from '../generator';
-import { MeshBuilder, type Card, type Shade, card, crown, evenly, mergeCards, perpendicular, rotate, tube } from '../mesh';
+import { DEG, UP, MeshBuilder, type Card, type Shade, card, cardBottom, crown, evenly, mergeCards, perpendicular, rotate, tube } from '../mesh';
 
-const UP = v3(0, 1, 0), DEG = Math.PI / 180;
+/** Nothing of a tree or shrub reaches below this (m); it sits at the terrain height minus a few centimetres. */
+export const FLOOR = -0.08;
 
 /** One branch (or stem, or twig): points along it with radii, its level (1 = off the trunk) and reach at base and tip. */
 export type Limb = { pts: Vec3[]; rad: number[]; level: number; length: number; reach0: number; reach1: number };
@@ -14,7 +15,8 @@ export type Sprout = { count: number; lengthFrac: number; angle: number /*deg fr
 
 /**
  * Grows a limb from `start` along `dir`: `gravity` bends it up (+) or down (−) over its whole length; a little wobble
- * keeps it natural. Sections every 0.5 m, at most `maxSegs`. Radius tapers to 20% at the tip.
+ * keeps it natural. Sections every 0.5 m, at most `maxSegs`. Radius tapers to 20% at the tip. A limb that droops to
+ * the ground runs along it instead of into it (its surface stays above `FLOOR`).
  */
 export function growLimb(rng: () => number, start: Vec3, dir: Vec3, length: number, r0: number, level: number, levels: number,
   gravity: number, maxSegs: number): Limb {
@@ -24,9 +26,11 @@ export function growLimb(rng: () => number, start: Vec3, dir: Vec3, length: numb
   for (let i = 1; i <= segs; i++) {
     const side = perpendicular(d);
     d = norm(add(add(d, scale(UP, (gravity * 1.6) / segs)), scale(rotate(side, d, rng() * 2 * Math.PI), 0.12 * (rng() - 0.5))));
+    const r = r0 * (1 - (0.8 * i) / segs), prev = p;
     p = add(p, scale(d, ds));
+    if (p.y - r < FLOOR) (p = v3(p.x, FLOOR + r, p.z)), (d = norm(sub(p, prev), d));
     pts.push(p);
-    rad.push(r0 * (1 - (0.8 * i) / segs));
+    rad.push(r);
   }
   return { pts, rad, level, length, reach0: (level - 1) / levels, reach1: level / levels };
 }
@@ -107,7 +111,7 @@ export function branchedLods(trunk: Limb | null, limbs: Limb[], cards: Card[], n
   mb0.begin('bark');
   for (const l of all) limbTube(mb0, l, l.pts.map((_, i) => i), SIDES0[l.level]);
   mb0.begin('leaf');
-  const cards0 = evenly(cards, Math.max(0, Math.floor((budget[0] - mb0.tris) / perCard)));
+  const cards0 = evenly(cards, Math.max(0, Math.floor((budget[0] - mb0.tris) / perCard))).map((c) => lift(c, needle));
   for (const c of cards0) card(mb0, c, needle, outward, shade);
 
   const mb1 = new MeshBuilder();
@@ -115,9 +119,15 @@ export function branchedLods(trunk: Limb | null, limbs: Limb[], cards: Card[], n
   for (const l of all.filter((l) => l.level <= 1)) limbTube(mb1, l, l.level === 0 ? coarsen(l.pts, 2) : coarsen(l.pts, Math.ceil((l.pts.length - 1) / 2)), sides1);
   mb1.begin('leaf');
   const n1 = Math.min(Math.floor(cards0.length / 4), Math.floor((budget[1] - mb1.tris) / perCard));
-  for (const c of mergeCards(cards0, Math.max(1, n1))) card(mb1, c, needle, outward, shade);
+  for (const c of mergeCards(cards0, Math.max(0, n1))) card(mb1, lift(c, needle), needle, outward, shade);
   return [mb0.build(), mb1.build()];
 }
+
+/** Raises a card that would dip below `FLOOR` just enough to clear it. */
+const lift = (c: Card, crossed: boolean): Card => {
+  const below = FLOOR - cardBottom(c, crossed);
+  return below > 0 ? { ...c, p: v3(c.p.x, c.p.y + below, c.p.z) } : c;
+};
 
 /** Plant-wide shading: wind weight grows with height (of `height`) and reach; AO darkens towards the crown centre. */
 export const branchedShade = (height: number, depth: (p: Vec3) => number): Shade => (p, reach) => [

@@ -3,9 +3,10 @@ import { type Vec3, v3 } from '../../util/vec';
 import { between } from '../../util/rng';
 import type { TreeSpec } from '../species';
 import type { PlantMesh } from '../generator';
-import { type Limb, branchedLods, branchedShade, crownOf, growLimb, sprout, twigCards } from './limbs';
+import { DEG } from '../mesh';
+import { FLOOR, type Limb, branchedLods, branchedShade, crownOf, growLimb, sprout, twigCards } from './limbs';
 
-const DEG = Math.PI / 180, GOLDEN = 137.5 * DEG;
+const GOLDEN = 137.5 * DEG;
 const PROFILE: Record<TreeSpec['lengthProfile'], (u: number) => number> = {
   conical: (u) => 1 - u,
   oval: (u) => Math.sin(Math.PI * u),
@@ -14,15 +15,16 @@ const PROFILE: Record<TreeSpec['lengthProfile'], (u: number) => number> = {
 
 /** Both LODs of a tree `h` m tall (before the generator's exact height fit), within `budget`. Young trees get fewer branches. */
 export function buildTree(s: TreeSpec, rng: () => number, h: number, young: boolean, budget: [number, number]): [PlantMesh, PlantMesh] {
-  // Trunk: a gently wandering spline, sunk 0.3 m into the ground, with a root flare.
-  const base = -0.3, len = h * 0.97 - base, R = s.trunkRadius * Math.pow(h / ((s.height[0] + s.height[1]) / 2), 0.8);
+  // Trunk: a gently wandering spline (upright at the foot), set just into the ground, with a root flare.
+  const base = FLOOR, len = h * 0.97 - base, R = s.trunkRadius * Math.pow(h / ((s.height[0] + s.height[1]) / 2), 0.8);
   const wave = () => ({ a: between(rng, 0.6, 1.2), b: between(rng, 2, 3.5), p: rng() * 2 * Math.PI, q: rng() * 2 * Math.PI });
   const wx = wave(), wz = wave();
-  const drift = (w: typeof wx, t: number) => s.trunkWander * Math.pow(t, 0.8) * (0.7 * Math.sin(2 * Math.PI * w.a * t + w.p) + 0.3 * Math.sin(2 * Math.PI * w.b * t + w.q));
+  const drift = (w: typeof wx, t: number) => s.trunkWander * Math.pow(t, 1.2) * (0.7 * Math.sin(2 * Math.PI * w.a * t + w.p) + 0.3 * Math.sin(2 * Math.PI * w.b * t + w.q));
   const trunkAt = (t: number): Vec3 => v3(drift(wx, t), base + t * len, drift(wz, t));
   const radiusAt = (t: number) => R * (0.15 + 0.85 * Math.pow(1 - t, s.taper)) * (1 + 0.5 * Math.exp(-(t * len) / 0.3));
   const segs = Math.ceil(len / 0.5), trunk: Limb = { pts: [], rad: [], level: 0, length: len, reach0: 0, reach1: 0 };
   for (let i = 0; i <= segs; i++) trunk.pts.push(trunkAt(i / segs)), trunk.rad.push(radiusAt(i / segs));
+  trunk.pts[0] = v3(trunk.pts[1].x, base, trunk.pts[1].z); // a vertical foot keeps the flared base ring level
 
   // Level-1 branches up the crown, 137.5° apart; crooked trees (high trunkWander) get more irregular crowns, and
   // young trees keep branches lower down.

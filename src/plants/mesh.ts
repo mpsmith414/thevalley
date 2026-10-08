@@ -3,6 +3,7 @@ import { type Vec3, v3, add, sub, scale, dot, cross, norm, len } from '../util/v
 import type { PlantMesh } from './generator';
 
 export type Material = PlantMesh['groups'][number]['material'];
+export const DEG = Math.PI / 180, UP: Readonly<Vec3> = v3(0, 1, 0);
 /** Per-vertex extras: wind weight (0 base … 1 tips), branch level, isLeaf, ambient occlusion. */
 export type Info = [number, number, number, number];
 
@@ -103,23 +104,32 @@ export type Card = { p: Vec3; axis: Vec3; normal: Vec3; size: number; reach: num
 
 /**
  * One leaf card: a single quad (broad) or two crossed quads (needle), mapping the full 0..1 UV square with `v` = 0 at
- * the base. Vertex normals blend the face normal 50/50 with `outward(p)` so crowns shade like volumes.
+ * the base. Each quad is turned once to face away from the crown (judged at the card's centre) and wound so its front
+ * face agrees with its vertex normals, which blend that face normal 50/50 with `outward(p)` so crowns shade like volumes.
  */
 export function card(mb: MeshBuilder, c: Card, crossed: boolean, outward: (p: Vec3) => Vec3, shade: Shade) {
+  const tip = scale(c.axis, c.size), out = outward(add(c.p, scale(tip, 0.5)));
   const quad = (n: Vec3) => {
-    const side = scale(norm(cross(c.axis, n)), c.size / 2), tip = scale(c.axis, c.size), ids: number[] = [];
+    const face = dot(n, out) < 0 ? scale(n, -1) : n, ids: number[] = [];
+    const side = scale(norm(cross(c.axis, face)), c.size / 2); // (axis × face) × axis = face: CCW about `face`
     const corners: [Vec3, number, number][] = [
       [sub(c.p, side), 0, 0], [add(c.p, side), 1, 0], [add(add(c.p, side), tip), 1, 1], [add(sub(c.p, side), tip), 0, 1],
     ];
     for (const [p, u, v] of corners) {
-      const o = outward(p), face = dot(n, o) < 0 ? scale(n, -1) : n;
       const [w, ao] = shade(p, Math.min(1, c.reach + 0.15 * v));
-      ids.push(mb.vert(p, norm(add(face, o), face), u, v, [w, c.level, 1, ao]));
+      ids.push(mb.vert(p, norm(add(face, outward(p)), face), u, v, [w, c.level, 1, ao]));
     }
     mb.quad(ids[0], ids[1], ids[2], ids[3]);
   };
   quad(c.normal);
   if (crossed) quad(norm(cross(c.axis, c.normal)));
+}
+
+/** Lowest point of a card's quads (both, if `crossed`). */
+export function cardBottom(c: Card, crossed: boolean): number {
+  const half = (n: Vec3) => (Math.abs(norm(cross(c.axis, n)).y) * c.size) / 2;
+  const spread = Math.max(half(c.normal), crossed ? half(norm(cross(c.axis, c.normal))) : 0);
+  return c.p.y + Math.min(0, c.axis.y * c.size) - spread;
 }
 
 /** Picks `n` of `count` items evenly (deterministic, keeps the first). */

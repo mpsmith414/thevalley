@@ -3,9 +3,8 @@ import { v3 } from '../../util/vec';
 import { between } from '../../util/rng';
 import type { ShrubSpec } from '../species';
 import type { PlantMesh } from '../generator';
+import { DEG } from '../mesh';
 import { type Limb, branchedLods, branchedShade, crownOf, growLimb, sprout, twigCards } from './limbs';
-
-const DEG = Math.PI / 180;
 
 /** Both LODs of a shrub `h` m tall (before the generator's exact height fit), within `budget`. Upright shrubs (low `spread`) get short twigs. */
 export function buildShrub(s: ShrubSpec, rng: () => number, h: number, young: boolean, budget: [number, number]): [PlantMesh, PlantMesh] {

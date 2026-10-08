@@ -5,6 +5,7 @@ import { hashNumbers } from '../../src/util/hash';
 
 const SEED = 1234;
 const all = buildAllPlants(SEED);
+const others = [7, 20261007].map(buildAllPlants);
 const form = (k: PlantKind) => SPECIES[k].spec.form;
 const tris = (m: PlantMesh) => m.indices.length / 3;
 const models = (k: PlantKind) => all.filter((m) => m.kind === k);
@@ -57,7 +58,7 @@ describe('buildAllPlants', () => {
       expect(at).toBe(l.indices.length);
       const mats = l.groups.map((g) => g.material);
       const f = form(m.kind);
-      if (f === 'tree' || f === 'shrub') expect(mats).toEqual(['bark', 'leaf']);
+      if (f === 'tree' || f === 'shrub') expect(mats).toEqual(l === m.lods[0] ? ['bark', 'leaf'] : mats.length === 1 ? ['bark'] : ['bark', 'leaf']);
       if (f === 'fern') expect(mats).toEqual(['leaf']);
       if (f === 'rock') expect(mats).toEqual(['rock']);
       if (f === 'log' || f === 'stump') expect(mats).toEqual(['bark']);
@@ -73,8 +74,8 @@ describe('buildAllPlants', () => {
     }
   });
 
-  it('stays within TRI_BUDGET at each LOD, and LOD1 is lighter than LOD0', () => {
-    for (const m of all) {
+  it('stays within TRI_BUDGET at each LOD, and LOD1 is lighter than LOD0, over several seeds', () => {
+    for (const m of [...all, ...others.flat()]) {
       const [b0, b1] = TRI_BUDGET[form(m.kind)];
       expect(tris(m.lods[0]), `${m.kind}/${m.variant} LOD0`).toBeLessThanOrEqual(b0);
       expect(tris(m.lods[1]), `${m.kind}/${m.variant} LOD1`).toBeLessThanOrEqual(b1);
@@ -166,6 +167,47 @@ describe('buildAllPlants', () => {
         vMin = Math.min(vMin, l.uvs[j * 2 + 1]), vMax = Math.max(vMax, l.uvs[j * 2 + 1]);
       }
       expect([uMin, uMax, vMin, vMax]).toEqual([0, 1, 0, 1]);
+    }
+  });
+});
+
+describe('generator invariants over several seeds', () => {
+  const every = [all, ...others].flat();
+
+  it('winds every visible triangle to face the same way as its vertex normals', () => {
+    for (const m of every) for (const l of m.lods) for (const g of l.groups) {
+      const P = l.positions, N = l.normals;
+      let bad = 0;
+      for (let i = g.start; i < g.start + g.count; i += 3) {
+        const [a, b, c] = [l.indices[i] * 3, l.indices[i + 1] * 3, l.indices[i + 2] * 3];
+        const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+        const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+        const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+        if (Math.hypot(fx, fy, fz) < 1e-12) continue; // degenerate: no facing to check
+        // A boulder's squashed underside has small dimples whose smooth normals disagree; they are buried, so allowed.
+        if (g.material === 'rock' && Math.max(P[a + 1], P[b + 1], P[c + 1]) < 0) continue;
+        const d = fx * (N[a] + N[b] + N[c]) + fy * (N[a + 1] + N[b + 1] + N[c + 1]) + fz * (N[a + 2] + N[b + 2] + N[c + 2]);
+        if (!(d > 0)) bad++;
+      }
+      expect(bad, `${m.kind}/${m.variant} ${g.material} back-facing triangles`).toBe(0);
+    }
+  });
+
+  it('keeps every tree and shrub vertex above y = -0.1', () => {
+    for (const m of every.filter((m) => ['tree', 'shrub'].includes(form(m.kind)))) for (const l of m.lods) {
+      let low = Infinity;
+      for (let i = 1; i < l.positions.length; i += 3) low = Math.min(low, l.positions[i]);
+      expect(low, `${m.kind}/${m.variant}`).toBeGreaterThanOrEqual(-0.1);
+    }
+  });
+
+  it('gives ferns 6-14 fronds: 6-8 young, 8-14 mature', () => {
+    for (const m of every.filter((m) => m.kind === 'fern')) {
+      const fronds = m.lods[1].indices.length / 3 / 8; // LOD1: 4 rows x 1 quad per frond
+      expect(Number.isInteger(fronds)).toBe(true);
+      const [lo, hi] = isYoung(m) ? [6, 8] : [8, 14];
+      expect(fronds, `fern/${m.variant}`).toBeGreaterThanOrEqual(lo);
+      expect(fronds, `fern/${m.variant}`).toBeLessThanOrEqual(hi);
     }
   });
 });

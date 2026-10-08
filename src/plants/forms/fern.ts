@@ -3,14 +3,13 @@ import { type Vec3, v3, add, scale, cross, norm } from '../../util/vec';
 import { between } from '../../util/rng';
 import type { FernSpec } from '../species';
 import type { PlantMesh } from '../generator';
-import { MeshBuilder, crown } from '../mesh';
+import { DEG, UP, MeshBuilder, crown } from '../mesh';
 
-const DEG = Math.PI / 180, UP = v3(0, 1, 0);
 type Frond = { rows: { c: Vec3; side: Vec3; up: Vec3; w: number }[] };
 
 /** Both LODs of a fern with fronds about `length` m long. LOD0: 12 rows, V-folded; LOD1: 4 rows, flat. */
 export function buildFern(s: FernSpec, rng: () => number, length: number, young: boolean): [PlantMesh, PlantMesh] {
-  const n = young ? 5 + Math.floor(rng() * 3) : 6 + Math.floor(rng() * (s.fronds - 5));
+  const n = young ? 6 + Math.floor(rng() * 3) : 8 + Math.floor(rng() * (s.fronds - 7)); // young 6–8, mature 8–fronds
   const fronds = (segs: number, all: { az: number; l: number; e0: number; roll: number }[]): Frond[] =>
     all.map(({ az, l, e0, roll }) => {
       let p = v3(0.03 * Math.cos(az), -0.02, 0.03 * Math.sin(az));
@@ -38,7 +37,8 @@ export function buildFern(s: FernSpec, rng: () => number, length: number, young:
         const t = i / segs;
         ids.push(cols.map((u) => {
           const x = (u - 0.5) * r.w, p = add(add(r.c, scale(r.side, x)), scale(r.up, fold ? Math.abs(x) * 0.35 : 0));
-          return mb.vert(p, norm(add(r.up, c.outward(p))), u, t, [t, 1, 1, 0.45 + 0.55 * t]);
+          // Outward weighted 0.5 so normals stay within 90° of each folded half's face (fold tilts it ~19° off `up`).
+          return mb.vert(p, norm(add(r.up, scale(c.outward(p), 0.5))), u, t, [t, 1, 1, 0.45 + 0.55 * t]);
         }));
       });
       for (let i = 0; i < segs; i++) for (let j = 0; j + 1 < cols.length; j++) mb.quad(ids[i][j], ids[i][j + 1], ids[i + 1][j + 1], ids[i + 1][j]);
