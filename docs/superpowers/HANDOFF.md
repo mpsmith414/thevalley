@@ -23,7 +23,7 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 ## Roadmap (updated)
 
 1. Creature Lab: built
-2. **The Valley: next, brainstorming in progress**
+2. **The Valley: spec approved, plan next**
 3. Lifeform Polish (committed): shapes and faces first, then fur, motion and post-processing
 4. The Living Ecosystem
 5. Views and Eyes
@@ -31,31 +31,16 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 7. Weather and Events
 8. The Director
 
-## The Valley brainstorm so far
+## The Valley
 
-Already decided in the vision: one rich valley about 1–2 km across (forest, meadow, a lake fed by a
-river, rocky hills, maybe a small beach); browser and WebGPU on the owner's RTX 3060 Ti, streamed to a
-Fire TV Cube with Moonlight; controller first; quality tiers; "living diorama" naturalism.
+Brainstorm finished and approved on 2026-10-07. Spec: `docs/superpowers/specs/2026-10-07-valley-design.md`
+(a northern temperate valley; code-built plants with CC0 textures; layout file plus seeded erosion; a
+24-minute day, no seasons yet; about 16 resident natives; free-fly plus viewpoints; valley on `index.html`,
+lab on `lab.html`; 1080p60 on High; an ambient soundscape). Next: the implementation plan in
+`docs/superpowers/plans/`, then build on a feature branch.
 
-**Open question 1** (asked, not yet answered): what kind of place should it feel like?
-
-- A. a northern temperate valley: pine and birch, wildflower meadow, clear lake, mossy granite. Recommended, since all eight native animals fit.
-- B. a lush green countryside valley
-- C. a mountain valley
-- D. something exotic (tropical or savanna), which would need new native animals
-
-Likely next questions, one at a time:
-
-1. Vegetation: code-generated (procedural) trees and plants versus CC0 models.
-2. Hand-crafted versus seeded, generated terrain.
-3. Day and night speed, and whether seasons come now or later.
-4. Whether the native animals wander the valley in this sub-project (using the lab's `ActionController`) or it stays empty until the Ecosystem.
-5. Which camera modes come now: free-fly and an overview map, with the rest in Views and Eyes.
-6. Whether the lab stays as a separate page or becomes a tent or studio inside the valley.
-
-Follow the usual flow: brainstorm (one question at a time, multiple choice, recommendation first) →
-spec in `docs/superpowers/specs/` → plan in `docs/superpowers/plans/` → build autonomously on a feature
-branch → screenshots → merge only on the owner's OK.
+Follow the usual flow: spec → plan → build autonomously on a feature branch → screenshots → merge only
+on the owner's OK.
 
 ## Dev tips that save time
 
