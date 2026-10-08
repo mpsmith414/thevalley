@@ -5,7 +5,7 @@ import type { PlantModelSet } from '../plants/generator';
 export type { PlantModelSet };
 
 /** Bump whenever any generator output changes; part of the cache key. */
-export const GENERATOR_VERSION = 1;
+export const GENERATOR_VERSION = 2;
 export const WORLD_SIZE = 1600, DEFAULT_GRID = 2049, TILE_SIZE = 64, TILES = 25, LAKE_LEVEL = 0;
 /** Floats per plant instance: x, y, z, yaw, scale, leanX, leanZ, tint, age, health. */
 export const INSTANCE_STRIDE = 10;

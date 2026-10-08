@@ -31,7 +31,7 @@ describe('VALLEY layout', () => {
   });
   it('lake outline is a simple polygon', () => {
     const o = VALLEY.lake.outline, n = o.length;
-    expect(n).toBe(16);
+    expect(n).toBe(96);
     for (let i = 0; i < n; i++)
       for (let j = i + 1; j < n; j++) {
         if (j === i + 1 || (i === 0 && j === n - 1)) continue;
@@ -41,13 +41,21 @@ describe('VALLEY layout', () => {
   it('homes sum to 18 animals', () => {
     expect(VALLEY.homes.reduce((s, h) => s + h.count, 0)).toBe(18);
   });
-  it('lake wobble is seeded and within 8 m of the ellipse', () => {
-    const o = VALLEY.lake.outline;
-    o.forEach((p, k) => {
-      const a = (k / o.length) * Math.PI * 2;
-      expect(Math.abs(p.x - 150 - 190 * Math.cos(a))).toBeLessThanOrEqual(8 + 1e-9);
-      expect(Math.abs(p.z - 200 - 130 * Math.sin(a))).toBeLessThanOrEqual(8 + 1e-9);
-    });
-    expect(o.some((p, k) => Math.abs(p.x - 150 - 190 * Math.cos((k / 16) * Math.PI * 2)) > 1e-6)).toBe(true);
+  it('lake shore is a smooth wobbled ellipse: within 24 m of it, no sharp corners, same area', () => {
+    // Control points wobble up to 8 m in x and z (11.3 m radially), the smooth radial wobble adds at most 12 m.
+    const o = VALLEY.lake.outline, n = o.length;
+    let maxDev = 0, maxTurn = 0, area = 0;
+    for (let i = 0; i < n; i++) {
+      const p = o[i], a = o[(i + n - 1) % n], b = o[(i + 1) % n], dx = p.x - 150, dz = p.z - 200;
+      maxDev = Math.max(maxDev, Math.abs(Math.hypot(dx, dz) * (1 - 1 / Math.hypot(dx / 190, dz / 130))));
+      let turn = Math.abs(Math.atan2(b.z - p.z, b.x - p.x) - Math.atan2(p.z - a.z, p.x - a.x));
+      if (turn > Math.PI) turn = 2 * Math.PI - turn;
+      maxTurn = Math.max(maxTurn, (turn * 180) / Math.PI);
+      area += a.x * p.z - p.x * a.z;
+    }
+    expect(maxDev).toBeLessThanOrEqual(24);
+    expect(maxDev).toBeGreaterThan(3); // it does wobble
+    expect(maxTurn).toBeLessThan(20); // a 16-gon turns 22.5 degrees at every corner
+    expect(Math.abs(area / 2) / (Math.PI * 190 * 130)).toBeCloseTo(1, 1);
   });
 });

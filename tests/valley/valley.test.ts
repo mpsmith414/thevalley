@@ -18,7 +18,7 @@ describe('createValley', () => {
   });
 
   it('knows where the water is', () => {
-    const lake = VALLEY.lake.outline.reduce((c, p) => ({ x: c.x + p.x / 16, z: c.z + p.z / 16 }), { x: 0, z: 0 });
+    const o = VALLEY.lake.outline, lake = o.reduce((c, p) => ({ x: c.x + p.x / o.length, z: c.z + p.z / o.length }), { x: 0, z: 0 });
     expect(v.isWater(lake.x, lake.z)).toBe(true);
     expect(v.isWater(-180, -90)).toBe(true); // on the river
     expect(v.isWater(-250, 200)).toBe(false); // the meadow
@@ -52,7 +52,7 @@ describe('createValley', () => {
     const n = v.normalAt(-250, 200);
     expect(Math.hypot(n.x, n.y, n.z)).toBeCloseTo(1, 5);
     expect(n.y).toBeGreaterThan(0.95);
-    expect(v.normalAt(640, -100).y).toBeLessThan(0.95); // on the granite ridge
+    expect(v.normalAt(520, -100).y).toBeLessThan(0.95); // on the granite ridge's west face (its crest, near x = 620, is rounded)
   });
 
   it('interpolates biomes and moisture from the map', () => {

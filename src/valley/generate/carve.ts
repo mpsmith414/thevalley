@@ -1,5 +1,5 @@
 import type { Layout, Pt } from '../types';
-import { buildPolylineIndex, catmullRom, nearestOnPolyline, pointInPolygon, sdPolygon } from '../geom';
+import { buildPolylineIndex, catmullRom, nearestOnPolyline, sdPolygon } from '../geom';
 import { sampleHeight, type HeightGrid } from './shape';
 
 /** One point of the river course (every 2 m): where it is, how high the water stands, how wide and steep it is, and which way it runs. */
@@ -12,6 +12,10 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
+/** River banks reach BANK m past the water's edge and the lake shore SHORE m from the outline; then they blend back into the terrain over BLEND m. */
+const BANK = 8, SHORE = 40, BLEND = 16;
+/** Lower `h` to `cap`, fully up to the edge of the zone (`past` <= 0) and fading out over BLEND m past it, so no cliff forms at the edge. */
+const cut = (h: number, cap: number, past: number) => (h <= cap ? h : past <= 0 ? cap : cap + (h - cap) * smoothstep(0, BLEND, past));
 
 /** Walk down the course so the water surface never rises and ends at the lake level. */
 function riverProfile(g: HeightGrid, layout: Layout): RiverSample[] {
@@ -33,6 +37,37 @@ function riverProfile(g: HeightGrid, layout: Layout): RiverSample[] {
       slope: sum / c, tx: q.t.x, tz: q.t.z,
     };
   });
+}
+
+/**
+ * Signed distance to a polygon (negative inside), row by row, for many queries: `rows(z)` returns `sd(x)` along that row.
+ * The sign is exactly `pointInPolygon`'s (same crossings); the distance is exact wherever it is below `band` and at least
+ * `band` elsewhere, because only edges whose box comes within `band` of the row and of x are measured.
+ */
+function outlineRows(poly: Pt[], band: number): (z: number) => (x: number) => number {
+  const n = poly.length;
+  return (z) => {
+    const xs: number[] = [], near: number[] = [];
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const a = poly[i], b = poly[j];
+      if (a.z > z !== b.z > z) xs.push(((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x);
+      if (Math.min(a.z, b.z) - band <= z && z <= Math.max(a.z, b.z) + band) near.push(j, i);
+    }
+    return (x) => {
+      let inside = false, d2 = band * band;
+      for (const cx of xs) if (x < cx) inside = !inside;
+      for (let k = 0; k < near.length; k += 2) {
+        const a = poly[near[k]], b = poly[near[k + 1]];
+        if (x < Math.min(a.x, b.x) - band || x > Math.max(a.x, b.x) + band) continue;
+        const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+        const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2));
+        const ex = x - (a.x + t * dx), ez = z - (a.z + t * dz);
+        d2 = Math.min(d2, ex * ex + ez * ez);
+      }
+      const d = Math.sqrt(d2);
+      return inside ? -d : d;
+    };
+  };
 }
 
 /** Index range of the grid cells covering [x0, x1] x [z0, z1] (clamped to the grid). */
@@ -59,7 +94,7 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
   const nearest = new Int32Array(grid * grid).fill(-1); // only filled for channel cells
 
   // 2. River bed and banks, only where a sample can be near enough (a bucket mask skips the far cells cheaply).
-  const reach = Math.max(course.width0, course.width1) / 2 + 8, R = Math.ceil(reach / index.bucket);
+  const reach = Math.max(course.width0, course.width1) / 2 + BANK + BLEND, R = Math.ceil(reach / index.bucket);
   const mw = index.w + 2 * R, mh = index.h + 2 * R, near = new Uint8Array(mw * mh);
   for (let bz = 0; bz < index.h; bz++) for (let bx = 0; bx < index.w; bx++) {
     if (!index.cells[bz * index.w + bx]) continue;
@@ -77,22 +112,27 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
       if (d < w2) {
         h[c] = Math.min(h[c], r.surface - course.depth * (1 - (d / w2) ** 2) - 0.05);
         channel[c] = 1; nearest[c] = k;
-      } else if (d < w2 + 8) h[c] = Math.min(h[c], r.surface + 0.3 + (d - w2) * 0.35);
+      } else if (d < w2 + BANK + BLEND) h[c] = cut(h[c], r.surface + 0.3 + (d - w2) * 0.35, d - w2 - BANK);
     }
   }
 
   // 3. Lake basin, and 4. beach: only within 60 m of the outline (everything farther is dry by definition).
   const beach = areas.find((a) => a.kind === 'beach');
-  const lb = bounds(lake.outline, 60), bb = beach ? bounds(beach.points, 0) : lb;
+  const lb = bounds(lake.outline, 60), bb = beach ? bounds(beach.points, BLEND) : lb;
   const lr = cellRange(g, Math.min(lb.x0, bb.x0), Math.max(lb.x1, bb.x1), Math.min(lb.z0, bb.z0), Math.max(lb.z1, bb.z1));
-  for (let iz = lr.j0; iz <= lr.j1; iz++) for (let ix = lr.i0; ix <= lr.i1; ix++) {
-    const p = { x: -half + ix * g.cell, z: -half + iz * g.cell }, sd = sdPolygon(p, lake.outline), c = iz * grid + ix;
-    if (sd < 0) {
-      inLake[c] = 1;
-      h[c] = Math.min(h[c], level - 0.3 - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
-    } else if (sd < 60) {
-      if (sd < 40) h[c] = Math.min(h[c], level + 0.2 + sd * 0.12);
-      if (beach && pointInPolygon(p, beach.points)) h[c] = Math.min(h[c], level + 0.15 + sd * 0.05);
+  const sdLake = outlineRows(lake.outline, 60);
+  for (let iz = lr.j0; iz <= lr.j1; iz++) {
+    const row = sdLake(-half + iz * g.cell);
+    for (let ix = lr.i0; ix <= lr.i1; ix++) {
+      const p = { x: -half + ix * g.cell, z: -half + iz * g.cell }, sd = row(p.x), c = iz * grid + ix;
+      if (sd < 0) {
+        inLake[c] = 1;
+        h[c] = Math.min(h[c], level - 0.3 - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
+      } else if (sd < 60) {
+        if (sd < SHORE + BLEND) h[c] = cut(h[c], level + 0.2 + sd * 0.12, sd - SHORE);
+        const sb = beach ? sdPolygon(p, beach.points) : Infinity;
+        if (sb < BLEND) h[c] = cut(h[c], level + 0.15 + sd * 0.05, sb);
+      }
     }
   }
 

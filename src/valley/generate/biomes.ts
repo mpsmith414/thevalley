@@ -4,6 +4,12 @@ import { createNoise2D, fbm } from './noise';
 import type { WaterMaps } from './carve';
 import type { HeightGrid } from './shape';
 
+/**
+ * Area-edge wobble in metres: broad bays at 140 m plus a ragged edge at 35 m. fbm's spread is small (std about 0.21, at most
+ * about 0.67), so these give about ±23 m and ±6 m typical (90 m at most together).
+ */
+const WOBBLE = 110, RAGGED = 30;
+
 const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -49,10 +55,10 @@ export function computeBiomes(g: HeightGrid, water: WaterMaps, layout: Layout): 
   const wdist = waterDistance(water.kind, m, mapCell), n = createNoise2D(layout.seed ^ 0x6b1d);
   const out = new Uint8Array(m * m * 6);
   const areas = layout.areas.map((a) => {
-    const reach = a.soft / 2 + 15; // area weight and noise perturbation can't reach farther than this from the outline
+    const wob = Math.min(1, a.soft / 30), reach = a.soft / 2 + (WOBBLE + RAGGED) * wob; // area weight and wobble can't reach farther
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const p of a.points) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
-    return { a, x0: x0 - reach, x1: x1 + reach, z0: z0 - reach, z1: z1 + reach };
+    return { a, wob, x0: x0 - reach, x1: x1 + reach, z0: z0 - reach, z1: z1 + reach };
   });
   const w = [0, 0, 0, 0, 0];
   for (let iz = 0; iz < m; iz++) {
@@ -65,18 +71,19 @@ export function computeBiomes(g: HeightGrid, water: WaterMaps, layout: Layout): 
       const dx = (h[jz * grid + jx1] - h[jz * grid + jx0]) / ((jx1 - jx0) * g.cell);
       const dz = (h[jz1 * grid + jx] - h[jz0 * grid + jx]) / ((jz1 - jz0) * g.cell);
       const slope = (Math.atan(Math.hypot(dx, dz)) * 180) / Math.PI, height = h[jz * grid + jx];
-      // Area membership: 1 inside, 0 outside, blended over `soft` metres across a noise-wobbled outline.
+      // Area membership: 1 inside, 0 outside, blended over `soft` metres across a noise-wobbled outline
+      // (small, crisp areas such as the beach wobble less: in proportion to `soft`, in full from 30 m).
       let meadowArea = 0, rockArea = 0, beachArea = 0, wobble = NaN;
       for (const r of areas) {
         if (x < r.x0 || x > r.x1 || z < r.z0 || z > r.z1) continue;
-        if (wobble !== wobble) wobble = 15 * fbm(n, x / 60, z / 60, 3);
-        const s = smoothstep(r.a.soft / 2, -r.a.soft / 2, sdPolygon({ x, z }, r.a.points) + wobble);
+        if (wobble !== wobble) wobble = WOBBLE * fbm(n, x / 140, z / 140, 3) + RAGGED * fbm(n, x / 35 + 17.3, z / 35, 3); // broad bays plus a ragged edge
+        const s = smoothstep(r.a.soft / 2, -r.a.soft / 2, sdPolygon({ x, z }, r.a.points) + r.wob * wobble);
         if (r.a.kind === 'meadow') meadowArea = Math.max(meadowArea, s);
         else if (r.a.kind === 'rock') rockArea = Math.max(rockArea, s);
         else beachArea = Math.max(beachArea, s);
       }
       const rock = Math.max(smoothstep(36, 48, slope), smoothstep(165, 195, height), rockArea * smoothstep(10, 25, slope));
-      const beach = beachArea * smoothstep(60, 20, wd);
+      const beach = beachArea * smoothstep(70, 25, wd);
       const shore = (1 - rock) * smoothstep(12, 2, wd) * (1 - beach);
       const meadow = meadowArea * (1 - rock) * (1 - shore) * (1 - beach);
       const forest = Math.max(0, 1 - rock - beach - shore - meadow);
