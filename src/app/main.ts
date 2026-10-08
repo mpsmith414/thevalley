@@ -88,15 +88,17 @@ async function start(step: Parameters<typeof loadValley>[2]) {
     return views[current].name;
   };
   fly.apply(camera);
-  input.onPress = (b) => {
+  input.onPress = (b, repeat) => {
+    if (repeat) return; // a held arrow key must not restart the glide
     if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
     else if (b === 'right') goTo(current + 2);
   };
   window.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || !/^[1-8]$/.test(e.key)) return;
     goTo(+e.key);
   });
-  canvas.addEventListener('click', () => canvas.requestPointerLock?.());
+  canvas.addEventListener('click', () => (canvas.requestPointerLock?.() as Promise<void> | undefined)?.catch?.(() => {}));
 
   /** One frame of camera control: gamepad and keys in, a glide or a free-fly step out. */
   const drive = (dt: number) => {

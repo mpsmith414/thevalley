@@ -21,6 +21,10 @@ export type FlyWorld = {
 
 export const SPEED = 12, FAST = 5, WALK = 0.35, EASE = 0.25, MAX_PITCH = 1.35, MAX_Y = 600;
 const EYE_FLY = 1.2, EYE_WALK = 1.6, TRUNK_GAP = 0.6, BORDER = 10;
+/** Trunks only block the camera lower than this above the ground: the tallest trees are about 26 m, so higher up it flies over them. */
+const TREE_TOP = 30;
+/** Longest horizontal move between collision checks (m). */
+const STEP = 0.5;
 const STICK_YAW = 1.8, STICK_PITCH = 1.2, MOUSE = 0.0022;
 
 /** The ground, or the water surface where there is water (a NaN level means dry land). */
@@ -83,22 +87,31 @@ export class FreeFly {
     this.vel.y += (ty - this.vel.y) * a;
     this.vel.z += (tz - this.vel.z) * a;
 
-    const ox = this.pos.x, oz = this.pos.z;
-    let x = ox + this.vel.x * dt, z = oz + this.vel.z * dt;
-    // the world edge: slide along it
-    if (!world.inside(x, oz, BORDER)) { x = ox; this.vel.x = 0; }
-    if (!world.inside(x, z, BORDER)) { z = oz; this.vel.z = 0; }
-    // trunks
-    for (let pass = 0; pass < 2; pass++) {
-      for (const t of world.trunksNear(x, z, TRUNK_GAP)) {
-        const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz), min = t.r + TRUNK_GAP;
-        if (d >= min) continue;
-        const [ux, uz] = d > 1e-6 ? [dx / d, dz / d] : [1, 0];
-        x = t.x + ux * min;
-        z = t.z + uz * min;
+    // move in substeps of at most STEP metres so a long frame cannot jump over a trunk or the border
+    let x = this.pos.x, z = this.pos.z;
+    const n = Math.max(1, Math.ceil(Math.hypot(this.vel.x, this.vel.z) * dt / STEP));
+    const sx = (this.vel.x * dt) / n, sz = (this.vel.z * dt) / n;
+    for (let i = 0; i < n; i++) {
+      const ox = x, oz = z;
+      x += sx;
+      z += sz;
+      // the world edge: slide along it
+      if (!world.inside(x, oz, BORDER)) { x = ox; this.vel.x = 0; }
+      if (!world.inside(x, z, BORDER)) { z = oz; this.vel.z = 0; }
+      // trunks, only below the treetops
+      if (this.pos.y - surfaceAt(world, x, z) < TREE_TOP) {
+        for (let pass = 0; pass < 2; pass++) {
+          for (const t of world.trunksNear(x, z, TRUNK_GAP)) {
+            const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz), min = t.r + TRUNK_GAP;
+            if (d >= min) continue;
+            const [ux, uz] = d > 1e-6 ? [dx / d, dz / d] : [1, 0];
+            x = t.x + ux * min;
+            z = t.z + uz * min;
+          }
+        }
+        if (!world.inside(x, z, BORDER)) { x = ox; z = oz; }
       }
     }
-    if (!world.inside(x, z, BORDER)) { x = ox; z = oz; }
     this.pos.x = x;
     this.pos.z = z;
 

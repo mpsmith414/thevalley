@@ -41,7 +41,8 @@ export class Input {
   private mx = 0;
   private my = 0;
   private repeatAt = 0;
-  onPress: (b: Button) => void = () => {};
+  /** `repeat` is true for a held key's auto-repeat (keyboard only). */
+  onPress: (b: Button, repeat?: boolean) => void = () => {};
   /** Set by the gamepad hook in dev checks to stand in for a real controller. */
   padStub: PadState | null = null;
 
@@ -54,7 +55,7 @@ export class Input {
       const b = KEYS[e.key];
       if (b) {
         e.preventDefault();
-        this.onPress(b);
+        this.onPress(b, e.repeat);
       }
     });
     target.addEventListener('keyup', (e) => this.keys.delete((e as KeyboardEvent).key.toLowerCase()));

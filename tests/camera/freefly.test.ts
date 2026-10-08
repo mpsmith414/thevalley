@@ -142,6 +142,32 @@ describe('FreeFly collision', () => {
     expect(Math.hypot(f.pos.x - trunk.x, f.pos.z - trunk.z)).toBeGreaterThanOrEqual(1.6 - 1e-6);
     expect(f.pos.z).toBeGreaterThan(-10); // did not pass through
   });
+  it('flies straight over a trunk circle at ground + 100 m', () => {
+    const w = flat(0);
+    w.trunksNear = () => [{ x: 0, z: -10, r: 1 }];
+    const f = new FreeFly({ x: 0, y: 100, z: 0 }, 0, 0);
+    run(f, w, 2, intent({ move: { z: 1 } }));
+    expect(f.pos.z).toBeLessThan(-10.6); // went through the circle and out the far side
+  });
+  it('a long frame (fast, dt 0.1) never tunnels through a trunk dead ahead', () => {
+    const trunk = { x: 0, z: -40, r: 1 };
+    const w = flat(0);
+    w.trunksNear = (x, z, r) => (Math.hypot(x - trunk.x, z - trunk.z) - trunk.r <= r ? [trunk] : []);
+    const f = new FreeFly({ x: 0, y: 5, z: 0 }, 0, 0);
+    for (let k = 0; k < 60; k++) {
+      f.update(0.1, intent({ move: { z: 1 }, fast: true }), w);
+      expect(Math.hypot(f.pos.x - trunk.x, f.pos.z - trunk.z)).toBeGreaterThanOrEqual(1.6 - 1e-6);
+      expect(f.pos.z).toBeGreaterThan(trunk.z);
+    }
+  });
+  it('a long frame never jumps the border either', () => {
+    const w = flat(0);
+    const f = new FreeFly({ x: 780, y: 20, z: 0 }, -Math.PI / 2, 0);
+    for (let k = 0; k < 30; k++) {
+      f.update(0.1, intent({ move: { z: 1 }, fast: true }), w);
+      expect(w.inside(f.pos.x, f.pos.z, 10)).toBe(true);
+    }
+  });
   it('a camera dead centre in a trunk is still pushed out', () => {
     const w = flat(0);
     w.trunksNear = () => [{ x: 3, z: 4, r: 0.5 }];
