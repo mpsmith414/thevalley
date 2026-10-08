@@ -1,9 +1,7 @@
-import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardNodeMaterial, Vector2, type Camera, type Node } from 'three/webgpu';
-import {
-  abs, cameraViewMatrix, clamp, color, float, fract, int, ivec2, max, mix, positionLocal, positionWorld, round, smoothstep, step, texture,
-  uniform, vec3, vec4,
-} from 'three/tsl';
+import { BufferAttribute, BufferGeometry, Group, Mesh, Vector2, type Camera, type Node } from 'three/webgpu';
+import { abs, clamp, fract, max, positionLocal, step, uniform, vec3 } from 'three/tsl';
 import type { Tier } from '../render/quality';
+import { createGroundMaterial, type GroundSets } from './ground';
 import type { ValleyTextures } from './textures';
 
 /** Clipmap levels, and cells per level side. */
@@ -64,30 +62,12 @@ function levelGeometry(cells: number[]): BufferGeometry {
   return g;
 }
 
-// Debug ground colours until the real ground material (Task 13).
-const FOREST = color('#2f4a26'), MEADOW = color('#7a9a45'), ROCK = color('#8a8a84'), BEACH = color('#d8c9a0'), SHORE = color('#6b5a40');
-
-/** Debug ground: biome colours by weight, shaded by the generated normals and darkened in hollows; water tinted blue. */
-function groundColour(tex: ValleyTextures, xz: Node<'vec2'>, y: Node<'float'>) {
-  const n = texture(tex.normalTex, tex.worldToUv(xz));
-  const normal = n.rgb.mul(2).sub(1).normalize();
-  const uv = tex.mapUv(xz), a = texture(tex.biomeA, uv), b = texture(tex.biomeB, uv);
-  const sum = max(a.r.add(a.g).add(a.b).add(a.a).add(b.r), 0.001);
-  const mixed = FOREST.mul(a.r).add(MEADOW.mul(a.g)).add(ROCK.mul(a.b)).add(BEACH.mul(a.a)).add(SHORE.mul(b.r)).div(sum);
-  const cavity = clamp(float(1).sub(n.a.sub(0.5).mul(1.6)), 0.55, 1.1); // 128 is flat; hollows hold more, so darker
-  // water: the level at the nearest map node (−1000 where dry)
-  const m = tex.mapGrid, node = clamp(round(xz.add(tex.size / 2).div(tex.size / (m - 1))), 0, m - 1);
-  const level = texture(tex.waterTex).load(ivec2(int(node.x), int(node.y))).r, depth = level.sub(y);
-  const wet = step(0.02, depth).mul(mix(0.35, 0.9, smoothstep(0, 4, depth)));
-  return { colour: mix(mixed.mul(cavity), color('#1d4a5e'), wet), normal };
-}
-
 /**
  * Geometry clipmap terrain: `LEVELS` square levels of `N × N` cells, each twice as coarse as the last, following the camera.
  * Heights come from the height texture in the vertex shader; the outer fifth of each level morphs onto the next level's grid.
- * `tier` is reserved for the real ground material (Task 13).
+ * The ground's look comes from `createGroundMaterial` (the biome-blended photo textures in `sets`).
  */
-export function createTerrain(tex: ValleyTextures, _tier: Tier): { object: Group; update(camera: Camera): void } {
+export function createTerrain(tex: ValleyTextures, tier: Tier, sets: GroundSets): { object: Group; update(camera: Camera): void } {
   const object = new Group();
   object.name = 'terrain';
   const half = tex.size / 2;
@@ -98,11 +78,8 @@ export function createTerrain(tex: ValleyTextures, _tier: Tier): { object: Group
     const morphed = local.sub(fract(local.mul(0.5)).mul(2).mul(morph)); // odd vertices slide onto their even neighbour
     const edged = morphed.add(shift.mul(step(d, N / 4 + 0.5))); // hole-edge vertices follow the finer square
     const xz = clamp(centre.add(edged.mul(spacing)), -half, half); // outside the valley: collapse onto the border
-    const mat = new MeshStandardNodeMaterial({ roughness: 0.95, metalness: 0 });
+    const mat = createGroundMaterial(tex, sets, tier);
     mat.positionNode = vec3(xz.x, tex.heightAtNode(xz), xz.y);
-    const ground = groundColour(tex, positionWorld.xz, positionWorld.y);
-    mat.colorNode = ground.colour;
-    mat.normalNode = cameraViewMatrix.mul(vec4(ground.normal, 0)).xyz.normalize();
     const mesh = new Mesh(levelGeometry(ringCells(k)), mat);
     mesh.name = `terrain-level-${k}`;
     mesh.frustumCulled = false; // positions are made in the shader

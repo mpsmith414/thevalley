@@ -12,6 +12,7 @@ import { createValley } from '../valley/valley';
 import { createBackdrop } from '../world/backdrop';
 import { ValleyClock, moonDirection, moonPhase, sunDirection } from '../world/clock';
 import { lightingAt } from '../world/lighting';
+import { loadGroundSets } from '../world/ground';
 import { createSky } from '../world/sky';
 import { createTerrain } from '../world/terrain';
 import { valleyTextures } from '../world/textures';
@@ -26,19 +27,23 @@ const canvas = document.querySelector<HTMLCanvasElement>('#view')!;
 const ui = document.querySelector<HTMLElement>('#ui')!;
 
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
-async function start(step: Parameters<typeof loadValley>[2]) {
+async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
+  const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
     createRenderer(canvas, tier),
     loadValley(VALLEY, DEFAULT_GRID, step),
   ]);
   performance.mark('valley-data');
+  say('Rolling out the meadows…');
+  const sets = await ground;
+  performance.mark('valley-ground');
   const valley = createValley(data);
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(55, 1, 0.1, 8000);
 
   const tex = valleyTextures(data);
-  const terrain = createTerrain(tex, tier);
+  const terrain = createTerrain(tex, tier, sets);
   const backdrop = createBackdrop(data);
   scene.add(terrain.object, backdrop);
 
@@ -141,7 +146,7 @@ async function start(step: Parameters<typeof loadValley>[2]) {
   light(Infinity);
   await renderer.compileAsync(scene, camera);
   performance.mark('valley-ready');
-  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, terrain, backdrop, view, goTo, fly, input, tick };
+  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, view, goTo, fly, input, tick };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -218,10 +223,30 @@ function devHooks(w: World) {
         light(Infinity);
         return clock.hour;
       },
+      /** Paint every leaf card (colour above, height below, on a sky-grey ground) and save the sheet as .shots/<name>.png. */
+      cards: async (size = 256, name = 'cards') => {
+        const { CARD_KINDS, paintCard } = await import('../plants/cards');
+        const sheet = document.createElement('canvas');
+        sheet.width = size * CARD_KINDS.length;
+        sheet.height = size * 2;
+        const g = sheet.getContext('2d')!;
+        g.fillStyle = '#9fb0bf';
+        g.fillRect(0, 0, sheet.width, sheet.height);
+        const tmp = new OffscreenCanvas(size, size), tg = tmp.getContext('2d')!;
+        CARD_KINDS.forEach((k, i) => {
+          const { color, height } = paintCard(k, size);
+          [color, height].forEach((img, row) => {
+            tg.putImageData(img, 0, 0);
+            g.drawImage(tmp, i * size, row * size);
+          });
+        });
+        await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: sheet.toDataURL('image/png') });
+        return name;
+      },
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
-      /** Milliseconds since navigation until the data arrived and until the first frame was ready. */
-      get timings() { return { data: mark('valley-data'), ready: mark('valley-ready') }; },
+      /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
+      get timings() { return { data: mark('valley-data'), ground: mark('valley-ground'), ready: mark('valley-ready') }; },
     },
   });
 }
@@ -230,7 +255,7 @@ function devHooks(w: World) {
 const loading = openLoading(ui);
 let world: World | null = null;
 try {
-  world = await start(loading.step);
+  world = await start(loading.step, loading.say);
 } catch (e) {
   console.error('the valley could not start', e);
   loading.fail('The valley got a bit tangled while we were making it. Shall we try again?');

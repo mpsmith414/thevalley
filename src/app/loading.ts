@@ -23,7 +23,9 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = '
  * ticking off. `fail` turns it into a friendly error with "Try again" and "Creature Lab" buttons. Generation only reports the start and end of each stage, so the bar glides through a stage over
  * about the time it usually takes.
  */
-export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: number): void; close(): void; fail(message: string): void } {
+export function openLoading(root: HTMLElement): {
+  step(stage: GenStage, frac: number): void; say(text: string): void; close(): void; fail(message: string): void;
+} {
   const screen = el('div', 'loading');
   const title = el('h1', 'loading-title', 'Making your valley');
   const bar = el('div', 'loading-bar'), fill = el('div', 'loading-fill');
@@ -61,6 +63,10 @@ export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: nu
         setFill(before, 150);
         requestAnimationFrame(() => setFill(before + w * 0.9, STAGES[i].ms * 1.3)); // glide while the worker works
       } else setFill(before + w, 150);
+    },
+    /** Show `text` as the current step (after generation, while the last pieces load). */
+    say(text) {
+      if (!failed) label.textContent = text;
     },
     close() {
       setFill(1, 150);
