@@ -30,6 +30,8 @@ const ENV_DEG = 1.5, ENV_STALE = 0.25;
 const ENV_DAY = 0.25, ENV_NIGHT = 1.5;
 /** Seconds for the exposure to settle (time constant). */
 const EXPOSURE_TAU = 1.5;
+/** Metres over which the haze thins by e above 40 m (the backdrop's 300–900 m peaks must still fade into the sky). */
+const HAZE_HEIGHT = 800;
 /** Clip-space depth for the moon: behind everything in the valley and its mountains (≈ 6.9 km), in front of the stars (at the far plane). */
 const MOON_DEPTH = 0.999998;
 
@@ -210,11 +212,15 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
 
   // ---------- fog: aerial perspective, glowing towards the key light, and dawn mist hugging the water ----------
   const fogColor = uniform(new Color()), keyColor = uniform(new Color()), keyDir = uniform(new Vector3(0, 1, 0));
-  const density = uniform(0.00018), mist = uniform(0);
+  const density = uniform(0.00025), mist = uniform(0);
   const toFrag = positionWorld.sub(cameraPosition), dist = toFrag.length(), viewDir = toFrag.div(max(dist, 1e-3));
   // thinner with height: the density at the average height of the camera and the fragment, falling off above 40 m
-  const thin = exp(max(positionWorld.y.add(cameraPosition.y).mul(0.5).sub(40), 0).div(-250));
-  const haze = float(1).sub(exp(dist.mul(density).mul(thin).negate()));
+  const thin = exp(max(positionWorld.y.add(cameraPosition.y).mul(0.5).sub(40), 0).div(-HAZE_HEIGHT));
+  // squared (exp²) rather than plain exponential: the haze is bright, so even 8% of it lifted the lake 500 m away to a milky
+  // blue-grey. Squared, the valley floor stays clear (near the ground: 2% at 500 m, 6% at 1 km) while the
+  // backdrop 3–6 km out still fades (up to 43–90%, less up its high slopes).
+  const depth = dist.mul(density);
+  const haze = float(1).sub(exp(depth.mul(depth).mul(thin).negate()));
   const tint = mix(fogColor, keyColor, pow(max(dot(viewDir, keyDir), 0), 8).mul(0.5));
   // the thicker the haze, the more it takes the sky's own colour at the horizon, so distant ridges dissolve into the sky behind them
   const horizon = pmremTexture(env.texture, normalize(vec3(viewDir.x, max(viewDir.y, 0.03), viewDir.z)), float(0.4)) as Node<'vec3'>;

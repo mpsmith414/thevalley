@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Scene } from 'three/webgpu';
+import { NeutralToneMapping, PerspectiveCamera, Scene } from 'three/webgpu';
 import { FreeFly, intentFrom, toggleDown } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { isTier, type Tier } from '../render/quality';
@@ -33,6 +33,9 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     createRenderer(canvas, tier),
     loadValley(VALLEY, DEFAULT_GRID, step),
   ]);
+  // Neutral, not the Lab's AgX: AgX greyed the valley's greens and blues and, with the haze on top, washed the middle distance
+  // out to a pale blue-grey. The lighting table's exposures are tuned for Neutral.
+  renderer.toneMapping = NeutralToneMapping;
   performance.mark('valley-data');
   say('Rolling out the meadows…');
   const sets = await ground;

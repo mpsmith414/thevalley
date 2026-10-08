@@ -11,21 +11,24 @@ const MOON_COLOR = '#9db4ff';
 const row = (elev: number, key: string, keyI: number, sky: string, ground: string, hemi: number, exposure: number, fog: string, stars: number): Row =>
   ({ elev, key, keyI, moon: key === MOON_COLOR, sky, ground, hemi, exposure, fog, stars });
 
-/** The lighting table, keyed by sun elevation (degrees). */
+/**
+ * The lighting table, keyed by sun elevation (degrees). The exposures are for the Valley's Neutral tone mapping, which keeps
+ * the scene's own contrast: night needs about twice AgX's exposure to stay readable, and the low sun a little more to glow.
+ */
 const TABLE: Row[] = [
-  row(-18, MOON_COLOR, 0.25, '#1c2a4a', '#0d1018', 0.35, 2.2, '#1a2236', 1),
-  row(-8, MOON_COLOR, 0.2, '#2d3d66', '#151820', 0.4, 1.9, '#2a3350', 0.7),
-  row(-3, '#ff9a6a', 0.1, '#6f7fb0', '#3a3030', 0.5, 1.5, '#8a8aa8', 0.15),
-  row(0, '#ff8c50', 0.7, '#9fb0d0', '#5a4a3a', 0.55, 1.25, '#d8a888', 0),
-  row(5, '#ffb070', 1.6, '#b8c8e0', '#5a4a34', 0.5, 1.05, '#e4c8a8', 0),
-  row(15, '#ffe0b8', 2.4, '#c8daf0', '#56483a', 0.45, 0.95, '#c8d4dc', 0),
-  row(40, '#fff4e5', 3.0, '#cfe3ff', '#5a4a30', 0.4, 0.95, '#b9c8cf', 0),
-  row(65, '#fff4e5', 3.0, '#cfe3ff', '#5a4a30', 0.4, 0.95, '#b9c8cf', 0),
+  row(-18, MOON_COLOR, 0.25, '#1c2a4a', '#0d1018', 0.35, 4.2, '#1a2236', 1),
+  row(-8, MOON_COLOR, 0.2, '#2d3d66', '#151820', 0.4, 3.4, '#2a3350', 0.7),
+  row(-3, '#ff9a6a', 0.1, '#6f7fb0', '#3a3030', 0.5, 2.3, '#8a8aa8', 0.15),
+  row(0, '#ff8c50', 0.7, '#9fb0d0', '#5a4a3a', 0.55, 1.7, '#d8a888', 0),
+  row(5, '#ffb070', 1.6, '#b8c8e0', '#5a4a34', 0.5, 1.4, '#e4c8a8', 0),
+  row(15, '#ffe0b8', 2.4, '#c8daf0', '#56483a', 0.45, 1.1, '#c8d4dc', 0),
+  row(40, '#fff4e5', 3.0, '#cfe3ff', '#5a4a30', 0.4, 1.0, '#b9c8cf', 0),
+  row(65, '#fff4e5', 3.0, '#cfe3ff', '#5a4a30', 0.4, 1.0, '#b9c8cf', 0),
 ];
 /** Below this sun elevation the moon takes over as the key light. */
 const MOON_BELOW = -3;
-/** Clear-air fog density per metre, and the extra the dawn mist adds. */
-const FOG_DENSITY = 0.00018, MIST_DENSITY = 0.0002;
+/** Clear-air haze density per metre (the fog squares distance × density), and the extra the dawn mist adds. */
+const FOG_DENSITY = 0.00025, MIST_DENSITY = 0.00016;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Each table colour parsed once, at load, so `lightingAt` never parses strings per call. */

@@ -9,10 +9,12 @@ const at = (hour: number, day = 0): LightState => {
 };
 
 describe('lightingAt', () => {
-  it('is sunlit at noon with exposure 0.95', () => {
+  // Exposures are for the Valley's Neutral tone mapping (AgX's were 0.95 by day, 2.2 at night): Neutral keeps more contrast,
+  // so night and the low sun need more exposure to stay readable.
+  it('is sunlit at noon with exposure 1', () => {
     const s = at(12);
     expect(s.key).toBe('sun');
-    expect(s.exposure).toBeCloseTo(0.95, 9);
+    expect(s.exposure).toBeCloseTo(1, 9);
     expect(s.keyIntensity).toBeCloseTo(3, 9);
     expect(s.stars).toBe(0);
     expect(s.keyDir).toEqual(sunDirection(12));
@@ -22,7 +24,7 @@ describe('lightingAt', () => {
     const s = at(0);
     expect(s.key).toBe('moon');
     expect(s.stars).toBeCloseTo(1, 6);
-    expect(s.exposure).toBeGreaterThanOrEqual(2);
+    expect(s.exposure).toBeGreaterThanOrEqual(4);
     expect(s.keyColor).toBe('#9db4ff');
   });
 
@@ -46,8 +48,8 @@ describe('lightingAt', () => {
     expect(best).toBeGreaterThan(0.9);
     expect(at(12).mist).toBe(0);
     expect(at(2).mist).toBe(0);
-    expect(at(12).fogDensity).toBeCloseTo(0.00018, 9);
-    expect(at(5.5).fogDensity).toBeGreaterThan(0.00018);
+    expect(at(12).fogDensity).toBeCloseTo(0.00025, 9);
+    expect(at(5.5).fogDensity).toBeGreaterThan(0.00025);
   });
 
   it('switches the key to the moon below −3° of sun elevation', () => {
@@ -61,11 +63,11 @@ describe('lightingAt', () => {
   it('interpolates the table by sun elevation', () => {
     const sunAt = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
     const moon = { x: 0, y: -1, z: 0 };
-    expect(lightingAt(9, sunAt(15), moon, 0).exposure).toBeCloseTo(0.95, 9);
+    expect(lightingAt(9, sunAt(15), moon, 0).exposure).toBeCloseTo(1.1, 9);
     expect(lightingAt(9, sunAt(15), moon, 0).keyColor).toBe('#ffe0b8');
     expect(lightingAt(9, sunAt(10), moon, 0).keyIntensity).toBeCloseTo(2.0, 6);
-    expect(lightingAt(9, sunAt(2.5), moon, 0).exposure).toBeCloseTo(1.15, 6);
-    expect(lightingAt(9, sunAt(-30), moon, 0).exposure).toBeCloseTo(2.2, 9);
+    expect(lightingAt(9, sunAt(2.5), moon, 0).exposure).toBeCloseTo(1.55, 6);
+    expect(lightingAt(9, sunAt(-30), moon, 0).exposure).toBeCloseTo(4.2, 9);
     expect(lightingAt(9, sunAt(80), moon, 0).keyIntensity).toBeCloseTo(3, 9);
   });
 
