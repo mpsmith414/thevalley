@@ -46,10 +46,11 @@ export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: nu
     bar.setAttribute('aria-valuenow', String(Math.round(frac * 100)));
   };
 
+  let failed = false; // late progress from the worker must not overwrite the failure message
   return {
     step(stage, frac) {
       const i = STAGES.findIndex((s) => s.stage === stage);
-      if (i < 0) return;
+      if (i < 0 || failed) return;
       const before = STAGES.slice(0, i).reduce((s, x) => s + x.ms, 0) / TOTAL, w = STAGES[i].ms / TOTAL;
       items.forEach((li, k) => {
         li.classList.toggle('done', k < i || (k === i && frac >= 1));
@@ -67,6 +68,7 @@ export function openLoading(root: HTMLElement): { step(stage: GenStage, frac: nu
       setTimeout(() => screen.remove(), 450);
     },
     fail(message) {
+      failed = true;
       screen.classList.add('failed');
       title.textContent = 'Oh no!';
       label.textContent = message;
