@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { ActionController, type Place, type RigIntents } from '../../src/motion/actions';
+import { ActionController, type Habitat, type RigIntents } from '../../src/motion/actions';
+import { stageHabitat } from '../../src/render/stage';
 import { mulberry32 } from '../../src/util/rng';
 import type { Vec3 } from '../../src/util/vec';
 
-const place: Place = {
+const place = {
   radius: 6,
   heightAt: () => 0,
-  isWater: (x, z) => Math.hypot(x + 2.6, z - 2.2) < 1.4,
+  isWater: (x: number, z: number) => Math.hypot(x + 2.6, z - 2.2) < 1.4,
   pond: { x: -2.6, z: 2.2, r: 1.4 },
 };
+
+/** A controller on the lab stage; the habitat and the controller share one seeded rng, as in the lab. */
+function make(rig: RigIntents, seed: number, opts: { shore?: boolean } = {}) {
+  const rng = mulberry32(seed);
+  return new ActionController(rig, stageHabitat(place, rng), rng, opts);
+}
 
 /** A rig that teleports to its target a little each frame. */
 function fakeRig(kind: { swimmer?: boolean; canFly?: boolean } = {}) {
@@ -45,7 +52,7 @@ function fakeRig(kind: { swimmer?: boolean; canFly?: boolean } = {}) {
 describe('ActionController', () => {
   it('lies down to sleep and stays asleep', () => {
     const { rig, tick } = fakeRig();
-    const ctl = new ActionController(rig, place, mulberry32(1));
+    const ctl = make(rig, 1);
     ctl.set('sleep');
     tick(ctl, 3);
     expect(rig.sleep).toBe(1);
@@ -55,7 +62,7 @@ describe('ActionController', () => {
 
   it('wanders only to dry land inside the stage', () => {
     const { rig, tick } = fakeRig();
-    const ctl = new ActionController(rig, place, mulberry32(2));
+    const ctl = make(rig, 2);
     ctl.set('wander');
     tick(ctl, 120);
     expect(rig.targets.length).toBeGreaterThan(5);
@@ -68,7 +75,7 @@ describe('ActionController', () => {
   it('keeps swimmers in the pond', () => {
     const { rig, tick } = fakeRig({ swimmer: true });
     rig.position = { x: -2.6, z: 2.2 };
-    const ctl = new ActionController(rig, place, mulberry32(3));
+    const ctl = make(rig, 3);
     ctl.set('wander');
     tick(ctl, 60);
     expect(rig.targets.length).toBeGreaterThan(3);
@@ -77,7 +84,7 @@ describe('ActionController', () => {
 
   it('takes fliers up for a few laps and back down', () => {
     const { rig, tick } = fakeRig({ canFly: true });
-    const ctl = new ActionController(rig, place, mulberry32(4));
+    const ctl = make(rig, 4);
     ctl.set('wander');
     let flew = false;
     for (let i = 0; i < 600; i++) {
@@ -89,7 +96,7 @@ describe('ActionController', () => {
 
   it('grazes with its head down, then goes back to idle', () => {
     const { rig, tick } = fakeRig();
-    const ctl = new ActionController(rig, place, mulberry32(5));
+    const ctl = make(rig, 5);
     ctl.set('eat');
     tick(ctl, 1);
     expect(rig.headDown).toBe(1);
@@ -101,7 +108,7 @@ describe('ActionController', () => {
   it('drinks at the edge of the pond', () => {
     const { rig, tick } = fakeRig();
     rig.position = { x: 2, z: 0 };
-    const ctl = new ActionController(rig, place, mulberry32(6));
+    const ctl = make(rig, 6);
     ctl.set('drink');
     const bank = rig.target!;
     expect(Math.hypot(bank.x + 2.6, bank.z - 2.2)).toBeCloseTo(1.75, 5);
@@ -109,5 +116,29 @@ describe('ActionController', () => {
     expect(rig.headDown).toBe(1);
     tick(ctl, 6);
     expect(ctl.current).toBe('idle');
+  });
+
+  it('wanders along the pond edge when it is a shore animal', () => {
+    const { rig, tick } = fakeRig();
+    const ctl = make(rig, 7, { shore: true });
+    ctl.set('wander');
+    tick(ctl, 120);
+    expect(rig.targets.length).toBeGreaterThan(5);
+    for (const t of rig.targets) {
+      const d = Math.hypot(t.x + 2.6, t.z - 2.2);
+      expect(d).toBeGreaterThan(1.4);
+      expect(d).toBeLessThanOrEqual(1.4 + 1);
+    }
+  });
+
+  it('stays put when there is no bank to drink at', () => {
+    const { rig } = fakeRig();
+    const habitat: Habitat = {
+      heightAt: () => 0, isWater: () => false, randomSpot: () => ({ x: 0, y: 0, z: 0 }), nearestBank: () => null, clamp: (p) => p,
+    };
+    const ctl = new ActionController(rig, habitat, mulberry32(8));
+    ctl.set('drink');
+    expect(ctl.current).toBe('idle');
+    expect(rig.target).toBeNull();
   });
 });

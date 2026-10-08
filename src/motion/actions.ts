@@ -19,13 +19,17 @@ export interface RigIntents {
   readonly floater: boolean;
 }
 
-/** The lab stage, as actions see it. */
-export type Place = {
-  radius: number;
+/** The ground an animal lives on, as actions see it: the lab stage, or one home range in the valley. */
+export interface Habitat {
   heightAt(x: number, z: number): number;
   isWater(x: number, z: number): boolean;
-  pond: { x: number; z: number; r: number };
-};
+  /** A random spot that suits this animal: on land, in water, or on land within 6 m of water. frac shrinks the range. */
+  randomSpot(where: 'land' | 'water' | 'shore', frac: number): Vec3;
+  /** A dry spot at the edge of the nearest water, or null if none is within reach. */
+  nearestBank(from: { x: number; z: number }): Vec3 | null;
+  /** Pull a point back inside the animal's range. */
+  clamp(p: Vec3): Vec3;
+}
 
 type Step = { kind: 'go'; speed: number; fly?: boolean } | { kind: 'wait'; time: number } | { kind: 'graze'; time: number };
 
@@ -39,7 +43,7 @@ export class ActionController {
   private timer = 0;
   private lookTimer = 0;
 
-  constructor(private rig: RigIntents, private place: Place, private rng: () => number) {}
+  constructor(private rig: RigIntents, private habitat: Habitat, private rng: () => number, private opts: { shore?: boolean } = {}) {}
 
   set(action: Action, camera?: Vec3) {
     this.current = action;
@@ -69,10 +73,12 @@ export class ActionController {
           break;
         }
         // to the nearest bank, facing the water
-        const p = this.place.pond;
-        const dx = r.position.x - p.x, dz = r.position.z - p.z;
-        const d = Math.hypot(dx, dz) || 1;
-        r.moveTo({ x: p.x + (dx / d) * (p.r + 0.35), y: 0, z: p.z + (dz / d) * (p.r + 0.35) });
+        const bank = this.habitat.nearestBank(r.position);
+        if (!bank) {
+          this.set('idle');
+          break;
+        }
+        r.moveTo(bank);
         r.setSpeed(0.25);
         this.plan = [{ kind: 'go', speed: 0.25 }, { kind: 'graze', time: 5 }];
         break;
@@ -191,29 +197,17 @@ export class ActionController {
     }
   }
 
-  /** A random point on dry land inside the stage (frac of its radius). */
+  /** A random point on dry land in the animal's range (frac of it); beside the water for shore animals. */
   randomLand(frac: number): Vec3 {
-    const p = this.place;
-    for (let i = 0; i < 50; i++) {
-      const a = this.rng() * Math.PI * 2;
-      const d = Math.sqrt(this.rng()) * p.radius * frac;
-      const x = Math.cos(a) * d, z = Math.sin(a) * d;
-      if (Math.hypot(x - p.pond.x, z - p.pond.z) > p.pond.r + 0.5) return { x, y: 0, z };
-    }
-    return { x: 0, y: 0, z: 0 };
+    return this.habitat.randomSpot(this.opts.shore ? 'shore' : 'land', frac);
   }
 
-  /** A random point in the pond, away from its edge. */
+  /** A random point in the water, away from its edge. */
   randomWater(): Vec3 {
-    const p = this.place.pond;
-    const a = this.rng() * Math.PI * 2;
-    const d = Math.sqrt(this.rng()) * p.r * 0.7;
-    return { x: p.x + Math.cos(a) * d, y: 0, z: p.z + Math.sin(a) * d };
+    return this.habitat.randomSpot('water', 0.7);
   }
 
   private clampInside(v: Vec3): Vec3 {
-    const max = this.place.radius * 0.85;
-    const d = Math.hypot(v.x, v.z);
-    return d > max ? { x: (v.x / d) * max, y: 0, z: (v.z / d) * max } : v;
+    return this.habitat.clamp(v);
   }
 }

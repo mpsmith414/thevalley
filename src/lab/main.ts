@@ -13,7 +13,7 @@ import { createCreatureObject, type CreatureObject } from '../render/creature';
 import { autoQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { renderView } from '../render/snapshot';
-import { createStage } from '../render/stage';
+import { createStage, stageHabitat } from '../render/stage';
 import { mulberry32 } from '../util/rng';
 import { FocusRing } from '../shared/focus';
 import { Gallery, newId, type GalleryItem } from './gallery';
@@ -61,7 +61,8 @@ async function show(recipe: Recipe) {
   scene.add(creature.root);
   rig = new CreatureRig(creature, body, recipe, stage);
   if (rig.swimmer) rig.position.set(stage.pond.x, 0, stage.pond.z);
-  actions = new ActionController(rig, stage, mulberry32(recipe.seed));
+  const rng = mulberry32(recipe.seed);
+  actions = new ActionController(rig, stageHabitat(stage, rng), rng);
   setAction('wander');
   if (skeletonOn) addSkeleton();
   // frame it: the camera keeps its direction, at a distance that suits the creature's size

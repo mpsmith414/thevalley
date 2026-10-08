@@ -7,6 +7,8 @@ import {
   color, float, hash, instanceIndex, mix, mx_noise_float, positionLocal, positionWorld, sin, smoothstep, time, uv, vec3,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
+import type { Habitat } from '../motion/actions';
+import type { Vec3 } from '../util/vec';
 import { mulberry32 } from '../util/rng';
 import { QUALITY, type Tier } from './quality';
 import { POND, STAGE_RADIUS, WATER_LEVEL, heightAt, isWater, normalAt } from './terrain';
@@ -107,6 +109,45 @@ function makeWater(): Mesh {
   const water = new Mesh(geo, mat);
   water.position.set(POND.x, WATER_LEVEL + 0.002, POND.z);
   return water;
+}
+
+/**
+ * The lab stage as a habitat: land is the disc inside the stage but off the pond, water is the pond away from
+ * its edge, the shore is a ring a metre wide around the pond. `rng` should be the controller's own, so a seed replays.
+ */
+export function stageHabitat(
+  stage: { radius: number; pond: { x: number; z: number; r: number }; isWater: Stage['isWater']; heightAt: Stage['heightAt'] },
+  rng: () => number,
+): Habitat {
+  const { radius, pond: p } = stage;
+  return {
+    heightAt: stage.heightAt,
+    isWater: stage.isWater,
+    randomSpot(where, frac): Vec3 {
+      if (where === 'water') {
+        const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * p.r * frac;
+        return { x: p.x + Math.cos(a) * d, y: 0, z: p.z + Math.sin(a) * d };
+      }
+      if (where === 'shore') {
+        const a = rng() * Math.PI * 2, d = p.r + 0.3 + rng() * 0.7;
+        return { x: p.x + Math.cos(a) * d, y: 0, z: p.z + Math.sin(a) * d };
+      }
+      for (let i = 0; i < 50; i++) {
+        const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * radius * frac;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (Math.hypot(x - p.x, z - p.z) > p.r + 0.5) return { x, y: 0, z };
+      }
+      return { x: 0, y: 0, z: 0 };
+    },
+    nearestBank(from) {
+      const dx = from.x - p.x, dz = from.z - p.z, d = Math.hypot(dx, dz) || 1;
+      return { x: p.x + (dx / d) * (p.r + 0.35), y: 0, z: p.z + (dz / d) * (p.r + 0.35) };
+    },
+    clamp(v) {
+      const max = radius * 0.85, d = Math.hypot(v.x, v.z);
+      return d > max ? { x: (v.x / d) * max, y: 0, z: (v.z / d) * max } : v;
+    },
+  };
 }
 
 /** The turntable stage: a grassy, bumpy patch with a slope and a pond, under a real sky. */
