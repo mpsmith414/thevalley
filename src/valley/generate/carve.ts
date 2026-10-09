@@ -1,6 +1,6 @@
 import type { Layout, Pt } from '../types';
 import { buildPolylineIndex, catmullRom, nearestOnPolyline, sdPolygon } from '../geom';
-import { sampleHeight, type HeightGrid } from './shape';
+import { SHORE_SLOPE, sampleHeight, type HeightGrid } from './shape';
 
 /** One point of the river course (every 2 m): where it is, how high the water stands, how wide and steep it is, and which way it runs. */
 export type RiverSample = { x: number; z: number; s: number; surface: number; width: number; slope: number; tx: number; tz: number };
@@ -36,7 +36,7 @@ function riverProfile(g: HeightGrid, layout: Layout): RiverSample[] {
   for (let k = 0; k < n; k++) {
     const { p, s } = cs[k], sd = sdPolygon(p, lake.outline);
     // below the ground, and below the lake's shore, which is lowered to a gentle slope later
-    const t = Math.min(sampleHeight(g, p.x, p.z), sd < SHORE ? lake.level + EDGE + Math.max(0, sd) * 0.12 : Infinity) - 0.3;
+    const t = Math.min(sampleHeight(g, p.x, p.z), sd < SHORE ? lake.level + EDGE + Math.max(0, sd) * SHORE_SLOPE : Infinity) - 0.3;
     if (k === n - 1 || sd < 0) surface[k] = lake.level;
     else surface[k] = Math.max(lake.level, k === 0 ? t : Math.min(surface[k - 1] - 0.002 * (s - cs[k - 1].s), t));
   }
@@ -167,7 +167,7 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
         inLake[c] = 1;
         h[c] = Math.min(h[c], level - EDGE - Math.min(-sd * SHELF, 0.3 - EDGE) - (lake.depth - 0.3) * smoothstep(0, 60, -sd));
       } else if (sd < 60) {
-        if (sd < SHORE + BLEND) h[c] = cut(h[c], level + EDGE + sd * 0.12, sd - SHORE);
+        if (sd < SHORE + BLEND) h[c] = cut(h[c], level + EDGE + sd * SHORE_SLOPE, sd - SHORE);
         const sb = beach ? sdPolygon(p, beach.points) : Infinity;
         if (sb < BLEND) h[c] = cut(h[c], level + EDGE + sd * 0.05, sb);
       }

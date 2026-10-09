@@ -41,7 +41,9 @@ const SPUR = 0.5, SPUR_SCALE = 150;
 const CREST = 0.7, CREST_SCALE = 360;
 /** Rolling floor: ROLL_BIAS + ROLL·fbm (about ±6 m, ±20 m at most) at ROLL_SCALE m, plus HUMMOCK·fbm hummocks; faded out near the river and lake. */
 const ROLL = 30, ROLL_BIAS = 3, ROLL_SCALE = 300, HUMMOCK = 6, HUMMOCK_SCALE = 45;
-/** Around the lake the land rises like the carved shore (0.12 m per m) for 30 m, then at most LAKE_BOWL m per m more, so the hills do not reach the shore. */
+/** How steeply the lake's carved shore rises from the water (m per m); the basin around it starts at the same slope. */
+export const SHORE_SLOPE = 0.12;
+/** Around the lake the land rises like the carved shore (SHORE_SLOPE m per m) for 30 m, then at most LAKE_BOWL m per m more, so the hills do not reach the shore. */
 const LAKE_BOWL = 0.3;
 /** The smooth fields (everything but the detail noise) are computed on a coarser grid about this many metres apart, then interpolated. */
 const COARSE = 3.2;
@@ -132,7 +134,7 @@ export function baseShape(layout: Layout, grid: number): HeightGrid {
       land += up;
       const dLake = (Math.hypot((x - lcx) / lrx, (z - lcz) / lrz) - 1) * lr, dRiver = polyDist(river.points, x, z);
       const dl = Math.max(0, dLake - 20); // the ellipse is only roughly the shore, so measure conservatively
-      land = smin(land, 1 + 0.12 * dl + LAKE_BOWL * Math.max(0, dl - 30), 4); // the hills step back from the lake: a basin, not a wall at the shore
+      land = smin(land, 1 + SHORE_SLOPE * dl + LAKE_BOWL * Math.max(0, dl - 30), 4); // the hills step back from the lake: a basin, not a wall at the shore
       const fade = smoothstep(10, 140, dRiver) * smoothstep(20, 160, dLake);
       const roll = fade * (ROLL_BIAS + ROLL * fbm(nf, x / ROLL_SCALE, z / ROLL_SCALE, 3) + HUMMOCK * fbm(nf, x / HUMMOCK_SCALE + 51.3, z / HUMMOCK_SCALE, 2));
       const o = (jz * cg + jx) * F;

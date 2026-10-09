@@ -1,4 +1,5 @@
 import { Vector3 } from 'three/webgpu';
+import { surfaceAt } from '../camera/freefly';
 import { viewpointPose } from '../camera/viewpoints';
 import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
@@ -237,8 +238,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
         const c = new Vector3(root.x, root.y + size * 0.35, root.z), r = dist ?? Math.max(1.6, size * 2.6);
         const dir = a.rig.yaw + Math.PI / 2 + turn;
         const p = new Vector3(c.x + Math.sin(dir) * r, c.y + r * rise, c.z + Math.cos(dir) * r);
-        const floor = w.valley.isWater(p.x, p.z) ? w.valley.waterLevelAt(p.x, p.z) : w.valley.heightAt(p.x, p.z);
-        p.y = Math.max(p.y, floor + 0.25);
+        p.y = Math.max(p.y, surfaceAt(w.valley, p.x, p.z) + 0.25);
         const d = c.clone().sub(p);
         Object.assign(w.fly, { pos: { x: p.x, y: p.y, z: p.z }, yaw: Math.atan2(-d.x, -d.z), pitch: Math.atan2(d.y, Math.hypot(d.x, d.z)), vel: { x: 0, y: 0, z: 0 }, walk: false });
         w.fly.apply(camera);

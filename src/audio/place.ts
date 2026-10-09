@@ -1,4 +1,5 @@
 /** What the soundscape needs to know about the listener's surroundings, read from the Valley (pure, given the Valley). */
+import { surfaceAt } from '../camera/freefly';
 import type { Valley } from '../valley/valley';
 
 /** Metres between probes of the lake search, the default search limit, and how far the camera moves before searching again. */
@@ -45,7 +46,7 @@ export function listenerPlace(valley: Valley, isLake: (x: number, z: number) => 
   let at = { x: NaN, z: NaN, d: LIMIT };
   return (x: number, y: number, z: number): Place => {
     if (!(Math.hypot(x - at.x, z - at.z) < RECHECK)) at = { x, z, d: lakeDistance(isLake, x, z) };
-    const floor = valley.isWater(x, z) ? Math.max(valley.heightAt(x, z), valley.waterLevelAt(x, z)) : valley.heightAt(x, z);
+    const floor = surfaceAt(valley, x, z);
     const river = valley.distanceToRiver(x, z);
     return {
       heightAboveGround: Math.max(0, y - floor), lakeDistance: at.d, riverDistance: river.d, riverSlope: river.sample.slope,

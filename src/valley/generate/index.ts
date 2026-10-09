@@ -1,7 +1,7 @@
 /** The whole generation pipeline: terrain, water, biomes, then plants. Pure and deterministic (same layout and version give the same data). */
-import { hash } from '../../util/hash';
 import { buildAllPlants } from '../../plants/generator';
 import { scatterAll } from '../../plants/scatter';
+import { cacheKey } from '../key';
 import { DEFAULT_GRID, GENERATOR_VERSION, type Layout, type ValleyData } from '../types';
 import { createValley } from '../valley';
 import { baseShape } from './shape';
@@ -11,8 +11,7 @@ import { computeBiomes, computeNormals } from './biomes';
 
 export type GenStage = 'shape' | 'erode' | 'carve' | 'biomes' | 'scatter' | 'plants';
 
-/** The cache key: changes with the layout, the grid size and the generator version. */
-export const cacheKey = (layout: Layout, grid: number, version = GENERATOR_VERSION) => hash({ layout, grid, v: version });
+export { cacheKey };
 
 /** Build the whole Valley. `onProgress` is called with frac 0 at the start and 1 at the end of each stage. */
 export function generateValley(

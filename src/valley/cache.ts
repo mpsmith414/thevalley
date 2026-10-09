@@ -1,5 +1,6 @@
 import { openDB } from 'idb';
-import { cacheKey, type GenStage } from './generate';
+import type { GenStage } from './generate';
+import { cacheKey } from './key';
 import { ValleyClient } from './client';
 import type { Layout, ValleyData } from './types';
 
