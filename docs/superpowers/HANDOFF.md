@@ -150,6 +150,13 @@ Kept on purpose from the build and the final review: small, none blocks the merg
 - The cache: the save failure path and a round trip with tiles and meshes are untested; the pipeline test generates at
   module top level; the loading bar can step back within a frame; the resize listener is added before startup can fail.
 - The lab's console shows two 500s on load (the API health check is 200).
+- From the final review:
+  - "lake distance" is computed two ways (`main.ts` nearest outline vertex; `audio/place.ts` raster search);
+  - navigation links hard-code `/` and `/lab.html` instead of `BASE_URL` (`loading.ts`, `menu-control.ts`,
+    `lab/ui/shell.ts`, `drawingset/main.ts`);
+  - the builder worker is never terminated;
+  - `ValleyClient` has no timeout;
+  - `start.ts` and partial animal-spawn failure are untested.
 
 ## Roadmap
 
