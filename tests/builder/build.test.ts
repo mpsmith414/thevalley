@@ -63,7 +63,8 @@ describe('buildBody', () => {
     expect(hashNumbers(buildBody(quadruped, [1]).lods[0].positions)).toBe(hashNumbers(buildBody(quadruped, [1]).lods[0].positions));
   });
 
-  it('builds the full-detail body in under 3 seconds', () => {
+  // Wall-clock: flaky on a busy machine, so only with PERF=1 (body build times: npx tsx tools/perf.ts).
+  it.skipIf(!process.env.PERF)('builds the full-detail body in under 3 seconds', () => {
     const t0 = performance.now();
     buildBody(quadruped, [0]);
     expect(performance.now() - t0).toBeLessThan(3000);

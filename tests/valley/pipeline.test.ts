@@ -38,6 +38,13 @@ describe('generateValley', () => {
     expect(a.tiles.some((t) => t.plants.kind.length > 0)).toBe(true);
   });
 
+  it('matches the golden hash for this GENERATOR_VERSION', () => {
+    // If this fails, the generator's output changed: bump GENERATOR_VERSION (src/valley/types.ts), so cached valleys are
+    // made again, and add the new version's hash here. (Grid 257 only: a quick stand-in for the full 2049.)
+    const GOLDEN: Record<number, string> = { 4: '02f08a80' };
+    expect(GOLDEN[GENERATOR_VERSION]).toBe(hash(hashValley(a)));
+  });
+
   it('reports all six stages in order, each from 0 to 1', () => {
     expect(progress).toEqual(stages.flatMap((s) => [[s, 0], [s, 1]]));
   });
