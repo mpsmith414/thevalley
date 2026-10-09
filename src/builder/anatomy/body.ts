@@ -1,7 +1,7 @@
 import type { Build } from '../../recipe/schema';
-import { add, lerp, scale, sub, v3, type Vec3 } from '../../util/vec';
+import { add, dot, lerp, scale, sub, v3, type Vec3 } from '../../util/vec';
 import type { BoneDef, Skeleton } from '../skeleton';
-import { boneFrame, feature, shapeSize, type Feature, type Frame, type Shape } from './shapes';
+import { boneFrame, feature, shapeSdf, shapeSize, type Feature, type Frame, type Shape } from './shapes';
 import type { Detail } from '.';
 
 const R = (b: BoneDef) => Math.max(b.r0, b.r1);
@@ -80,7 +80,12 @@ export function bodyFeatures(sk: Skeleton, build: Build, detail: Detail): Featur
     const ti = torso.reduce((best, i) => (bones[i].start.z < bones[best].start.z ? i : best));
     const t = bones[ti], f = boneFrame(t), r = R(t), len = Math.hypot(t.end.x - t.start.x, t.end.y - t.start.y, t.end.z - t.start.z);
     const c = sub(lerp(t.start, t.end, 0.7), scale(f.up, 1.25 * r));
-    push(feature('carve', ellipsoid(c, f, 0.3 * len, 0.9 * r, 0.45 * r * (0.5 + m)), 0.35 * r, { name: 'belly', bone: ti }));
+    const tuck = feature('carve', ellipsoid(c, f, 0.3 * len, 0.9 * r, 0.45 * r * (0.5 + m)), 0.35 * r, { name: 'belly', bone: ti });
+    // never cut a limb: a leg rooted under the belly (a duck's) keeps the tuck off; legs at the torso's ends keep it
+    const e = tuck.shape.type === 'ellipsoid' ? tuck.shape : null;
+    const cuts = !!e && bones.some((b) => isUpperLeg(sk, b) && dot(sub(b.start, e.c), f.a) > -e.r.x && dot(sub(b.start, e.c), f.a) < e.r.x
+      && [0, 1 / 6, 1 / 3].some((u) => shapeSdf(lerp(b.start, b.end, u), tuck.shape) < tuck.k + R(b)));
+    if (!cuts) push(tuck);
   }
   return out;
 }

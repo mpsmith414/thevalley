@@ -224,6 +224,11 @@ describe('body anatomy', () => {
     expect(belly.shape.c.z).toBeGreaterThan(mid.z);
   });
 
+  it('never cuts a limb: the duck (legs rooted under the belly) gets no belly tuck; the deer, fox and wolf keep theirs', () => {
+    expect(named(anat(cast('duck')).a, 'belly')).toHaveLength(0);
+    for (const id of ['deer', 'fox', 'wolf']) expect(named(anat(cast(id)).a, 'belly'), id).toHaveLength(1);
+  });
+
   it("gives a sprawled leg's muscle its front/back radius along z", () => {
     const { a } = anat(hexapod);
     const legs = [...named(a, 'haunch'), ...named(a, 'shoulder')];
