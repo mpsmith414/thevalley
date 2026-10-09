@@ -331,8 +331,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
 export type World = Awaited<ReturnType<typeof start>>;
 
 // ---------- the loop ----------
-/** The live loop's dev controls: `step` freezes the world, `heavy` adds busy work per frame, `onFrame` samples the fps. */
-const loop: Loop = { paused: false, heavy: 0, onFrame: null };
+/** The live loop's dev controls: `step` freezes the world, `heavy` adds busy work per frame, `onFrame` samples the fps, `onDrawn` times frames. */
+const loop: Loop = { paused: false, heavy: 0, onFrame: null, onDrawn: null };
 
 function run(w: World, pace: Pacing) {
   let last = performance.now();
@@ -345,6 +345,7 @@ function run(w: World, pace: Pacing) {
     if (!loop.paused) w.tick(dt);
     if (canvas.width > 0) w.renderer.render(w.scene, w.camera);
     if (!loop.paused && canvas.width > 0) pace.frame(dt, t0); // real frames only
+    loop.onDrawn?.(now, performance.now() - t0);
   });
 }
 

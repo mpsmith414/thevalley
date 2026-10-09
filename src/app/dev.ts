@@ -7,8 +7,15 @@ import { PRESETS } from '../world/clock';
 import type { World } from './main';
 import { gpuDone, type Pacing } from './pacing';
 
-/** The live loop's dev controls: `paused` freezes the world (`step`), `heavy` adds busy ms per frame, `onFrame` samples fps. */
-export type Loop = { paused: boolean; heavy: number; onFrame: ((dt: number) => void) | null };
+/**
+ * The live loop's dev controls: `paused` freezes the world (`step`), `heavy` adds busy ms per frame, `onFrame` samples fps,
+ * `onDrawn` gets each live frame's animation-frame time and its working ms (tick, render submit and pacing) once drawn.
+ */
+export type Loop = {
+  paused: boolean; heavy: number; onFrame: ((dt: number) => void) | null; onDrawn: ((now: number, workMs: number) => void) | null;
+};
+/** One live frame in `__valley.frames`' log: when (ms), the interval since the frame before, its working ms, the valley hour. */
+type FrameRow = { at: number; interval: number; work: number; hour: number };
 /** What the hooks need from the page. */
 export type DevContext = { canvas: HTMLCanvasElement; ui: HTMLElement; tier: Tier; quality: { choice: QualityChoice; tier: Tier; measure: boolean } };
 
@@ -20,6 +27,72 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
   loop.onFrame = (dt) => {
     if (dt > 0) fps.push(1 / dt);
     if (fps.length > 240) fps.shift();
+  };
+  // ---------- live frame log: real frames of the live loop, for finding stalls (pipeline compiles and the like) ----------
+  let log: FrameRow[] | null = null, prev = 0;
+  loop.onDrawn = (now, work) => {
+    if (log && prev) log.push({ at: now, interval: now - prev, work, hour: clock.hour });
+    prev = now;
+  };
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  const stats = (v: number[]) => {
+    const s = [...v].sort((a, b) => a - b), at = (q: number) => r1(s[Math.floor(q * (s.length - 1))] ?? NaN);
+    return { median: at(0.5), p99: at(0.99), max: r1(s[s.length - 1] ?? NaN) };
+  };
+  /** Summarise the log: frame intervals and working ms, and every frame slower than `slow` ms (with the hour it came at). */
+  const summary = (rows: FrameRow[], slow: number) => ({
+    frames: rows.length, seconds: r1(rows.length ? (rows[rows.length - 1].at - rows[0].at + rows[0].interval) / 1000 : 0),
+    interval: stats(rows.map((r) => r.interval)), work: stats(rows.map((r) => r.work)),
+    slow: rows.filter((r) => r.interval > slow || r.work > slow).map((r) => ({ hour: Math.round(r.hour * 1000) / 1000, interval: r1(r.interval), work: r1(r.work) })),
+  });
+  const frames = {
+    /** Start a fresh log of live frames. */
+    start: () => ((log = []), (prev = 0), 'recording'),
+    /** Stop logging and summarise (frames with an interval or working time over `slow` ms are listed). */
+    stop: (slow = 50) => {
+      const rows = log ?? [];
+      log = null;
+      return summary(rows, slow);
+    },
+    /** The log so far, summarised, without stopping it. */
+    peek: (slow = 50) => summary(log ?? [], slow),
+    /**
+     * Hidden window: animation frames stop, so drive the live loop from a timer instead (`on = false` puts the animation frames
+     * back). Like a screen's frames, the next one waits for the GPU to finish the one before (so a GPU stall, such as a pipeline
+     * compile, lengthens the interval), and comes no sooner than 16 ms after the last began. Every frame still runs the live
+     * loop's own code; only what calls it changes.
+     */
+    pump: (on = true) => {
+      type Cb = ((t: number) => void) | null;
+      type Anim = { stop(): void; start(): void; setContext(c: unknown): void; getAnimationLoop(): Cb; setAnimationLoop(cb: Cb): void };
+      const anim = (renderer as unknown as { _animation: Anim })._animation, cb = anim.getAnimationLoop(), done = gpuDone(renderer);
+      anim.stop(); // cancels through the context that scheduled the next frame
+      let current = 0, began = performance.now();
+      const timers = {
+        requestAnimationFrame: (f: (t: number) => void) => {
+          const id = ++current;
+          // called at the start of a frame: wait until the frame has been submitted, then for the GPU, then for the 16 ms
+          setTimeout(() => void (done?.() ?? Promise.resolve()).then(() => {
+            setTimeout(() => {
+              if (id !== current) return;
+              began = performance.now();
+              f(began);
+            }, Math.max(0, 16 - (performance.now() - began)));
+          }), 0);
+          return id;
+        },
+        cancelAnimationFrame: () => void current++,
+      };
+      anim.setContext(on ? timers : self);
+      anim.setAnimationLoop(null); // `start` runs one frame at once with no time: not through the live loop
+      anim.start();
+      anim.setAnimationLoop(cb);
+      return on ? 'timer' : 'animation frames';
+    },
+    /** Is the page visible (animation frames run)? */
+    get visible() {
+      return document.visibilityState;
+    },
   };
   /** Render now and save the frame as .shots/<name>.png (works even when the window is hidden). */
   const shot = async (name: string) => {
@@ -129,7 +202,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
         Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
         w.fly.apply(camera);
       },
-      time, tour, perf,
+      time, tour, perf, frames,
       /** Paint every leaf card (colour above, height below, on a sky-grey ground) and save the sheet as .shots/<name>.png. */
       cards: async (size = 256, name = 'cards') => {
         const { CARD_KINDS, paintCard } = await import('../plants/cards');
