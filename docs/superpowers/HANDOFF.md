@@ -23,6 +23,9 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 - `.env` (gitignored) holds the owner's key. They use a **multi-workspace key**, so `ANTHROPIC_WORKSPACE_ID` is also set and sent as the `anthropic-workspace-id` header.
 - The designer asks Claude for **plain JSON** against the schema (written into the cached instructions). The recipe schema is too big for constrained structured outputs ("compiled grammar is too large"). The server validates leniently, normalises (it infers missing part roles from ids, among other repairs) and retries once.
 - Owner's verdict on the lab: a first pass. **Shapes and faces bother them most.** That is the next sub-project.
+- Owner's verdict on the valley (2026-10-09, played it live): **"looks pretty awesome so far"**, ready to move on to
+  Lifeform Polish. The open checks below (TV frame rate, night darkness, River Bend, audio clips) were not raised as
+  blockers.
 
 ## The Valley: what the owner should check by eye and ear
 
@@ -171,6 +174,9 @@ Kept on purpose from the build and the final review: small, none blocks the merg
 
 Follow the usual flow: brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only
 on the owner's OK.
+
+**Starting the next chat:** "Read docs/superpowers/HANDOFF.md, then start the Lifeform Polish brainstorm (sub-project 3)."
+Begin on a new branch from `main` (for example `feat/lifeform-polish`).
 
 ## Dev tips that save time
 
