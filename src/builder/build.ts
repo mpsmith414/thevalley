@@ -42,9 +42,9 @@ const WEAK_GRADIENT = 0.5;
  * Moves each vertex towards the surface with one Newton step (p -= d·∇d/|∇d|², central differences with
  * step h), at most `maxStep` and never where the gradient is weak, then gives it the normalised gradient
  * there as its normal, or the area-weighted normal of its triangles where the gradient is weak or disagrees
- * with them (thin parts). Changes `positions` in place; returns the normals and the longest step taken.
+ * with them (thin parts). Every normal has unit length. Changes `positions` in place; returns the normals and the longest step taken.
  */
-function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32Array, h: number, maxStep: number) {
+export function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32Array, h: number, maxStep: number) {
   const normals = new Float32Array(positions.length);
   const i2h = 1 / (2 * h);
   const grad = (x: number, y: number, z: number, g: Vec3) => {
@@ -60,13 +60,13 @@ function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32Array, 
     grad(x, y, z, g);
     const gl = Math.hypot(g.x, g.y, g.z);
     if (gl < WEAK_GRADIENT) continue;
-    const step = Math.min(Math.abs(d) / gl, maxStep, 2 * Math.abs(d)); // |d|/|∇d| is the Newton step's length
+    const step = Math.min(Math.abs(d) / gl, maxStep); // |d|/|∇d| is the Newton step's length
     const k = (Math.sign(d) * step) / gl;
     positions[v] = x - g.x * k; positions[v + 1] = y - g.y * k; positions[v + 2] = z - g.z * k;
     longest = Math.max(longest, step);
   }
-  // area-weighted triangle normals (the cross product's length is twice the area)
-  const area = new Float64Array(positions.length);
+  // area-weighted triangle normals (the cross product's length is twice the area), and the total area
+  const area = new Float64Array(positions.length), total = new Float64Array(positions.length / 3);
   for (let t = 0; t < indices.length; t += 3) {
     const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
     const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
@@ -75,13 +75,17 @@ function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32Array, 
     area[a] += fx; area[a + 1] += fy; area[a + 2] += fz;
     area[b] += fx; area[b + 1] += fy; area[b + 2] += fz;
     area[c] += fx; area[c + 1] += fy; area[c + 2] += fz;
+    const fl = Math.hypot(fx, fy, fz);
+    total[a / 3] += fl; total[b / 3] += fl; total[c / 3] += fl;
   }
   for (let v = 0; v < positions.length; v += 3) {
     grad(positions[v], positions[v + 1], positions[v + 2], g);
-    const ax = area[v], ay = area[v + 1], az = area[v + 2];
-    const useGrad = Math.hypot(g.x, g.y, g.z) >= WEAK_GRADIENT && g.x * ax + g.y * ay + g.z * az >= 0;
-    const nx = useGrad ? g.x : ax, ny = useGrad ? g.y : ay, nz = useGrad ? g.z : az;
-    const l = Math.hypot(nx, ny, nz) || 1;
+    const ax = area[v], ay = area[v + 1], az = area[v + 2], gl = Math.hypot(g.x, g.y, g.z);
+    // triangles that cancel out (a fold) say nothing: then the gradient, however weak, else straight up
+    const flat = Math.hypot(ax, ay, az) <= 1e-6 * total[v / 3];
+    const useGrad = flat ? gl > 1e-9 : gl >= WEAK_GRADIENT && g.x * ax + g.y * ay + g.z * az >= 0;
+    const nx = useGrad ? g.x : flat ? 0 : ax, ny = useGrad ? g.y : flat ? 1 : ay, nz = useGrad ? g.z : flat ? 0 : az;
+    const l = Math.hypot(nx, ny, nz);
     normals[v] = nx / l; normals[v + 1] = ny / l; normals[v + 2] = nz / l;
   }
   return { normals, longest };

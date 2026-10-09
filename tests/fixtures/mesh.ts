@@ -11,3 +11,17 @@ export function topology(m: MeshData) {
     }
   return { edges, euler: m.positions.length / 3 - edges.size + m.indices.length / 3 };
 }
+
+/** Fewest triangles around any vertex (a closed surface needs at least three; two is a back-to-back flap). */
+export function minValence(m: { positions: Float32Array; indices: Uint32Array }): number {
+  const v = new Int32Array(m.positions.length / 3);
+  for (const i of m.indices) v[i]++;
+  return v.reduce((a, b) => Math.min(a, b), Infinity);
+}
+
+/** True if every normal has unit length (a zero normal lights as NaN). */
+export const unitNormals = (normals: Float32Array) => {
+  for (let i = 0; i < normals.length; i += 3)
+    if (!(Math.abs(Math.hypot(normals[i], normals[i + 1], normals[i + 2]) - 1) < 1e-3)) return false;
+  return true;
+};

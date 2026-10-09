@@ -66,8 +66,9 @@ class Lists {
  * Garland–Heckbert edge collapse with importance weights: Q_v = w_v · Σ area_f · K_f, and an edge's cost
  * (plus the REG length term) is also scaled by max(w_a, w_b), so the effective importance is about w².
  * The cheapest edge (ties by edge id) collapses its higher vertex into its lower one (which keeps the max
- * weight), subject to the link condition and a no-flip test. Edges with other than two faces lock the
- * vertices of those faces. Pure and deterministic; successive `collapseTo` calls continue from the current state.
+ * weight), subject to the link condition, at least three triangles left around every vertex and a no-flip
+ * test. Edges with other than two faces lock the vertices of those faces. Pure and deterministic; successive
+ * `collapseTo` calls continue from the current state.
  */
 export function createSimplifier(input: SimplifyInput): Simplifier {
   const n = input.positions.length / 3, F = input.indices.length / 3;
@@ -252,6 +253,20 @@ export function createSimplifier(input: SimplifyInput): Simplifier {
     return na - 1 + nbOnly >= 3; // never fold a tetrahedron flat
   };
 
+  /**
+   * Every vertex keeps at least three triangles: a and b merge into len(a) + len(b) − 4, and the third vertex of
+   * each shared face loses one. Two triangles around a vertex are a zero-volume flap (two faces back to back).
+   */
+  const valenceOk = (a: number, b: number): boolean => {
+    if (vf.len[a] + vf.len[b] - 4 < 3) return false;
+    const pool = vf.pool, s = vf.start[b], l = vf.len[b];
+    for (let i = s; i < s + l; i++) {
+      const o = pool[i] * 3, i0 = fv[o], i1 = fv[o + 1], i2 = fv[o + 2];
+      if ((i0 === a || i1 === a || i2 === a) && vf.len[i0 + i1 + i2 - a - b] - 1 < 3) return false;
+    }
+    return true;
+  };
+
   /** No flips: every surviving face around v (without o) keeps its facing and some area when v moves to p. */
   const flipOk = (v: number, o: number, px: number, py: number, pz: number): boolean => {
     const pool = vf.pool, s = vf.start[v], l = vf.len[v];
@@ -334,7 +349,7 @@ export function createSimplifier(input: SimplifyInput): Simplifier {
         const a = ea[e], b = eb[e];
         const px = eP[e * 3], py = eP[e * 3 + 1], pz = eP[e * 3 + 2];
         // a rejected edge stays out of the heap until one of its endpoints changes
-        if (!linkOk(a, b) || !flipOk(a, b, px, py, pz) || !flipOk(b, a, px, py, pz)) continue;
+        if (!linkOk(a, b) || !valenceOk(a, b) || !flipOk(a, b, px, py, pz) || !flipOk(b, a, px, py, pz)) continue;
         collapse(a, b, px, py, pz);
       }
     },

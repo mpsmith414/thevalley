@@ -3,6 +3,7 @@ import { createSimplifier } from '../../src/builder/simplify';
 import { sampleSparse } from '../../src/builder/sparse';
 import { surfaceNetsSparse } from '../../src/builder/mesher';
 import { v3 } from '../../src/util/vec';
+import { minValence } from '../fixtures/mesh';
 
 const sphere = (x: number, y: number, z: number) => Math.hypot(x, y, z) - 0.8;
 const mesh = () => surfaceNetsSparse(sampleSparse(sphere, v3(-1, -1, -1), v3(1, 1, 1), 0.02));
@@ -25,6 +26,7 @@ describe('simplify', () => {
     expect(out.indices.length / 3).toBeLessThanOrEqual(2000);
     expect(out.indices.length / 3).toBeGreaterThan(1800);
     expect(closed(out.indices)).toBe(true);
+    expect(minValence(out)).toBeGreaterThanOrEqual(3);
     for (let i = 0; i < out.positions.length; i += 3)
       expect(Math.abs(Math.hypot(out.positions[i], out.positions[i + 1], out.positions[i + 2]) - 0.8)).toBeLessThan(0.02);
   });

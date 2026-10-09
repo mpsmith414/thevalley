@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBody, individualVariation, type BuildTimes } from '../../src/builder/build';
+import { buildBody, individualVariation, snapToSurface, type BuildTimes } from '../../src/builder/build';
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
@@ -8,7 +8,7 @@ import { fox } from '../../src/cast/fox';
 import { hawk } from '../../src/cast/hawk';
 import { trout } from '../../src/cast/trout';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
-import { topology } from '../fixtures/mesh';
+import { minValence, topology, unitNormals } from '../fixtures/mesh';
 
 describe('skin weights', () => {
   const body = buildBody(quadruped, [1]);
@@ -60,18 +60,33 @@ describe('buildBody', () => {
       expect(b.lods[0].positions.length / 3).toBeLessThanOrEqual(120_000);
       for (const l of b.lods) {
         for (const p of l.positions) expect(Number.isFinite(p)).toBe(true);
-        for (const p of l.normals) expect(Number.isFinite(p)).toBe(true);
+        expect(unitNormals(l.normals)).toBe(true);
+        expect(minValence(l)).toBeGreaterThanOrEqual(3);
         const { edges } = topology(l);
         expect([...edges.values()].every((c) => c === 2)).toBe(true); // closed
       }
     }
   }, 60_000); // six bodies sampled finely and simplified to three levels: several seconds each when every test file runs at once
 
-  it('keeps thin parts facing the right way: small snaps, normals that agree with their triangles', () => {
+  it('gives a fold of back-to-back triangles a unit normal', () => {
+    const fold = () => ({ p: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 1]), i: new Uint32Array([0, 1, 2, 0, 2, 1]) });
+    const flatField = fold(); // no gradient at all: straight up
+    expect([...snapToSurface(() => 0, flatField.p, flatField.i, 0.01, 0.01).normals]).toEqual([0, 1, 0, 0, 1, 0, 0, 1, 0]);
+    const slab = fold(); // a weak gradient along -x still beats nothing
+    const n = snapToSurface((x) => -0.1 * x, slab.p, slab.i, 0.01, 0.01).normals;
+    for (let v = 0; v < 9; v += 3) expect([n[v], n[v + 1], n[v + 2]].map((c) => Math.round(c * 1e6) / 1e6)).toEqual([-1, 0, 0]);
+  });
+
+  it('keeps thin parts sound: small snaps, unit normals that agree with their triangles, no flaps', () => {
     for (const r of [trout, hawk]) {
       const times: BuildTimes = { sample: 0, mesh: 0, weigh: 0, simplify: 0, snap: 0, skin: 0, rawVertices: 0, maxSnap: 0 };
-      const { positions: P, normals: N, indices: I } = buildBody(r, [0], times).lods[0];
+      const lods = buildBody(r, [0, 1, 2], times).lods;
       expect(times.maxSnap).toBeLessThanOrEqual(1 + 1e-9); // at most one fine cell
+      for (const l of lods) {
+        expect(unitNormals(l.normals)).toBe(true);
+        expect(minValence(l)).toBeGreaterThanOrEqual(3); // no back-to-back fin flaps
+      }
+      const { positions: P, normals: N, indices: I } = lods[0];
       let flipped = 0; // triangles whose face opposes all three of their vertex normals
       for (let t = 0; t < I.length; t += 3) {
         const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;

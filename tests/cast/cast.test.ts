@@ -3,6 +3,7 @@ import { buildBody } from '../../src/builder/build';
 import { CAST } from '../../src/cast';
 import { findLimbs } from '../../src/motion/limbs';
 import { normalizeRecipe } from '../../src/recipe/normalize';
+import { minValence, unitNormals } from '../fixtures/mesh';
 
 const FOUR_LEGS = ['deer', 'rabbit', 'fox', 'wolf', 'frog'];
 
@@ -20,8 +21,12 @@ describe('the native cast', () => {
       });
 
       it('builds within budget', () => {
-        const body = buildBody(recipe, [0]);
+        const body = buildBody(recipe);
         expect(body.lods[0].positions.length / 3).toBeLessThanOrEqual(120_000);
+        for (const l of body.lods) {
+          expect(unitNormals(l.normals)).toBe(true);
+          expect(minValence(l)).toBeGreaterThanOrEqual(3);
+        }
         const limbs = findLimbs(body.skeleton);
         const count = (k: string) => limbs.filter((l) => l.kind === k).length;
         if (FOUR_LEGS.includes(recipe.id)) expect(count('leg')).toBe(4);
