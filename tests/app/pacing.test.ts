@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { pacing, type PacingOptions } from '../../src/app/pacing';
+import { describe, expect, it, vi } from 'vitest';
+import { AUTO_SETTLE, pacing, type PacingOptions } from '../../src/app/pacing';
+import { AUTO_SECONDS } from '../../src/render/quality';
 import type { Tier } from '../../src/render/quality';
 
 /** A renderer stand-in that records the pixel ratios it was given. */
@@ -80,20 +81,39 @@ describe('pacing', () => {
     expect(Number.isNaN(pace.workMs)).toBe(true);
   });
 
-  it('lets Auto measure first, keeps its pick and labels a change', () => {
+  it('waits for startAuto, then lets 1 s settle before Auto measures, at full resolution', () => {
     const { pace, picks, labels } = make({ measure: true });
     expect(pace.measuring).toBe(true);
-    for (let i = 0; i < 30 * 4; i++) pace.frame(1 / 30, 0);
-    expect(pace.measuring).toBe(false);
+    for (let i = 0; i < 300; i++) pace.frame(0.03, 0); // loading stalls and the start screen: not measured, the scaler runs
+    expect(picks).toEqual([]);
+    expect(pace.scale).toBe(0.7);
+    pace.startAuto();
+    expect(pace.scale).toBe(1); // measured at full resolution
+    for (let i = 0; i < 10 * AUTO_SETTLE; i++) pace.frame(0.1, 0); // a 10 fps hitch while it settles: not counted
+    for (let i = 0; i < 30 * AUTO_SECONDS - 1; i++) pace.frame(1 / 30, 0);
+    expect(picks).toEqual([]);
+    pace.frame(1 / 30, 0);
     expect(picks).toEqual(['low']);
     expect(labels).toEqual(['Next time: Low quality']);
+    expect(pace.measuring).toBe(false);
     expect(pace.scale).toBe(1); // the scaler sat out the measurement
   });
 
   it('says nothing when Auto keeps the tier it started on', () => {
     const { pace, picks, labels } = make({ measure: true });
+    pace.startAuto();
+    for (let i = 0; i < 60 * AUTO_SETTLE; i++) pace.frame(1 / 60, 0);
     for (let i = 0; i < 60 * 4 + 1; i++) pace.frame(1 / 60, 0);
     expect(picks).toEqual(['high']);
     expect(labels).toEqual([]);
+  });
+
+  it('warns at most once when the GPU signal fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { pace } = make({ done: () => Promise.reject(new Error('lost')) });
+    for (let i = 0; i < 5; i++) pace.frame(0.016, 0);
+    await flush();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

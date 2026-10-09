@@ -35,6 +35,15 @@ describe('ResolutionScaler', () => {
     for (let i = 1; i < steps.length - 1; i++) expect(steps[i] / steps[i - 1]).toBeCloseTo(1.04, 6);
   });
 
+  it('steps up on exactly the 120th frame in a row with a fast median, then every 120 frames', () => {
+    const s = new ResolutionScaler(0.7);
+    feed(s, 600, 20); // at the floor, with a window of 20 ms frames and the last change long past
+    const out = feed(s, 400, 10);
+    const changes = out.map((x, i) => [x, i] as const).filter(([x], i) => x !== (i ? out[i - 1] : 0.7)).map(([, i]) => i + 1);
+    // the median turns fast on the 31st 10 ms frame (31 of the 60 are fast), so the run reaches 120 on frame 150
+    expect(changes.slice(0, 2)).toEqual([150, 270]);
+  });
+
   it('waits for 120 fast frames in a row before stepping up', () => {
     const s = new ResolutionScaler(0.7);
     feed(s, 600, 20);

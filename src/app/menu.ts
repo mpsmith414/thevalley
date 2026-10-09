@@ -80,7 +80,7 @@ export const CONTROLS: readonly [string, string, string][] = [
   ['Walk on the ground', 'Y', 'G'],
   ['Fly to the next place', 'D-pad ◀ ▶', 'Arrow keys ◀ ▶'],
   ['Fly to place 1 to 8', '', 'Keys 1 to 8'],
-  ['Menu', 'Start', 'Esc'],
+  ['Menu', 'Start', 'Esc or N'],
   ['Choose in the menu', 'D-pad and A', 'Arrow keys and Enter'],
   ['Back', 'B', 'Backspace'],
   ['Sound on / off', '', 'M'],

@@ -58,7 +58,7 @@ export function menuControl(d: MenuDeps) {
         menu?.update(state());
       },
       quality: (q) => {
-        if (q === d.choice) return;
+        if (q === d.choice && q !== 'auto') return; // Auto again means: measure again
         remember('valley.tier', q);
         if (q === 'auto') remember('valley.autoTier', null); // Auto measures afresh
         location.reload(); // the tier shapes the whole world: build it again (cached, so quick), like the lab does

@@ -235,7 +235,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
         setPose(s);
         if (s.done) {
           glide = null;
-          showLabel(ui, views[current].name); // arrived
+          if (!open) showLabel(ui, views[current].name); // arrived (no label over the menu)
         }
         fly.apply(camera);
         return;
@@ -345,8 +345,11 @@ if (world) {
   if (import.meta.env.DEV) (await import('./dev')).devHooks(w, pace, loop, { canvas, ui, tier, quality });
   run(w, pace);
   loading.close();
-  world.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
-  if (world.audio) await openStart(ui, world.audio); // one press wakes the sound (skipped when the browser already lets it play)
-  world.release();
+  const animals = w.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
+  if (w.audio) await openStart(ui, w.audio); // one press wakes the sound (skipped when the browser already lets it play)
+  w.release();
+  // Auto measures only now the start screen has gone and the animals' shaders are built (after a 1 s settle): loading
+  // stalls must not count against the computer
+  void animals.then(() => pace.startAuto());
   if (world.cached) toast(ui, 'Welcome back!');
 }

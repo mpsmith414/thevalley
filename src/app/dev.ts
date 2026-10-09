@@ -141,7 +141,13 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
       /** Add `ms` of busy work to every live frame (0 to stop): a forced heavy view for checking the scaler. */
       heavy: (ms: number) => (loop.heavy = ms),
       /** The quality setting and the tier running. */
-      quality: { ...quality, picked: stored<unknown>('valley.autoTier', null) },
+      quality: {
+        ...quality,
+        /** Auto's remembered pick (read fresh: it is stored once Auto has measured). */
+        get picked() {
+          return stored<unknown>('valley.autoTier', null);
+        },
+      },
       /** Median frames per second over the last few seconds. */
       fps: fpsNow,
       /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
