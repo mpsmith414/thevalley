@@ -351,16 +351,21 @@ function step(frames: number, dt = 1 / 60) {
 async function portrait(recipe: Recipe, prefix: string) {
   await show(recipe);
   setAction('idle');
-  step(90);
+  // settle: no glancing about (the head would turn), so every shot starts from the same neutral pose
+  for (let i = 0; i < 120; i++) {
+    step(1);
+    if (rig) rig.look = null;
+  }
   if (!creature || !rig) return;
   const saved = { pos: camera.position.clone(), target: controls.target.clone(), min: controls.minDistance };
   controls.minDistance = 0.01; // close faces sit inside the usual limit
-  const q = creature.root.quaternion;
-  const fwd = new Vector3(0, 0, 1).applyQuaternion(q), left = new Vector3(1, 0, 0).applyQuaternion(q), up = new Vector3(0, 1, 0);
-  /** Unit direction from the target to the camera: azimuth from forward towards the creature's left, then elevation. */
-  const dirAt = (azimuth: number, elevation: number) =>
-    fwd.clone().multiplyScalar(Math.cos(azimuth)).addScaledVector(left, Math.sin(azimuth)).multiplyScalar(Math.cos(elevation))
+  const up = new Vector3(0, 1, 0);
+  /** Unit direction from the target to the camera: azimuth from `fwd` towards its left, then elevation. */
+  const dirAt = (fwd: Vector3, azimuth: number, elevation: number) => {
+    const left = new Vector3().crossVectors(up, fwd); // up × forward = the creature's left (+x when it faces +z)
+    return fwd.clone().multiplyScalar(Math.cos(azimuth)).addScaledVector(left, Math.sin(azimuth)).multiplyScalar(Math.cos(elevation))
       .addScaledVector(up, Math.sin(elevation));
+  };
   const aim = async (target: Vector3, dir: Vector3, dist: number, name: string) => {
     controls.target.copy(target);
     camera.position.copy(target).addScaledVector(dir, dist);
@@ -372,13 +377,20 @@ async function portrait(recipe: Recipe, prefix: string) {
   const headIx = Math.max(0, bones.findIndex((b) => b.role === 'head'));
   const hb = bones[headIx];
   // the head bone runs start→end (the neck end is `start`): aim at its middle, and measure its radius as a sphere round it
-  const headMid = creature.bones[headIx].localToWorld(new Vector3((hb.end.x - hb.start.x) / 2, (hb.end.y - hb.start.y) / 2, (hb.end.z - hb.start.z) / 2));
-  const headR = Math.hypot(hb.end.x - hb.start.x, hb.end.y - hb.start.y, hb.end.z - hb.start.z) / 2 + Math.max(hb.r0, hb.r1);
-  await aim(headMid, dirAt(25 * deg, 10 * deg), 2.2 * headR, 'face');
+  const along = new Vector3(hb.end.x - hb.start.x, hb.end.y - hb.start.y, hb.end.z - hb.start.z);
+  const headMid = creature.bones[headIx].localToWorld(along.clone().multiplyScalar(0.5));
+  const headR = along.length() / 2 + Math.max(hb.r0, hb.r1);
+  // where the head faces now (its start→end in the world, flattened); the body's own facing is the rig's heading
+  const headDir = creature.bones[headIx].localToWorld(along.clone()).sub(creature.bones[headIx].getWorldPosition(new Vector3()));
+  const bodyFwd = new Vector3(Math.sin(rig.yaw), 0, Math.cos(rig.yaw));
+  const headLen = headDir.length();
+  headDir.y = 0;
+  const headFwd = headDir.length() > 0.3 * headLen ? headDir.normalize() : bodyFwd; // an upright head faces as the body does
+  await aim(headMid, dirAt(headFwd, 25 * deg, 10 * deg), 2.2 * headR, 'face');
   const size = Math.max(0.3, recipe.life.sizeM, rig.body.skeleton.max.y);
   const mid = new Vector3(creature.root.position.x, creature.root.position.y + rig.restHeight, creature.root.position.z);
-  await aim(mid, dirAt(45 * deg, 12 * deg), size * 2.2 + 0.4, '34');
-  await aim(mid, dirAt(90 * deg, 12 * deg), size * 2.2 + 0.4, 'side');
+  await aim(mid, dirAt(bodyFwd, 45 * deg, 12 * deg), size * 2.2 + 0.4, '34');
+  await aim(mid, dirAt(bodyFwd, 90 * deg, 12 * deg), size * 2.2 + 0.4, 'side');
   camera.position.copy(saved.pos);
   controls.target.copy(saved.target);
   controls.minDistance = saved.min;
