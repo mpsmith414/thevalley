@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ringLayout, snapToCell, ringCounts } from '../../src/plants/grass';
+import { COVER_SPACINGS, ringLayout, snapToCell, ringCounts, spacingsDouble } from '../../src/plants/grass';
 
 const ringOf = (out: Float32Array, i: number, radii: number[]) => {
   const d = Math.hypot(out[2 * i], out[2 * i + 1]) + 1e-4; // float32: a point on a ring's inner edge may read a hair short of it
@@ -66,5 +66,13 @@ describe('snapToCell', () => {
 
   it('never gives −0', () => {
     expect(Object.is(snapToCell({ x: -0.1, z: -0.2 }, 1).x, -0)).toBe(false);
+  });
+});
+
+describe('ground cover spacings', () => {
+  it('double ring to ring in every layer, so centre + offset stays on the finest lattice', () => {
+    for (const s of Object.values(COVER_SPACINGS)) expect(spacingsDouble(s)).toBe(true);
+    expect(spacingsDouble([0.35, 0.7, 1.5])).toBe(false);
+    expect(spacingsDouble([0.5])).toBe(true);
   });
 });

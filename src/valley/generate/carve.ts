@@ -12,6 +12,8 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
+/** The river's slowest and fastest flow (m/s): `0.4 + 6·slope`, clamped. */
+export const RIVER_SLOW = 0.4, RIVER_FAST = 2.5;
 /** River banks reach BANK m past the water's edge and the lake shore SHORE m from the outline; then they blend back into the terrain over BLEND m. */
 const BANK = 8, SHORE = 40, BLEND = 16;
 /**
@@ -180,7 +182,7 @@ export function carveWater(g: HeightGrid, layout: Layout): { river: RiverSample[
   for (let iz = 0; iz < m; iz++) for (let ix = 0; ix < m; ix++) {
     const c = iz * m + ix, gc = 2 * iz * grid + 2 * ix;
     if (inLake[gc]) { kind[c] = 1; levelMap[c] = level; } else if (channel[gc]) {
-      const r = river[nearest[gc]], speed = clamp(0.4 + 6 * r.slope, 0.4, 2.5);
+      const r = river[nearest[gc]], speed = clamp(RIVER_SLOW + 6 * r.slope, RIVER_SLOW, RIVER_FAST);
       kind[c] = 2; levelMap[c] = surf[gc]; flow[2 * c] = r.tx * speed; flow[2 * c + 1] = r.tz * speed;
     }
   }

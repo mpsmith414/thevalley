@@ -99,11 +99,11 @@ export function setWind(u: WindUniforms, w: WindState): void {
 }
 
 const U = (n: number) => uint(n);
-/** TSL twin of `h32`. */
-const h32Node = (x0: Node<'uint'>) => {
+/** TSL twin of `h32` (lowbias32); also the ground cover's rendering-only lattice hash. */
+export const h32Node = (x0: Node<'uint'>) => {
   let x = bitXor(x0, shiftRight(x0, U(16))).mul(U(0x7feb352d));
   x = bitXor(x, shiftRight(x, U(15))).mul(U(0x846ca68b));
-  return bitXor(x, shiftRight(x, U(16)));
+  return bitXor(x, shiftRight(x, U(16))) as Node<'uint'>;
 };
 /** TSL twin of `lattice` (`i`, `j` are whole-number floats). */
 const latticeNode = (i: Node<'float'>, j: Node<'float'>) => {

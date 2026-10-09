@@ -22,17 +22,26 @@ import {
   sin, smoothstep, texture, uint, uniform, uv, varyingProperty, vec2, vec3, vec4,
 } from 'three/tsl';
 import type { WorldQuality } from '../world/quality';
-import type { ValleyTextures } from '../world/textures';
+import { LAKE_CALM, REED_CALM, type ValleyTextures } from '../world/textures';
 import { gradedAverage, macroTintNode, type GroundSets } from '../world/ground';
 import { mulberry32, between } from '../util/rng';
 import { FLOWER_CARDS, cardTextures } from './cards';
 import type { PlantLight } from './material';
-import { windNodes, type WindUniforms } from './wind';
+import { h32Node, windNodes, type WindUniforms } from './wind';
 
 /** The camera layer the ground cover draws on (not in any shadow cascade or the lake's mirror). */
 export const GROUND_COVER_LAYER = 5;
 
 // ---------- pure helpers ----------
+
+/**
+ * Each layer's ring spacings (m), finest first. They must double ring to ring (`spacingsDouble`): then the camera snapped to
+ * the coarsest spacing plus any ring's offset lies on the finest lattice, which the shader hashes and reads levels from.
+ */
+export const COVER_SPACINGS = { grass: [0.35, 0.7, 1.4], flowers: [0.9, 1.8], reeds: [0.6], lilies: [1.5] } as const;
+
+/** Whether each spacing is exactly twice the one before. */
+export const spacingsDouble = (s: readonly number[]): boolean => s.every((v, k) => k === 0 || v === s[k - 1] * 2);
 
 /** How many lattice points each ring holds: ring k has spacing `spacings[k]` and covers radii [radii[k−1], radii[k]). */
 export function ringCounts(spacings: readonly number[], radii: readonly number[]): number[] {
@@ -213,12 +222,8 @@ function lilyGeometry(): BufferGeometry {
 // ---------- shader helpers ----------
 
 const U = (n: number) => uint(n);
-/** lowbias32 (as the wind's lattice hash), on the GPU: a rendering-only hash of a lattice point. */
-const hashU = (x0: Node<'uint'>) => {
-  let x = bitXor(x0, shiftRight(x0, U(16))).mul(U(0x7feb352d));
-  x = bitXor(x, shiftRight(x, U(15))).mul(U(0x846ca68b));
-  return bitXor(x, shiftRight(x, U(16))) as Node<'uint'>;
-};
+/** The wind's lowbias32, as a rendering-only hash of a lattice point. */
+const hashU = h32Node;
 /** A uniform random number in [0, 1) for lattice hash `h`, stream `k`. */
 const rnd = (h: Node<'uint'>, k: number) => float(shiftRight(hashU(bitXor(h, U((k * 0x9e3779b9) >>> 0))), U(8))).div(16777216);
 /** Perlin noise remapped to about 0..1. */
@@ -274,6 +279,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
    * `widen` (2× per finer level that has faded away). `salt` keeps the layers' streams apart.
    */
   const instance = (rings: Rings, centre: Node<'vec2'>, salt: number) => {
+    if (!spacingsDouble(rings.spacings)) throw new Error(`ground cover spacings must double ring to ring: ${rings.spacings}`);
     const s0 = rings.spacings[0], slop = Math.max(...rings.spacings) * Math.SQRT1_2 + 0.05;
     const radii = rings.radii.filter((r, k) => r > (k ? rings.radii[k - 1] : 0)), top = radii.length - 1;
     const p = centre.add(attribute('off', 'vec2') as Node<'vec2'>);
@@ -337,7 +343,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
 
   // ---------- grass ----------
   {
-    const rings = { spacings: [0.35, 0.7, 1.4], radii: [15, 35, R].map((r) => Math.min(r, R)) };
+    const rings = { spacings: [...COVER_SPACINGS.grass], radii: [15, 35, R].map((r) => Math.min(r, R)) };
     const centre = uniform(new Vector2()) as Layer['centre'];
     const meadowC = vec3(...gradedAverage(look.ground, 'meadow')), forestC = meadowC.mul(vec3(0.72, 0.86, 0.62)), shoreC = meadowC.mul(vec3(0.85, 1.04, 0.8));
     const vCol = varyingProperty('vec3', 'vGrassColour'), vN = varyingProperty('vec3', 'vGrassNormal'), vT = varyingProperty('float', 'vGrassTip');
@@ -394,7 +400,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
 
   // ---------- wildflowers ----------
   {
-    const rings = { spacings: [0.9, 1.8], radii: [25, R * 0.8].map((r) => Math.min(r, R * 0.8)) };
+    const rings = { spacings: [...COVER_SPACINGS.flowers], radii: [25, R * 0.8].map((r) => Math.min(r, R * 0.8)) };
     const centre = uniform(new Vector2()) as Layer['centre'];
     const vSp = varyingProperty('float', 'vFlowerKind'), vN = varyingProperty('vec3', 'vFlowerNormal');
     // heights (m) per card, FLOWER_CARDS order: lupine, daisy, fireweed, harebell
@@ -439,7 +445,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
 
   // ---------- reeds and cattails ----------
   {
-    const rings = { spacings: [0.6], radii: [40] };
+    const rings = { spacings: [...COVER_SPACINGS.reeds], radii: [40] };
     const centre = uniform(new Vector2()) as Layer['centre'];
     const vCol = varyingProperty('vec3', 'vReedColour'), vN = varyingProperty('vec3', 'vReedNormal');
     const gb = attribute('gb', 'vec4') as Node<'vec4'>, ex = attribute('extra', 'vec2') as Node<'vec2'>, c = positionGeometry;
@@ -448,7 +454,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
       const it = instance(rings, centre, 0x4eed), out = it.base.toVar();
       vCol.assign(vec3(0)); vN.assign(vec3(0, 1, 0));
       const depth = waterLevel(it.xz).sub(it.y).toVar();
-      const calm = smoothstep(0.15, 0.4, biomes(it.xz).b.b);
+      const calm = smoothstep(REED_CALM[0], REED_CALM[1], biomes(it.xz).b.b);
       const shallows = smoothstep(0.03, 0.1, depth).mul(float(1).sub(smoothstep(0.5, 0.62, depth)));
       const bed = smoothstep(0.32, 0.55, noise01(it.xz.div(16))).toVar();
       const want = calm.mul(shallows).mul(bed.mul(0.85).add(0.1)).mul(density);
@@ -487,7 +493,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
 
   // ---------- lily pads ----------
   {
-    const rings = { spacings: [1.5], radii: [60] };
+    const rings = { spacings: [...COVER_SPACINGS.lilies], radii: [60] };
     const centre = uniform(new Vector2()) as Layer['centre'];
     const vLL = varyingProperty('vec4', 'vLily');
     const ll = attribute('ll', 'vec4') as Node<'vec4'>;
@@ -496,7 +502,7 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
       const it = instance(rings, centre, 0x1111), out = it.base.toVar();
       vLL.assign(vec4(0));
       const level = waterLevel(it.xz).toVar(), depth = level.sub(it.y);
-      const lake = smoothstep(0.7, 0.9, biomes(it.xz).b.b);
+      const lake = smoothstep(LAKE_CALM[0], LAKE_CALM[1], biomes(it.xz).b.b);
       const window = smoothstep(0.6, 0.8, depth).mul(float(1).sub(smoothstep(2.2, 2.5, depth)));
       const want = lake.mul(window).mul(smoothstep(0.42, 0.62, noise01(it.xz.div(22).add(7.7)))).mul(density);
       const size = clamp(want.sub(it.r(0)).div(0.2), 0, 1).mul(it.fade).toVar();
@@ -538,8 +544,8 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
       const c = iz * m + ix;
       if (level[c] < -999) continue;
       const k = Math.min(n - 1, Math.floor((iz * mc) / CELL)) * n + Math.min(n - 1, Math.floor((ix * mc) / CELL)), calm = bb[c * 4 + 2];
-      if (calm > 38) reedCell[k] = 1;
-      if (calm > 178) lakeCell[k] = 1;
+      if (calm > REED_CALM[0] * 255) reedCell[k] = 1;
+      if (calm > LAKE_CALM[0] * 255) lakeCell[k] = 1;
     }
   }
   const waterNear = (x: number, z: number, reach: number, cells: Uint8Array) => {
