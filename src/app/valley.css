@@ -42,5 +42,23 @@ body { background: #b9c8cf; color: #14405c; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -12px); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .loading-fill, .loading, .toast { transition: none !important; animation: none !important; }
+  .loading-fill, .loading, .toast, .start, .start-press { transition: none !important; animation: none !important; }
 }
+
+/* ---------- start screen (one press wakes the sound) ---------- */
+.start {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; cursor: pointer;
+  background: radial-gradient(ellipse at center, #14405c40, #14405c90); transition: opacity 0.4s ease; outline: none;
+}
+.start.closing { opacity: 0; pointer-events: none; }
+.start-card {
+  display: grid; justify-items: center; gap: 14px; padding: 34px 48px; border-radius: 36px; text-align: center;
+  background: linear-gradient(#bfe6faf0, #d9efd0f0); box-shadow: 0 10px 40px #0005;
+}
+.start-title { margin: 0; font-size: clamp(30px, 5vw, 56px); font-weight: 900; }
+.start-press {
+  margin: 0; padding: 14px 34px; border-radius: 999px; background: #5fae4a; color: #fff; font-weight: 900;
+  font-size: clamp(20px, 2.8vw, 32px); box-shadow: 0 4px 14px #0003; animation: start-pulse 1.6s ease-in-out infinite;
+}
+.start-hint { margin: 0; font-size: clamp(16px, 1.8vw, 22px); font-weight: 700; color: #14405cb0; }
+@keyframes start-pulse { 50% { transform: scale(1.05); } }

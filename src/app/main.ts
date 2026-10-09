@@ -13,7 +13,7 @@ import { VALLEY } from '../valley/layout';
 import { DEFAULT_GRID } from '../valley/types';
 import { createValley } from '../valley/valley';
 import { createBackdrop } from '../world/backdrop';
-import { ValleyClock, moonDirection, moonPhase, sunDirection } from '../world/clock';
+import { ValleyClock, elevationDeg, moonDirection, moonPhase, sunDirection } from '../world/clock';
 import { lightingAt } from '../world/lighting';
 import { loadGroundSets } from '../world/ground';
 import { createLake } from '../world/lake';
@@ -24,10 +24,13 @@ import { valleyTextures } from '../world/textures';
 import { WORLD_QUALITY } from '../world/quality';
 import { MID_LAYER, MID_TREE_LAYER, NEAR_LAYER, VegetationTiles } from '../world/tiles';
 import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '../plants/material';
-import { createWind, setWind, updateWind, windUniforms } from '../plants/wind';
+import { createWind, gustAt, setWind, updateWind, windUniforms } from '../plants/wind';
 import { IMPOSTOR_LAYER, bakeImpostors, createImpostorLayer } from '../plants/impostor';
 import { GROUND_COVER_LAYER, createGroundCover, loadFlowerCards } from '../plants/grass';
+import { createSoundscape } from '../audio/soundscape';
+import { listenerPlace } from '../audio/place';
 import { openLoading, toast } from './loading';
+import { openStart } from './start';
 import './valley.css';
 
 /** The lake's mirror shows the forest only within this many metres of the shore (beyond, the lake is a sliver on screen). */
@@ -44,6 +47,9 @@ const ui = document.querySelector<HTMLElement>('#ui')!;
 
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
+  // the sound: its context starts suspended (until the start screen's press) while the recordings load with everything else
+  const audio = new AudioContext();
+  const sound = createSoundscape(audio);
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
   // the animals' bodies build in the builder's worker while the valley is made (the residents pick them up from its cache)
   const builder = new BuilderClient();
@@ -143,6 +149,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
 
   // ---------- the camera: free-fly, with gliding viewpoints ----------
   const input = new Input();
+  let waiting = true; // the start screen is up: the controls wait for it (see `release`)
   const views = VALLEY.viewpoints;
   const start0 = viewpointPose(views[views.length - 1], valley); // Valley Overview
   const fly = new FreeFly(start0.pos, start0.yaw, start0.pitch);
@@ -175,20 +182,25 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   };
   fly.apply(camera);
   input.onPress = (b, repeat) => {
-    if (repeat) return; // a held arrow key must not restart the glide
+    if (repeat || waiting) return; // a held arrow key must not restart the glide
     if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
     else if (b === 'right') goTo(current + 2);
   };
   window.addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || !/^[1-8]$/.test(e.key)) return;
-    goTo(+e.key);
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || waiting) return;
+    if (/^[1-8]$/.test(e.key)) goTo(+e.key);
+    else if (e.key === 'm' || e.key === 'M') {
+      sound.mute(!sound.muted);
+      toast(ui, sound.muted ? 'Sound off' : 'Sound on', 1200);
+    }
   });
   canvas.addEventListener('click', () => (canvas.requestPointerLock?.() as Promise<void> | undefined)?.catch?.(() => {}));
 
   /** One frame of camera control: gamepad and keys in, a glide or a free-fly step out. */
   const drive = (dt: number) => {
     input.poll(dt, false);
+    if (waiting) return;
     const pad = input.pad(), held = (k: string) => input.held(k);
     const intent = intentFrom(pad, held, input.mouse(), dt, wasToggle);
     wasToggle = toggleDown(pad, held);
@@ -221,6 +233,15 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   window.addEventListener('resize', resize);
   resize();
 
+  // ---------- the soundscape follows the camera, the hour and the wind ----------
+  const isLake = (x: number, z: number) => valley.isWater(x, z) && valley.waterLevelAt(x, z) <= VALLEY.lake.level + 0.05;
+  const place = listenerPlace(valley, isLake);
+  /** The camera as the soundscape's listener. */
+  const listener = () => {
+    const { x, y, z } = camera.position, hour = clock.hour;
+    return { pos: { x, y, z }, hour, sunElevation: elevationDeg(sunDirection(hour)), gust: gustAt(wind, x, z), strength: wind.strength, ...place(x, y, z) };
+  };
+
   const tick = (dt: number) => {
     clock.update(dt);
     drive(dt);
@@ -232,14 +253,17 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     cover.update(camera);
     residents.update(dt, camera, clock.hour);
     light(dt);
+    sound.update(listener(), dt);
   };
   tick(0);
   light(Infinity);
   performance.mark('valley-scene');
   await veg.compile(() => cover.compile(() => renderer.compileAsync(scene, camera))); // every plant material, not just those in view now
   performance.mark('valley-ready');
+  /** The start screen has gone: hand the controls over. */
+  const release = () => (waiting = false);
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants, bake, impostors, cover, residents, wakeAnimals };
+    wind, veg, plants, bake, impostors, cover, residents, wakeAnimals, audio, sound, listener, release };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -363,6 +387,18 @@ function devHooks(w: World) {
         w.fly.apply(camera);
         return w.residents.info()[i];
       },
+      /** The soundscape now: the audio context's state, volume, what each layer plays, its current gains and the listener's place. */
+      audio: () => {
+        const r = (v: number) => Math.round(v * 1000) / 1000, g = w.sound.gains(), l = w.listener();
+        return {
+          state: w.audio.state, volume: w.sound.volume, muted: w.sound.muted, sources: w.sound.sources(),
+          gains: Object.fromEntries(Object.entries(g).map(([k, v]) => [k, r(v)])),
+          listener: { hour: r(l.hour), sun: r(l.sunElevation), height: r(l.heightAboveGround), lake: r(l.lakeDistance), river: r(l.riverDistance), slope: r(l.riverSlope), forest: r(l.forestAround), gust: r(l.gust), strength: r(l.strength) },
+        };
+      },
+      /** Temporary until the pause menu (Task 20): master volume 0..1, and mute. */
+      volume: (v: number) => (w.sound.setVolume(v), w.sound.volume),
+      mute: (on = true) => (w.sound.mute(on), w.sound.muted),
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
       /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
@@ -387,5 +423,7 @@ if (world) {
   run(world);
   loading.close();
   world.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
+  await openStart(ui, world.audio); // one press wakes the sound (skipped when the browser already lets it play)
+  world.release();
   if (world.cached) toast(ui, 'Welcome back!');
 }

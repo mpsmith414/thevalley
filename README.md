@@ -42,6 +42,17 @@ Without a key everything works except making new creatures (the designer says it
 npm test
 ```
 
+## Sound in the valley
+
+The valley has birdsong by day, crickets and an owl at night, wind, the lake and the river, mixed by where you are
+and the time of day. Browsers only play sound after a press, so the valley opens with "Press any button or click to
+start". Press **M** to turn the sound off or on. To skip the start screen (for a kiosk or a shortcut on the desktop),
+start Chrome with autoplay allowed:
+
+```
+chrome.exe --autoplay-policy=no-user-gesture-required --kiosk http://localhost:5180/
+```
+
 ## Controls
 
 | | Controller | Keyboard and mouse |
