@@ -14,7 +14,7 @@ export type ValleyTextures = {
   normalTex: DataTexture;
   /** RGBA8 at `mapGrid`: forest, meadow, rock, beach weights. */
   biomeA: DataTexture;
-  /** RGBA8 at `mapGrid`: shore, moisture, 0, 255. */
+  /** RGBA8 at `mapGrid`: shore, moisture, calm water (1 on the lake, 0.5 → 0 on the river from its slowest to its fastest, 0 dry), 255. */
   biomeB: DataTexture;
   /** R32F water level at `mapGrid`, −1000 where dry. */
   waterTex: DataTexture;
@@ -25,6 +25,9 @@ export type ValleyTextures = {
   /** UV of world xz on the map grid. */
   mapUv(xz: Node<'vec2'>): Node<'vec2'>;
 };
+
+/** The river's slowest and fastest flow (m/s), as `carveWater` sets them. */
+const RIVER_SLOW = 0.4, RIVER_FAST = 2.5;
 
 function dataTexture(data: Float32Array | Uint8Array, n: number, linear: boolean): DataTexture {
   const float = data instanceof Float32Array;
@@ -45,6 +48,8 @@ export function valleyTextures(d: ValleyData): ValleyTextures {
     const s = c * 6, o = c * 4; // forest, meadow, rock, shore, beach, moisture
     a[o] = d.biomes[s]; a[o + 1] = d.biomes[s + 1]; a[o + 2] = d.biomes[s + 2]; a[o + 3] = d.biomes[s + 4];
     b[o] = d.biomes[s + 3]; b[o + 1] = d.biomes[s + 5]; b[o + 3] = 255;
+    const kind = d.water.kind[c], speed = Math.hypot(d.water.flow[2 * c], d.water.flow[2 * c + 1]);
+    b[o + 2] = kind === 1 ? 255 : kind === 2 ? Math.round(127 * Math.min(1, Math.max(0, (RIVER_FAST - speed) / (RIVER_FAST - RIVER_SLOW)))) : 0;
   }
   const water = Float32Array.from(d.water.level, (l) => (l === l ? l : -1000));
 

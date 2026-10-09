@@ -155,6 +155,21 @@ function fbm(p: Node<'vec2'>, octaves = 2): Node<'float'> {
 }
 
 /**
+ * A set's colour far away (its average, graded as the ground grades it), linear: what ground cover matches so the meadow
+ * keeps its colour where the grass ends.
+ */
+export function gradedAverage(sets: GroundSets, s: GroundSetName): [number, number, number] {
+  const [r, g, b] = sets.average[s], k = GRADE[s], t = [r * k[0], g * k[1], b * k[2]], l = 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2];
+  return t.map((v) => l + (v - l) * k[3]) as [number, number, number];
+}
+
+/** The ground's large-scale life at world `xz`: brightness ±10% over about 160 m and a slow warm/cool drift (multiply by it). */
+export function macroTintNode(xz: Node<'vec2'>): Node<'vec3'> {
+  const macro = fbm(xz.div(160)), hue = mx_noise_float(xz.div(240).add(57.3));
+  return vec3(float(1).add(hue.mul(0.04)), 1, float(1).sub(hue.mul(0.04))).mul(float(1).add(macro.mul(0.1)));
+}
+
+/**
  * A standard material whose colour comes from `groundColorNode` instead of `colorNode`. The shadow pass reads `colorNode.a`
  * (for alpha), so with the ground in `colorNode` every shadow cascade ran the whole ground shader.
  */
@@ -281,9 +296,7 @@ export function createGroundMaterial(tex: ValleyTextures, sets: GroundSets, tier
   const normal = low ? normalize(nt.rgb.mul(2).sub(1)) : (detailNormal() as Node<'vec3'>);
 
   // ---------- large-scale life: macro tint, cavity, wet margins ----------
-  const macro = fbm(xz.div(160)), hue = mx_noise_float(xz.div(240).add(57.3));
-  let colour: Node<'vec3'> = surf.rgb.mul(float(1).add(macro.mul(0.1)));
-  colour = colour.mul(vec3(float(1).add(hue.mul(0.04)), 1, float(1).sub(hue.mul(0.04))));
+  let colour: Node<'vec3'> = surf.rgb.mul(macroTintNode(xz));
   colour = colour.mul(clamp(float(1).sub(nt.a.sub(0.5).mul(1.6)), 0.75, 1)); // 128 is flat; hollows hold more, so darker
   // Moisture is e^(−d/40), d metres from the water. A broad damp margin (full within about 4 m, dry by 11 m), and the
   // soaked strip the water laps (full within 1.5 m, gone by 3 m), so the waterline reads darker next to the real water.

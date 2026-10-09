@@ -10,8 +10,11 @@ import { between, mulberry32 } from '../util/rng';
 import { fnv1a } from '../util/hash';
 import type { LeafSpec } from './species';
 
-export type CardKind = LeafSpec['card'] | 'birchBark';
-export const CARD_KINDS: readonly CardKind[] = ['pine', 'spruce', 'birch', 'alder', 'willow', 'juniper', 'blueberry', 'fern', 'birchBark'];
+/** The meadow's wildflowers (ground cover cards): lupine and fireweed spikes, oxeye daisies and harebells. */
+export type FlowerCard = 'lupine' | 'daisy' | 'fireweed' | 'harebell';
+export const FLOWER_CARDS: readonly FlowerCard[] = ['lupine', 'daisy', 'fireweed', 'harebell'];
+export type CardKind = LeafSpec['card'] | 'birchBark' | FlowerCard;
+export const CARD_KINDS: readonly CardKind[] = ['pine', 'spruce', 'birch', 'alder', 'willow', 'juniper', 'blueberry', 'fern', 'birchBark', ...FLOWER_CARDS];
 export type RGB = [number, number, number];
 export type LeafShape = 'ovate' | 'round' | 'lance' | 'oval' | 'pinna';
 
@@ -193,7 +196,7 @@ function leafy(rng: () => number, o: {
   return out;
 }
 
-const RECIPES: Record<CardKind, Recipe> = {
+const RECIPES: Record<Exclude<CardKind, FlowerCard>, Recipe> = {
   // Scots pine: long, grey-green needles in pairs (now and then threes) all along a twig, sweeping forwards.
   pine: (rng) => {
     const pts = twig(rng, 0.5, 0.97, 0.5 + between(rng, -0.08, 0.08), 0.12, between(rng, -0.05, 0.05));
@@ -312,9 +315,113 @@ const RECIPES: Record<CardKind, Recipe> = {
   },
 };
 
+/** A flowering stem: a gently bent stalk from the card's foot at `x` up to (`tx`, `ty`). */
+function stalk(rng: () => number, x: number, tx: number, ty: number, w: number, rgb: RGB): { pts: number[]; stroke: Stroke } {
+  const pts = twig(rng, x, 0.985, tx, ty, between(rng, -0.03, 0.03), 10);
+  return { pts, stroke: { t: 'line', pts, w0: w, w1: w * 0.6, rgb: vary(rng, rgb, 0.08), h: 0.6 } };
+}
+/** A tuft of `n` narrow leaves at the foot of a flower card. */
+function basal(rng: () => number, n: number, len: [number, number], wid: number, rgb: RGB): Stroke[] {
+  return Array.from({ length: n }, (): Stroke => {
+    const l = between(rng, len[0], len[1]), c = vary(rng, rgb, 0.1);
+    return { t: 'leaf', x: between(rng, 0.3, 0.7), y: 0.985, angle: -Math.PI / 2 + between(rng, -0.9, 0.9), len: l, wid: l * wid, shape: 'lance', teeth: 0,
+      rgb: c, vein: mixRgb(c, [160, 190, 120], 0.4), h: 0.5 };
+  });
+}
+/** Florets in pairs up the top of a stalk (from `from` to its tip), largest at the bottom, fading from `open` to `bud`. */
+function spike(rng: () => number, pts: number[], from: number, n: number, r: number, open: RGB, bud: RGB, light: RGB): Stroke[] {
+  const out: Stroke[] = [];
+  for (let i = 0; i < n; i++) {
+    const u = i / n, p = along(pts, from + (1 - from) * u), rr = r * (1 - 0.6 * u), c = vary(rng, mixRgb(open, bud, u ** 1.5), 0.1);
+    for (const side of [-1, 1]) {
+      const x = p.x + side * rr * between(rng, 0.7, 1.1), y = p.y + between(rng, -0.004, 0.004);
+      out.push({ t: 'dot', x, y, rx: rr, ry: rr * 0.8, rgb: c, h: 0.8 });
+      out.push({ t: 'dot', x: x - side * rr * 0.2, y: y - rr * 0.35, rx: rr * 0.45, ry: rr * 0.35, rgb: light, h: 0.9, a: 0.7 });
+    }
+  }
+  return out;
+}
+
+const FLOWER_RECIPES: Record<FlowerCard, Recipe> = {
+  // Lupines: two or three tall spikes of violet-blue pea flowers, paler buds at the tip, over palmate leaves.
+  lupine: (rng) => {
+    const out: Stroke[] = [], n = 2 + Math.floor(rng() * 2);
+    for (let j = 0; j < 2; j++) { // palmate leaves: leaflets fanned from a point low on the card
+      const cx = between(rng, 0.3, 0.7), cy = between(rng, 0.78, 0.86), c = vary(rng, [64, 104, 52], 0.08);
+      out.push({ t: 'line', pts: [cx, cy, cx + between(rng, -0.03, 0.03), 0.985], w0: 0.01, w1: 0.008, rgb: [70, 104, 54], h: 0.5 });
+      for (let k = 0; k < 7; k++) {
+        const l = between(rng, 0.09, 0.12);
+        out.push({ t: 'leaf', x: cx, y: cy, angle: -Math.PI / 2 + (k - 3) * 0.42, len: l, wid: l * 0.3, shape: 'lance', teeth: 0, rgb: c,
+          vein: mixRgb(c, [150, 180, 120], 0.5), h: 0.5 });
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const x = 0.5 + (i - (n - 1) / 2) * 0.16 + between(rng, -0.03, 0.03);
+      const s = stalk(rng, x, x + between(rng, -0.06, 0.06), between(rng, 0.04, 0.2), 0.016, [70, 104, 54]);
+      out.push(s.stroke, ...spike(rng, s.pts, 0.45, 13, 0.03, [92, 84, 196], [176, 170, 220], [190, 180, 240]));
+    }
+    return out;
+  },
+  // Oxeye daisies: white rays round a yellow disc on wiry stems of different heights, the heads seen a little from the side.
+  daisy: (rng) => {
+    const out = basal(rng, 6, [0.15, 0.25], 0.2, [70, 108, 50]), n = 3 + Math.floor(rng() * 3);
+    for (let i = 0; i < n; i++) {
+      const tx = between(rng, 0.18, 0.82), ty = between(rng, 0.14, 0.5), s = stalk(rng, 0.5 + between(rng, -0.12, 0.12), tx, ty, 0.01, [74, 110, 52]);
+      out.push(s.stroke);
+      const r = between(rng, 0.08, 0.1), tilt = between(rng, 0.45, 0.75), rays = 16;
+      for (let k = 0; k < rays; k++) {
+        const a = (k / rays) * Math.PI * 2 + between(rng, -0.08, 0.08), l = r * (1 - (1 - tilt) * Math.abs(Math.sin(a)));
+        out.push({ t: 'leaf', x: tx, y: ty, angle: a, len: l, wid: r * 0.32, shape: 'oval', teeth: 0, rgb: vary(rng, [238, 236, 226], 0.04), vein: [214, 214, 206], h: 0.8 });
+      }
+      out.push({ t: 'dot', x: tx, y: ty, rx: r * 0.32, ry: r * 0.32 * tilt, rgb: vary(rng, [226, 178, 40], 0.06), h: 1 });
+    }
+    return out;
+  },
+  // Fireweed: one or two tall stems with narrow alternate leaves, ending in a long raceme of magenta flowers, buds at the top.
+  fireweed: (rng) => {
+    const out: Stroke[] = [], n = 1 + Math.floor(rng() * 2);
+    for (let i = 0; i < n; i++) {
+      const x = 0.5 + (n > 1 ? (i - 0.5) * 0.2 : 0), s = stalk(rng, x, x + between(rng, -0.05, 0.05), between(rng, 0.03, 0.1), 0.016, [96, 84, 60]);
+      out.push(s.stroke);
+      for (let k = 0; k < 9; k++) {
+        const p = along(s.pts, 0.08 + k * 0.05), side = k % 2 ? 1 : -1, l = between(rng, 0.12, 0.16) * (1 - k * 0.05), c = vary(rng, [62, 98, 50], 0.08);
+        out.push({ t: 'leaf', x: p.x, y: p.y, angle: -Math.PI / 2 + side * between(rng, 0.7, 1.0), len: l, wid: l * 0.22, shape: 'lance', teeth: 0, rgb: c,
+          vein: mixRgb(c, [170, 190, 150], 0.6), h: 0.5 });
+      }
+      for (let k = 0; k < 11; k++) { // four-petalled flowers round the raceme, buds above
+        const t = 0.55 + k * 0.04, p = along(s.pts, t), side = k % 2 ? 1 : -1, bud = t > 0.88;
+        const x = p.x + side * between(rng, 0.02, 0.035), y = p.y, r = bud ? 0.01 : 0.017;
+        if (bud) {
+          out.push({ t: 'dot', x, y, rx: r * 0.7, ry: r, rgb: vary(rng, [150, 48, 96], 0.08), h: 0.8 });
+          continue;
+        }
+        for (let q = 0; q < 4; q++) {
+          const a = (q / 4) * Math.PI * 2 + 0.4;
+          out.push({ t: 'dot', x: x + Math.cos(a) * r * 0.6, y: y + Math.sin(a) * r * 0.6, rx: r * 0.62, ry: r * 0.5, rgb: vary(rng, [190, 84, 150], 0.08), h: 0.85 });
+        }
+        out.push({ t: 'dot', x, y, rx: r * 0.25, ry: r * 0.25, rgb: [240, 200, 230], h: 1 });
+      }
+    }
+    return out;
+  },
+  // Harebells: wiry, arching stems, each nodding a single blue-violet bell.
+  harebell: (rng) => {
+    const out = basal(rng, 4, [0.06, 0.1], 0.35, [76, 112, 56]), n = 4 + Math.floor(rng() * 3);
+    for (let i = 0; i < n; i++) {
+      const tx = between(rng, 0.2, 0.8), ty = between(rng, 0.2, 0.55), s = stalk(rng, 0.5 + between(rng, -0.1, 0.1), tx, ty, 0.007, [84, 112, 60]);
+      const c = vary(rng, [104, 112, 214], 0.08), l = between(rng, 0.07, 0.09);
+      out.push(s.stroke);
+      out.push({ t: 'leaf', x: tx, y: ty, angle: Math.PI / 2 + between(rng, -0.5, 0.5), len: l, wid: l * 0.8, shape: 'round', teeth: 5, rgb: c,
+        vein: mixRgb(c, [60, 60, 150], 0.5), h: 0.8 });
+    }
+    return out;
+  },
+};
+
 /** The strokes that paint card `kind` (same kind and seed, same strokes); every one lies inside the card. */
 export function cardStrokes(kind: CardKind, seed: number): Stroke[] {
-  return RECIPES[kind](mulberry32(seed)).map(fit).filter((s): s is Stroke => s !== null);
+  const recipe = kind in FLOWER_RECIPES ? FLOWER_RECIPES[kind as FlowerCard] : RECIPES[kind as Exclude<CardKind, FlowerCard>];
+  return recipe(mulberry32(seed)).map(fit).filter((s): s is Stroke => s !== null);
 }
 
 /** Each kind's own seed, so a kind always paints the same card. */

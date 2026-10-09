@@ -23,6 +23,7 @@ import { MID_LAYER, MID_TREE_LAYER, NEAR_LAYER, VegetationTiles } from '../world
 import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '../plants/material';
 import { createWind, setWind, updateWind, windUniforms } from '../plants/wind';
 import { IMPOSTOR_LAYER, bakeImpostors, createImpostorLayer } from '../plants/impostor';
+import { GROUND_COVER_LAYER, createGroundCover, loadFlowerCards } from '../plants/grass';
 import { openLoading, toast } from './loading';
 import './valley.css';
 
@@ -41,7 +42,7 @@ const ui = document.querySelector<HTMLElement>('#ui')!;
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
-  const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256)]); // bark after the ground: one decode at a time
+  const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256), loadFlowerCards(tier === 'high' ? 256 : 128)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
     createRenderer(canvas, tier),
     loadValley(VALLEY, DEFAULT_GRID, step),
@@ -52,7 +53,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   performance.mark('valley-data');
   say('Rolling out the meadows…');
   const sets = await ground;
-  const [barks, cards] = await plantTex;
+  const [barks, cards, flowers] = await plantTex;
   performance.mark('valley-ground');
   const valley = createValley(data);
 
@@ -87,6 +88,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   camera.layers.enable(NEAR_LAYER);
   camera.layers.enable(MID_LAYER);
   camera.layers.enable(IMPOSTOR_LAYER);
+  // the ground cover: grass, wildflowers, reeds and lily pads, placed on the GPU around the camera (no shadows cast, no mirror)
+  const cover = createGroundCover(tex, windU, WORLD_QUALITY[tier], { ground: sets, light: plants.light, flowers });
+  scene.add(cover.object);
+  camera.layers.enable(GROUND_COVER_LAYER);
   // Shadow casters by cascade (about 0–75, 75–154, 154–260 and 260–600 m on High): near plants (within ~60 m) in the first two,
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
   // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The impostors (from ~210 m) in the
@@ -197,15 +202,16 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     updateWind(wind, dt, VALLEY.seed);
     setWind(windU, wind);
     veg.update(camera, dt);
+    cover.update(camera);
     light(dt);
   };
   tick(0);
   light(Infinity);
   performance.mark('valley-scene');
-  await veg.compile(() => renderer.compileAsync(scene, camera)); // every plant material, not just those in view now
+  await veg.compile(() => cover.compile(() => renderer.compileAsync(scene, camera))); // every plant material, not just those in view now
   performance.mark('valley-ready');
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants, bake, impostors };
+    wind, veg, plants, bake, impostors, cover };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
