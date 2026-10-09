@@ -1,4 +1,5 @@
 import { dot, sub } from '../util/vec';
+import type { MouthFrame } from './anatomy/face';
 import { boneSdf, thinAxis } from './sdf';
 import type { Skeleton } from './skeleton';
 
@@ -11,12 +12,16 @@ export type SkinData = {
   boneOf: Uint16Array; // nearest bone, per vertex
 };
 
+const smoothstep = (a: number, b: number, x: number) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+
 /**
  * Attach each vertex to the bones whose surfaces are nearly as close as the nearest one.
  * Weights fall off over a band of half the nearest bone's radius, so joints bend smoothly
- * while the middle of a limb follows only its own bone.
+ * while the middle of a limb follows only its own bone. The jaw bone (`sk.jaw`, with the `mouth`
+ * frame) takes no part in that: it takes over the head's and muzzle's pull below the mouth slit and
+ * ahead of the hinge, fading out across the slit's thickness and over 0.3 head radii behind the hinge.
  */
-export function skinWeights(positions: Float32Array, sk: Skeleton, regions: string[]): SkinData {
+export function skinWeights(positions: Float32Array, sk: Skeleton, regions: string[], mouth?: MouthFrame | null): SkinData {
   const n = positions.length / 3;
   const skinIndex = new Uint16Array(n * 4);
   const skinWeight = new Float32Array(n * 4);
@@ -24,7 +29,16 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
   const partT = new Float32Array(n);
   const partS = new Float32Array(n);
   const boneOf = new Uint16Array(n);
-  const bones = sk.bones.map((b, i) => ({ b, i, thin: thinAxis(b) })).filter((x) => x.b.role !== 'eye');
+  const bones = sk.bones.map((b, i) => ({ b, i, thin: thinAxis(b) })).filter((x) => x.b.role !== 'eye' && !x.b.jaw);
+  // the bones whose skin the jaw shares: the head and its muzzle (mouth) bones
+  const jaw = mouth && sk.jaw >= 0 ? sk.jaw : -1, H = mouth ? sk.bones[mouth.head] : null, rH = H ? Math.max(H.r0, H.r1) : 0;
+  const carried = sk.bones.map((b, i) => {
+    if (jaw < 0 || b.jaw) return false;
+    if (i === mouth!.head) return true;
+    if (b.role !== 'mouth') return false;
+    for (let p = b.parent; p >= 0; p = sk.bones[p].parent) if (p === mouth!.head) return true;
+    return false;
+  });
   const regionIndex = new Map(regions.map((r, i) => [r, i]));
   const s = new Float64Array(sk.bones.length);
   const order: number[] = [];
@@ -51,6 +65,23 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
     for (let k = 0; k < 4; k++) {
       skinIndex[v * 4 + k] = k < order.length ? order[k] : 0;
       skinWeight[v * 4 + k] = w[k] / total;
+    }
+    // the jaw takes `j` of the pull of the head and its muzzle bones (so it fades out with them where the head blends into
+    // the neck or the chest), in the lightest slot
+    let share = 0;
+    for (let k = 0; k < 4; k++) if (carried[skinIndex[v * 4 + k]]) share += skinWeight[v * 4 + k];
+    if (share > 0) {
+      const q = sub(p, mouth!.hinge);
+      const j = smoothstep(mouth!.halfThick, -mouth!.halfThick, dot(q, mouth!.up)) * smoothstep(-0.3 * rH, 0.1 * rH, dot(q, mouth!.forward));
+      if (j > 0) {
+        let lo = 0, sum = 0;
+        for (let k = 1; k < 4; k++) if (skinWeight[v * 4 + k] < skinWeight[v * 4 + lo]) lo = k;
+        for (let k = 0; k < 4; k++) {
+          if (k === lo) { skinIndex[v * 4 + k] = jaw; skinWeight[v * 4 + k] = j * share; } else if (carried[skinIndex[v * 4 + k]]) skinWeight[v * 4 + k] *= 1 - j;
+          sum += skinWeight[v * 4 + k];
+        }
+        for (let k = 0; k < 4; k++) skinWeight[v * 4 + k] /= sum;
+      }
     }
     boneOf[v] = best;
     region[v] = regionIndex.get(nb.region) ?? 0;

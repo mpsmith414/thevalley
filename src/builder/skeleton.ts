@@ -17,9 +17,12 @@ export type BoneDef = {
   flatFacing: FlatFacing;
   pointed: boolean;
   depth: number;
+  /** The lower jaw (added by the builder after meshing; it shapes nothing, it only carries skin). */
+  jaw?: true;
 };
 
-export type Skeleton = { bones: BoneDef[]; contacts: number[]; min: Vec3; max: Vec3 };
+/** `jaw`: the jaw bone's index, −1 when there is none. */
+export type Skeleton = { bones: BoneDef[]; contacts: number[]; min: Vec3; max: Vec3; jaw: number };
 
 const flipX = (v: Vec3): Vec3 => ({ x: -v.x, y: v.y, z: v.z });
 
@@ -119,5 +122,5 @@ export function buildSkeleton(recipe: Recipe): Skeleton {
       max.x = Math.max(max.x, p.x + r); max.y = Math.max(max.y, p.y + r); max.z = Math.max(max.z, p.z + r);
     }
   }
-  return { bones, contacts, min, max };
+  return { bones, contacts, min, max, jaw: -1 };
 }

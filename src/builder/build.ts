@@ -1,14 +1,15 @@
 import type { Recipe } from '../recipe/schema';
 import { hash } from '../util/hash';
 import { mulberry32 } from '../util/rng';
-import type { Vec3 } from '../util/vec';
+import { scale, sub, type Vec3 } from '../util/vec';
 import { anatomy, anatomyBounds, type Anatomy } from './anatomy';
+import { noseRadius, type MouthFrame } from './anatomy/face';
 import { marksAt, type Feature } from './anatomy/shapes';
 import { importance } from './importance';
 import { splitNonManifold, surfaceNetsSparse, type MeshData, type Sdf } from './mesher';
 import { bodySdf, coarseBodySdf } from './sdf';
 import { createSimplifier, type Snapshot } from './simplify';
-import { buildSkeleton, type Skeleton } from './skeleton';
+import { buildSkeleton, type BoneDef, type Skeleton } from './skeleton';
 import { sampleSparse } from './sparse';
 import { skinWeights } from './weights';
 
@@ -22,7 +23,11 @@ export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2;
 const ESTIMATE_CELLS = 64;
 
 export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array; feature: Float32Array /* 4 per vertex: nose, earInner, mouth, hoof (0…1) */ };
-export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
+/**
+ * `mouth`: where the mouth opens (null without a head); `jawLift`: how far the jaw rises along the mouth's up at rest
+ * to shut the carved slit (metres, 0 without a jaw).
+ */
+export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[]; mouth: MouthFrame | null; jawLift: number };
 /** Where a build's time went, in ms (filled in by `buildBody` when passed; for tools/perf.ts). */
 export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number; maxSnap: number /* fine cells */ };
 
@@ -54,6 +59,27 @@ export function sampleBody(skeleton: Skeleton, recipe: Recipe) {
   const { min, max } = anatomyBounds(skeleton, anat);
   return { longest, fine, anat, sdf, field: sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, anat, fine)) };
 }
+
+/**
+ * The skeleton with the lower jaw hung on the head: one bone from the mouth hinge to just under the tip, appended (every
+ * other bone keeps its index). It shapes nothing (the body is meshed without it); it only carries the skin below the slit.
+ */
+export function addJaw(sk: Skeleton, mouth: MouthFrame): Skeleton {
+  const H = sk.bones[mouth.head], M = mouth.mouth >= 0 ? sk.bones[mouth.mouth] : null;
+  const jaw: BoneDef = {
+    name: `${H.name}~jaw`, partId: H.partId, mirrored: false, parent: mouth.head, role: 'mouth', region: (M ?? H).region,
+    start: { ...mouth.hinge }, end: sub(mouth.tip, scale(mouth.up, mouth.halfThick)), r0: 0.6 * Math.max(H.r0, H.r1), r1: 0.6 * noseRadius(H, M),
+    squash: 1, flatFacing: 'up', pointed: false, depth: H.depth + 1, jaw: true,
+  };
+  return { ...sk, bones: [...sk.bones, jaw], jaw: sk.bones.length };
+}
+
+/**
+ * How far the jaw rises at rest to shut the mouth: the slit is an even 2·halfThick across, so lifting the jaw by that
+ * much (rather than turning it, which shuts only the tip and leaves a wedge open at the corners) brings the lips together
+ * all along it, and the slit reads as a dark line.
+ */
+export const jawLift = (m: MouthFrame) => 2 * m.halfThick;
 
 /** Below this gradient length the SDF is unreliable (inside a part thinner than the difference step). */
 const WEAK_GRADIENT = 0.5;
@@ -162,6 +188,8 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
   }
   lap('simplify');
 
+  // the jaw joins after meshing (bones shape the body; the jaw only carries skin)
+  const rig = anat.mouth ? addJaw(skeleton, anat.mouth) : skeleton;
   const made = new Map<number, LodMesh>();
   const meshes = lods.map((l): LodMesh => {
     const done = made.get(l);
@@ -171,13 +199,13 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
     const { normals, longest: step } = snapToSurface(sdf, positions, indices, fine / 2, fine);
     if (times) times.maxSnap = Math.max(times.maxSnap, step / fine);
     lap('snap');
-    const skin = skinWeights(positions, skeleton, regions);
+    const skin = skinWeights(positions, rig, regions, anat.mouth);
     lap('skin');
     const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2) };
     made.set(l, mesh);
     return mesh;
   });
-  return { key: bodyKey(recipe), skeleton, regions, lods: meshes };
+  return { key: bodyKey(recipe), skeleton: rig, regions, lods: meshes, mouth: anat.mouth, jawLift: anat.mouth ? jawLift(anat.mouth) : 0 };
 }
 
 export type Variation = { boneScale: number[]; tint: { h: number; s: number; l: number } };

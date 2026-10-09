@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { addJaw } from '../../src/builder/build';
+import { mouthFrame } from '../../src/builder/anatomy/face';
 import { buildSkeleton, expandParts } from '../../src/builder/skeleton';
-import { biped, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
+import { normalizeRecipe } from '../../src/recipe/normalize';
+import { MAX_BONES, MAX_PARTS } from '../../src/recipe/schema';
+import { biped, blob, hexapod, makeRecipe, P, quadruped, snake } from '../fixtures/recipes';
 
 const low = (b: { start: { y: number }; end: { y: number }; r0: number; r1: number }) => Math.min(b.start.y - b.r0, b.end.y - b.r1);
 
@@ -42,5 +46,23 @@ describe('skeleton', () => {
 
   it('is deterministic', () => {
     expect(buildSkeleton(quadruped)).toEqual(buildSkeleton(quadruped));
+  });
+
+  it('has no jaw until the body is built (buildSkeleton sets -1)', () => {
+    expect(buildSkeleton(quadruped).jaw).toBe(-1);
+    expect(buildSkeleton(blob).jaw).toBe(-1);
+  });
+
+  it('always has room for the jaw: the biggest recipe normalizeRecipe allows plus its jaw fit MAX_BONES', () => {
+    // every part mirrored (the root makes one bone however it is marked), two heads among them
+    const parts = [P('root', null, 'torso', 0, [0, 0, 1], 0.3, 0.1, 0.1, { mirror: true }), P('head', 'root', 'head', 1, [0, 0, 1], 0.1, 0.05, 0.05, { mirror: true }),
+      ...Array.from({ length: MAX_PARTS - 2 }, (_, i) => P(`p${i}`, 'root', 'leg', 0.5, [1, -1, 0], 0.05, 0.01, 0.01, { mirror: true }))];
+    const { recipe } = normalizeRecipe(makeRecipe('big', parts));
+    expect(recipe.parts).toHaveLength(MAX_PARTS); // nothing cut
+    const sk = buildSkeleton(recipe);
+    expect(sk.bones.length).toBeLessThanOrEqual(MAX_BONES - 1);
+    const withJaw = addJaw(sk, mouthFrame(sk, recipe.face, { cell: 0.005 })!);
+    expect(withJaw.bones.length).toBe(sk.bones.length + 1);
+    expect(withJaw.bones.length).toBeLessThanOrEqual(MAX_BONES);
   });
 });

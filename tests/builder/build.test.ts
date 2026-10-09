@@ -3,13 +3,14 @@ import { buildBody, individualVariation, snapToSurface, type BuildTimes } from '
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
-import { add, lerp, norm, scale, sub } from '../../src/util/vec';
+import { add, dot, lerp, norm, scale, sub } from '../../src/util/vec';
 import { deer } from '../../src/cast/deer';
 import { fox } from '../../src/cast/fox';
 import { hawk } from '../../src/cast/hawk';
 import { trout } from '../../src/cast/trout';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 import { minValence, topology, unitNormals } from '../fixtures/mesh';
+import { jawWeight } from '../fixtures/jaw';
 
 describe('skin weights', () => {
   const body = buildBody(quadruped, [1]);
@@ -140,6 +141,54 @@ describe('buildBody', () => {
       expect(ear).toBeGreaterThan(0.5);
     });
 
+    it('hangs a jaw on the head at the mouth hinge (no other bone moves)', () => {
+      const sk = body.skeleton, m = body.mouth!, J = sk.bones[sk.jaw];
+      expect(sk.jaw).toBe(buildSkeleton(fox).bones.length); // appended: every other index is unchanged
+      expect(sk.bones.slice(0, sk.jaw)).toEqual(buildSkeleton(fox).bones);
+      expect(J.jaw).toBe(true);
+      expect(J.parent).toBe(m.head);
+      expect(sk.bones[J.parent].role).toBe('head');
+      expect(J.role).toBe('mouth');
+      expect(J.start).toEqual(m.hinge);
+      expect(J.end).toEqual(sub(m.tip, scale(m.up, m.halfThick)));
+      expect(J.partId).toBe(sk.bones[m.head].partId);
+      // rising by the slit's width shuts it all along
+      expect(body.jawLift).toBeCloseTo(2 * m.halfThick, 12);
+    });
+
+    it('lets the jaw carry only what lies below the slit and ahead of the hinge', () => {
+      const sk = body.skeleton, m = body.mouth!, H = sk.bones[m.head], rH = Math.max(H.r0, H.r1), P = lod.positions;
+      let carried = 0;
+      for (let v = 0; v < P.length / 3; v++) {
+        const q = sub({ x: P[v * 3], y: P[v * 3 + 1], z: P[v * 3 + 2] }, m.hinge), u = dot(q, m.up), f = dot(q, m.forward), j = jawWeight(lod, sk.jaw, v);
+        if (j > 0.5) {
+          carried++;
+          expect(u).toBeLessThan(0);
+          expect(f).toBeGreaterThan(-0.3 * rH);
+        }
+        if (u > 2 * m.halfThick || f < -0.3 * rH) expect(j).toBe(0);
+        if (['leg', 'foot', 'torso', 'tail', 'neck', 'ear', 'eye'].includes(bones[lod.boneOf[v]].role)) expect(j).toBe(0);
+        expect(lod.boneOf[v]).not.toBe(sk.jaw); // nothing is nearest the jaw (it lies inside the lower jaw)
+      }
+      expect(carried).toBeGreaterThan(50);
+    });
+
+    it('blends the cheek behind the hinge smoothly into the jaw (over 0.3 head radii, no jumps)', () => {
+      const sk = body.skeleton, m = body.mouth!, H = sk.bones[m.head], rH = Math.max(H.r0, H.r1), P = lod.positions, I = lod.indices;
+      const at = (v: number) => sub({ x: P[v * 3], y: P[v * 3 + 1], z: P[v * 3 + 2] }, m.hinge);
+      // well below the slit (where `below` is 1) only the hinge falloff varies: a smoothstep over 0.4 rH, steepest slope 1.5 / 0.4 rH
+      const low = (v: number) => dot(at(v), m.up) < -m.halfThick;
+      let checked = 0;
+      for (let t = 0; t < I.length; t += 3)
+        for (const [a, b] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) {
+          if (!low(a) || !low(b) || dot(at(a), m.forward) > 0.1 * rH || dot(at(b), m.forward) > 0.1 * rH) continue;
+          const df = Math.abs(dot(sub(at(a), at(b)), m.forward)), dj = Math.abs(jawWeight(lod, sk.jaw, a) - jawWeight(lod, sk.jaw, b));
+          expect(dj).toBeLessThanOrEqual((1.5 / (0.4 * rH)) * df + 0.05);
+          checked++;
+        }
+      expect(checked).toBeGreaterThan(20);
+    });
+
     it('stays near today’s triangle budget', () => {
       const target = 1.2 * 2 * 9560; // today's fox: 9560 vertices at 110 cells
       expect(Math.abs(lod.indices.length / 3 / target - 1)).toBeLessThan(0.25);
@@ -160,6 +209,14 @@ describe('buildBody', () => {
     expect(low.size).toBe(feet.size);
     for (const v of low.values()) expect(lod.feature[v * 4 + 3]).toBeGreaterThan(0.9);
   }, 20_000);
+
+  it('gives a body without a head no jaw (and no extra bone)', () => {
+    const b = buildBody(blob, [2]);
+    expect(b.skeleton.jaw).toBe(-1);
+    expect(b.skeleton.bones).toHaveLength(buildSkeleton(blob).bones.length);
+    expect(b.mouth).toBeNull();
+    expect(b.jawLift).toBe(0);
+  });
 
   it('is deterministic', () => {
     expect(hashNumbers(buildBody(quadruped, [1]).lods[0].positions)).toBe(hashNumbers(buildBody(quadruped, [1]).lods[0].positions));

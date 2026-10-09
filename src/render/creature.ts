@@ -25,6 +25,12 @@ export type CreatureObject = {
   /** Rest-pose start of each bone, creature space. */
   restStart: Vec3[];
   eyes: Eye[];
+  /**
+   * The lower jaw (null without one). At rest its bone sits raised by the body's `jawLift` (`shut`, its local position),
+   * which shuts the mouth. It opens by turning about `axis` (in its parent's, the head's, frame: the mouth's up × forward,
+   * so a positive angle drops the chin): `open(θ)` sets `bone.quaternion` to θ radians about it (0 shuts it again).
+   */
+  jaw: { bone: Bone; axis: Vector3; shut: Vector3; open(theta: number): void } | null;
   lod: 0 | 1 | 2;
   setLod(i: 0 | 1 | 2): void;
   furOn: boolean;
@@ -115,6 +121,16 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     });
     return s;
   });
+  // the jaw rests shut (raised after binding, so the bind pose keeps the carved slit and the lift closes it)
+  const m = body.mouth, jd = body.skeleton.jaw;
+  let jaw: CreatureObject['jaw'] = null;
+  if (m && jd >= 0) {
+    const bone = bones[jd], up = new Vector3(m.up.x, m.up.y, m.up.z);
+    bone.position.addScaledVector(up, body.jawLift);
+    root.updateMatrixWorld(true);
+    const axis = up.clone().cross(new Vector3(m.forward.x, m.forward.y, m.forward.z)).normalize();
+    jaw = { bone, axis, shut: bone.position.clone(), open: (theta) => void bone.quaternion.setFromAxisAngle(axis, theta) };
+  }
   if (variation) root.scale.setScalar(variation.boneScale[0] ?? 1);
   const eyes = createEyes(body, recipe, bones);
 
@@ -122,6 +138,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     root, look: own, meshes, bones, skeleton,
     restStart: defs.map((d) => ({ ...d.start })),
     eyes,
+    jaw,
     lod: QUALITY[tier].lod,
     furOn: true,
     setFur(on) {

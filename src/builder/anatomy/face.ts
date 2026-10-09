@@ -36,6 +36,9 @@ export function frameAlong(a: Vec3, up: Vec3): Frame {
 
 const descends = (sk: Skeleton, i: number, from: number) => { for (let p = sk.bones[i].parent; p >= 0; p = sk.bones[p].parent) if (p === from) return true; return false; };
 
+/** The radius at the front of the muzzle (the mouth bone's tip, else a third of the head's). */
+export const noseRadius = (H: BoneDef, M: BoneDef | null) => (M ? Math.max(M.r1, 0.35 * M.r0) : 0.35 * R(H));
+
 /**
  * The head bone H, its frame, the front mouth bone M (−1), the muzzle frame (along M), the tip T and its radius rn.
  * T is the front of the tip's surface: the bone's end is its round cap's centre, where nose shapes would sit inside
@@ -46,11 +49,11 @@ function head(sk: Skeleton) {
   if (h < 0) return null;
   const H = sk.bones[h], f = headFrame(H), rH = R(H);
   let m = -1;
-  sk.bones.forEach((b, i) => { if (b.role === 'mouth' && descends(sk, i, h) && (m < 0 || b.end.z > sk.bones[m].end.z)) m = i; });
+  sk.bones.forEach((b, i) => { if (b.role === 'mouth' && !b.jaw && descends(sk, i, h) && (m < 0 || b.end.z > sk.bones[m].end.z)) m = i; });
   const M = m >= 0 ? sk.bones[m] : null;
   const muzzle = M ? frameAlong(norm(sub(M.end, M.start)), f.up) : f;
   const T = M ? add(M.end, scale(muzzle.a, tipRadius(M))) : add(H.end, scale(f.a, tipRadius(H)));
-  return { h, H, f, rH, m, M, muzzle, T, rn: M ? Math.max(M.r1, 0.35 * M.r0) : 0.35 * rH };
+  return { h, H, f, rH, m, M, muzzle, T, rn: noseRadius(H, M) };
 }
 
 /**

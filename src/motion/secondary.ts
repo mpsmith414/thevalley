@@ -33,7 +33,9 @@ export class SecondaryMotion {
     this.chains = findChains(sk);
     this.wings = limbs.filter((l) => l.kind === 'wing');
     this.fins = limbs.filter((l) => l.kind === 'fin');
-    this.mouths = sk.bones.flatMap((b, i) => (b.role === 'mouth' ? [i] : []));
+    // with a jaw the mouth opens by the jaw (it rests shut; actions open it), and the muzzle holds still; without one,
+    // the mouth bones pitch to call
+    this.mouths = sk.jaw >= 0 ? [] : sk.bones.flatMap((b, i) => (b.role === 'mouth' ? [i] : []));
     this.rng = mulberry32(rig.recipe.seed + 99);
     this.ears = this.chains.filter((c) => c.kind === 'ear').map((c) => ({ chain: c.chain, spring: { pos: 0, vel: 0 }, target: 0, next: 1 + this.rng() * 4, hold: 0 }));
     const size = rig.recipe.life.sizeM;
