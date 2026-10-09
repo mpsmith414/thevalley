@@ -14,13 +14,12 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 
 ## Where things are
 
-- **Sub-project 1, the Creature Lab, is built** on branch `feat/creature-lab`. The owner tested it live with their own
-  key and says it works.
-- **Sub-project 2, the Valley, is built** on branch `feat/valley`, branched from `feat/creature-lab` (21 tasks, about
-  60 commits; 447 tests (one wall-clock test runs only with `PERF=1`), `npx tsc --noEmit` clean, `npm run build` OK). The valley is on `/` (`index.html`), the lab on
+- **Sub-project 1, the Creature Lab, is built** and merged to `main`. The owner tested it live with their own key and
+  says it works.
+- **Sub-project 2, the Valley, is built** and merged to `main` (21 tasks, about 60 commits; 447 tests (one wall-clock test runs only with `PERF=1`), `npx tsc --noEmit` clean, `npm run build` OK). The valley is on `/` (`index.html`), the lab on
   `/lab.html`.
-- **Nothing is merged to `main`**, and there is no git remote, so nothing is pushed. Ask the owner before merging
-  (`feat/valley` contains `feat/creature-lab`, so merging it brings both).
+- **Everything is on `main`**, pushed to the public GitHub repo `https://github.com/mpsmith414/thevalley`
+  (merged with the owner's OK on 2026-10-09). Work new sub-projects on a feature branch and merge only on the owner's OK.
 - `.env` (gitignored) holds the owner's key. They use a **multi-workspace key**, so `ANTHROPIC_WORKSPACE_ID` is also set and sent as the `anthropic-workspace-id` header.
 - The designer asks Claude for **plain JSON** against the schema (written into the cached instructions). The recipe schema is too big for constrained structured outputs ("compiled grammar is too large"). The server validates leniently, normalises (it infers missing part roles from ids, among other repairs) and retries once.
 - Owner's verdict on the lab: a first pass. **Shapes and faces bother them most.** That is the next sub-project.
@@ -161,7 +160,7 @@ Kept on purpose from the build and the final review: small, none blocks the merg
 ## Roadmap
 
 1. Creature Lab: built
-2. The Valley: built (on `feat/valley`, not merged)
+2. The Valley: built and merged
 3. **Lifeform Polish (committed): next.** Shapes and faces first, then fur, motion and post-processing. The creatures
    can now be seen in the valley, which is what this pass was waiting for.
 4. The Living Ecosystem
