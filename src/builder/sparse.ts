@@ -9,13 +9,20 @@ export type SparseField = {
   /** Fine sample; outside active blocks, the coarse value at that block's origin. */
   value(i: number, j: number, k: number): number;
   evaluations: number; // SDF calls made
+  blockSlot: Int32Array; // block id -> index into `blocks` (-1 = inactive)
 };
 
+/** How close to the surface a coarse corner must read for its block to count as near. */
+export const nearReach = (cell: number, block = 4): number => 1.25 * 0.5 * cell * block * Math.sqrt(3);
+
 /**
- * Evaluates `sdf` on a coarse lattice (cell*block), then on the fine lattice (cell) only inside
+ * Evaluates `coarse` on a coarse lattice (cell*block), then `sdf` on the fine lattice (cell) only inside
  * blocks near the surface plus the neighbours their cells read. The padded origin is min - 2 coarse cells.
+ * Precondition on `coarse` (defaults to `sdf`): any point within `nearReach(cell, block)` of the surface
+ * must read |coarse| <= that reach, i.e. it must not overestimate distance there. A culling SDF such as
+ * `bodySdf` does, so pass `coarse = bodySdf(sk, nearReach(cell, block) + 0.03)`.
  */
-export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block = 4): SparseField {
+export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block = 4, coarse: Sdf = sdf): SparseField {
   const C = cell * block, B = block, B3 = B * B * B;
   const ox = min.x - 2 * C, oy = min.y - 2 * C, oz = min.z - 2 * C;
   const cx = Math.ceil((max.x - min.x + 4 * C) / C) + 1;
@@ -24,15 +31,15 @@ export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block
   const nbx = cx - 1, nby = cy - 1, nbz = cz - 1;
   let evaluations = 0;
 
-  const coarse = new Float32Array(cx * cy * cz);
+  const cv = new Float32Array(cx * cy * cz);
   for (let k = 0, n = 0; k < cz; k++)
     for (let j = 0; j < cy; j++)
-      for (let i = 0; i < cx; i++) coarse[n++] = sdf(ox + i * C, oy + j * C, oz + k * C);
-  evaluations += coarse.length;
+      for (let i = 0; i < cx; i++) cv[n++] = coarse(ox + i * C, oy + j * C, oz + k * C);
+  evaluations += cv.length;
 
   // near: any corner within reach of the surface. A block holding surface has a corner within half
-  // a diagonal of it, so (with a 1.25x margin for inexact SDFs) this misses no surface block.
-  const reach = 1.25 * 0.5 * C * Math.sqrt(3);
+  // a diagonal of it, so for a 1-Lipschitz `coarse` (see the precondition above) no surface block is missed.
+  const reach = nearReach(cell, block);
   const active = new Uint8Array(nbx * nby * nbz);
   const csy = cx, csz = cx * cy;
   for (let bz = 0; bz < nbz; bz++)
@@ -41,7 +48,7 @@ export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block
         const base = bx + by * csy + bz * csz;
         let near = false;
         for (let c = 0; c < 8 && !near; c++)
-          near = Math.abs(coarse[base + (c & 1) + ((c >> 1) & 1) * csy + ((c >> 2) & 1) * csz]) < reach;
+          near = Math.abs(cv[base + (c & 1) + ((c >> 1) & 1) * csy + ((c >> 2) & 1) * csz]) < reach;
         if (!near) continue;
         // a block's cells read samples from its +x/+y/+z neighbours, so those join it
         for (let dz = 0; dz <= 1; dz++)
@@ -76,10 +83,10 @@ export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block
       const s = blockSlot[bx + by * nbx + bz * nbx * nby];
       if (s >= 0) return pool[s * B3 + (i - bx * B) + (j - by * B) * B + (k - bz * B) * B * B];
     }
-    return coarse[bx + by * csy + bz * csz];
+    return cv[bx + by * csy + bz * csz];
   };
   return {
     origin: { x: ox, y: oy, z: oz }, cell, dims: [nbx * B + 1, nby * B + 1, nbz * B + 1],
-    block, blocks, value, evaluations,
+    block, blocks, value, evaluations, blockSlot,
   };
 }

@@ -105,10 +105,9 @@ export function surfaceNets(sdf: Sdf, min: Vec3, max: Vec3, cell: number): MeshD
  */
 export function surfaceNetsSparse(f: SparseField): { positions: Float32Array; indices: Uint32Array } {
   const B = f.block, B3 = B * B * B, L = B + 1;
-  const nbx = (f.dims[0] - 1) / B, nby = (f.dims[1] - 1) / B, nbz = (f.dims[2] - 1) / B;
+  const nbx = (f.dims[0] - 1) / B, nby = (f.dims[1] - 1) / B;
   const { x: ox, y: oy, z: oz } = f.origin, cell = f.cell, blocks = f.blocks;
-  const slot = new Int32Array(nbx * nby * nbz).fill(-1);
-  for (let s = 0; s < blocks.length; s++) slot[blocks[s]] = s;
+  const slot = f.blockSlot;
 
   // pass 1: a vertex per surface cell; `edges` bits 0-2 = the cell's +x/+y/+z edge changes sign, bit 3 = corner 0 inside
   const cellVert = new Int32Array(blocks.length * B3).fill(-1);
