@@ -1,32 +1,117 @@
 import type { Recipe } from '../recipe/schema';
 import { hash } from '../util/hash';
 import { mulberry32 } from '../util/rng';
-import { surfaceNets, type MeshData } from './mesher';
-import { bodySdf } from './sdf';
+import type { Vec3 } from '../util/vec';
+import { importance } from './importance';
+import { splitNonManifold, surfaceNetsSparse, type MeshData, type Sdf } from './mesher';
+import { bodySdf, coarseBodySdf } from './sdf';
+import { createSimplifier, type Snapshot } from './simplify';
 import { buildSkeleton, type Skeleton } from './skeleton';
+import { sampleSparse } from './sparse';
 import { skinWeights } from './weights';
 
-/** Grid cells along the creature's longest dimension, per level of detail. */
-export const LOD_CELLS = [110, 56, 28] as const;
+/** Fine sampling: cells along the creature's longest dimension (only near the surface). */
+export const FINE_CELLS = 330;
+/** Bulky bodies sample more coarsely than FINE_CELLS so the raw mesh stays near this many vertices (build time). */
+export const MAX_RAW_VERTICES = 160_000;
+/** LOD0 budget relative to today's 110-cell mesh; LOD1 and LOD2 are ¼ and 1/16 of LOD0. */
+export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2;
+/** Cells along the longest dimension of the quick pass that estimates the surface before fine sampling. */
+const ESTIMATE_CELLS = 64;
 
 export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array };
 export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
+/** Where a build's time went, in ms (filled in by `buildBody` when passed; for tools/perf.ts). */
+export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number };
 
 /** The key that decides whether two recipes share a body (shape, build, face shape, eye size and region layout). */
 export const bodyKey = (recipe: Recipe) =>
   hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id)) + hash([recipe.build, recipe.face.nose, recipe.face.brow, recipe.skin.eyes.size]);
 
-/** Recipe → a skinned body at each level of detail. Pure and deterministic. */
-export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2]): BodyData {
+/** Fine cell for a body: FINE_CELLS along its longest side, coarser when the surface would exceed MAX_RAW_VERTICES. */
+function fineCell(sk: Skeleton, sdf: Sdf, longest: number): number {
+  const c = longest / ESTIMATE_CELLS;
+  const n = surfaceNetsSparse(sampleSparse(sdf, sk.min, sk.max, c, 4, coarseBodySdf(sk, c))).positions.length / 3;
+  return Math.max(longest / FINE_CELLS, c * Math.sqrt(n / MAX_RAW_VERTICES)); // vertices scale as 1 / cell²
+}
+
+/**
+ * Moves each vertex onto the surface with one Newton step (p -= d·∇d/|∇d|², central differences with
+ * step h) and returns the normalised gradient there as its normal. Changes `positions` in place.
+ */
+function snapToSurface(sdf: Sdf, positions: Float32Array, h: number): Float32Array {
+  const normals = new Float32Array(positions.length);
+  const i2h = 1 / (2 * h);
+  const grad = (x: number, y: number, z: number, g: Vec3) => {
+    g.x = (sdf(x + h, y, z) - sdf(x - h, y, z)) * i2h;
+    g.y = (sdf(x, y + h, z) - sdf(x, y - h, z)) * i2h;
+    g.z = (sdf(x, y, z + h) - sdf(x, y, z - h)) * i2h;
+  };
+  const g = { x: 0, y: 0, z: 0 };
+  for (let v = 0; v < positions.length; v += 3) {
+    let x = positions[v], y = positions[v + 1], z = positions[v + 2];
+    const d = sdf(x, y, z);
+    grad(x, y, z, g);
+    const g2 = g.x * g.x + g.y * g.y + g.z * g.z;
+    if (g2 > 1e-6) {
+      x -= (d * g.x) / g2; y -= (d * g.y) / g2; z -= (d * g.z) / g2;
+      positions[v] = x; positions[v + 1] = y; positions[v + 2] = z;
+    }
+    grad(x, y, z, g);
+    const l = Math.hypot(g.x, g.y, g.z) || 1;
+    normals[v] = g.x / l; normals[v + 1] = g.y / l; normals[v + 2] = g.z / l;
+  }
+  return normals;
+}
+
+/**
+ * Recipe → a skinned body at each level of detail. Pure and deterministic. The body is sampled finely near
+ * its surface, meshed, then simplified (more detail kept on faces, feet and joints) down to each LOD's budget;
+ * every LOD comes from the same collapse chain, so asking for one LOD gives what the full set would.
+ */
+export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], times?: BuildTimes): BodyData {
+  let t = performance.now();
+  const lap = (k: keyof BuildTimes) => { const now = performance.now(); if (times) times[k] += now - t; t = now; };
   const skeleton = buildSkeleton(recipe);
   const regions = recipe.skin.regions.map((r) => r.id);
   const sdf = bodySdf(skeleton);
   const { min, max } = skeleton;
   const longest = Math.max(max.x - min.x, max.y - min.y, max.z - min.z);
-  const meshes = lods.map((l) => {
-    const mesh = surfaceNets(sdf, min, max, longest / LOD_CELLS[l]);
-    const skin = skinWeights(mesh.positions, skeleton, regions);
-    return { ...mesh, skinIndex: skin.skinIndex, skinWeight: skin.skinWeight, region: skin.region, partT: skin.partT, partS: skin.partS, boneOf: skin.boneOf };
+
+  const fine = fineCell(skeleton, sdf, longest);
+  const field = sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, fine));
+  lap('sample');
+  const raw = splitNonManifold(surfaceNetsSparse(field));
+  const rawVertices = raw.positions.length / 3;
+  if (times) times.rawVertices = rawVertices;
+  lap('mesh');
+
+  const weight = importance(skeleton, raw.positions);
+  lap('weigh');
+  const area = rawVertices * fine * fine;
+  const lod0 = Math.round((LOD0_BUDGET * 2 * area) / (longest / LOD0_CELLS) ** 2);
+  const budget = [lod0, Math.round(lod0 / 4), Math.round(lod0 / 16)];
+  const simplifier = createSimplifier({ ...raw, weight });
+  const snaps = new Map<number, Snapshot>();
+  for (const l of [...new Set(lods)].sort((a, b) => a - b)) {
+    simplifier.collapseTo(budget[l]);
+    snaps.set(l, simplifier.snapshot());
+  }
+  lap('simplify');
+
+  const made = new Map<number, LodMesh>();
+  const meshes = lods.map((l): LodMesh => {
+    const done = made.get(l);
+    // a repeated LOD gets its own arrays (the worker transfers each buffer once)
+    if (done) return Object.fromEntries(Object.entries(done).map(([k, a]) => [k, a.slice()])) as LodMesh;
+    const { positions, indices } = snaps.get(l)!;
+    const normals = snapToSurface(sdf, positions, fine / 2);
+    lap('snap');
+    const skin = skinWeights(positions, skeleton, regions);
+    lap('skin');
+    const mesh = { positions, normals, indices, ...skin };
+    made.set(l, mesh);
+    return mesh;
   });
   return { key: bodyKey(recipe), skeleton, regions, lods: meshes };
 }

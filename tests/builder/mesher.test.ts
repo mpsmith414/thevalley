@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { surfaceNets } from '../../src/builder/mesher';
+import { splitNonManifold, surfaceNets, surfaceNetsSparse } from '../../src/builder/mesher';
+import { sampleSparse } from '../../src/builder/sparse';
 import { topology } from '../fixtures/mesh';
 import { buildSkeleton } from '../../src/builder/skeleton';
-import { bodySdf, boneSdf, roundCone, smin } from '../../src/builder/sdf';
+import { bodySdf, blendFor, boneSdf, coarseBodySdf, roundCone, smin, thinAxis } from '../../src/builder/sdf';
 import { v3 } from '../../src/util/vec';
+import { CAST } from '../../src/cast';
 import { quadruped } from '../fixtures/recipes';
 
 describe('distance functions', () => {
@@ -36,6 +38,65 @@ describe('distance functions', () => {
     const t = sk.bones[0];
     expect(f((t.start.x + t.end.x) / 2, (t.start.y + t.end.y) / 2, (t.start.z + t.end.z) / 2)).toBeLessThan(0);
     expect(f(0, t.start.y + 1, (t.start.z + t.end.z) / 2)).toBeGreaterThan(0);
+  });
+
+  it('the body skips only bones that cannot change the blend', () => {
+    // reference: every bone in tree order, culled by its box only (the original fold)
+    for (const recipe of [quadruped, CAST[7].recipe]) {
+      const sk = buildSkeleton(recipe);
+      const bones = sk.bones.filter((b) => b.role !== 'eye').map((b) => {
+        const par = b.parent >= 0 ? sk.bones[b.parent] : null;
+        const k = par ? blendFor(b.role) * Math.min(b.r0, Math.max(par.r0, par.r1)) : 0;
+        const r = Math.max(b.r0, b.r1) * 1.5 + k + 0.03;
+        const lo = v3(Math.min(b.start.x, b.end.x) - r, Math.min(b.start.y, b.end.y) - r, Math.min(b.start.z, b.end.z) - r);
+        const hi = v3(Math.max(b.start.x, b.end.x) + r, Math.max(b.start.y, b.end.y) + r, Math.max(b.start.z, b.end.z) + r);
+        return { b, k, lo, hi, thin: thinAxis(b) };
+      });
+      const ref = (x: number, y: number, z: number) => {
+        let d = 1e3;
+        for (const it of bones) {
+          const out = x < it.lo.x || y < it.lo.y || z < it.lo.z || x > it.hi.x || y > it.hi.y || z > it.hi.z;
+          if (out && d < 1e3) continue;
+          const e = boneSdf(v3(x, y, z), it.b, it.thin);
+          d = d >= 1e3 ? e : smin(d, e, it.k);
+        }
+        return d;
+      };
+      const sdf = bodySdf(sk);
+      const { min, max } = sk;
+      for (let i = 0; i < 20_000; i++) {
+        const f = (j: number) => ((i * 7919 + j * 104729) % 1000) / 1000;
+        const x = min.x + (max.x - min.x) * f(1), y = min.y + (max.y - min.y) * f(2), z = min.z + (max.z - min.z) * f(3);
+        expect(sdf(x, y, z)).toBe(ref(x, y, z));
+      }
+    }
+  });
+});
+
+describe('splitNonManifold', () => {
+  it('separates two closed surfaces that share an edge', () => {
+    // two tetrahedra sharing the edge 0-1: four triangles on that edge
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0.5, 1, 0, 0.5, 0.5, 1, 0.5, -1, 0, 0.5, -0.5, -1]);
+    const tet = (a: number, b: number, c: number, d: number) => [a, c, b, a, b, d, b, c, d, a, d, c]; // wound outward
+    const m = splitNonManifold({ positions, indices: new Uint32Array([...tet(0, 1, 2, 3), ...tet(0, 1, 4, 5)]) });
+    expect(m.positions.length / 3).toBe(7); // splitting vertex 0 already gives each edge two triangles
+    expect([...topology({ ...m, normals: new Float32Array() }).edges.values()].every((c) => c === 2)).toBe(true);
+  });
+
+  it('leaves no crowded edge on a thin-finned body', () => {
+    const sk = buildSkeleton(CAST.find((c) => c.recipe.id === 'trout')!.recipe); // fins one cell thick: dozens of crowded edges
+    const cell = Math.max(sk.max.x - sk.min.x, sk.max.y - sk.min.y, sk.max.z - sk.min.z) / 330;
+    const raw = surfaceNetsSparse(sampleSparse(bodySdf(sk), sk.min, sk.max, cell, 4, coarseBodySdf(sk, cell)));
+    const crowded = (m: typeof raw) => [...topology({ ...m, normals: new Float32Array() }).edges.values()].filter((c) => c !== 2).length;
+    expect(crowded(raw)).toBeGreaterThan(0);
+    expect(crowded(splitNonManifold(raw))).toBe(0);
+  });
+
+  it('leaves a manifold mesh untouched', () => {
+    const m = surfaceNets((x, y, z) => Math.hypot(x, y, z) - 0.8, v3(-1, -1, -1), v3(1, 1, 1), 0.1);
+    const out = splitNonManifold(m);
+    expect(out.positions).toBe(m.positions);
+    expect(out.indices).toBe(m.indices);
   });
 });
 

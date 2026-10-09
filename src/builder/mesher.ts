@@ -173,3 +173,121 @@ export function surfaceNetsSparse(f: SparseField): { positions: Float32Array; in
   }
   return { positions: new Float32Array(pos), indices: new Uint32Array(idx) };
 }
+
+/**
+ * Where surface nets meet an ambiguous face, two sheets touch along an edge that four triangles share.
+ * Around such an edge the triangles are paired across the solid wedges between them (their windings say
+ * which side is inside), each vertex on it gets one copy per sheet its triangles then form (grouped across
+ * edges of two triangles and those pairs), and so every edge ends up in exactly two triangles.
+ * Returns the input itself when no edge has more than two triangles.
+ */
+export function splitNonManifold(m: { positions: Float32Array; indices: Uint32Array }): { positions: Float32Array; indices: Uint32Array } {
+  const n = m.positions.length / 3, idx = m.indices, P = m.positions;
+  // triangles around each vertex, ascending
+  const start = new Int32Array(n + 1);
+  for (let i = 0; i < idx.length; i++) start[idx[i] + 1]++;
+  for (let v = 0; v < n; v++) start[v + 1] += start[v];
+  const fan = new Int32Array(idx.length), fill = start.slice(0, n);
+  for (let i = 0; i < idx.length; i++) fan[fill[idx[i]]++] = (i / 3) | 0;
+
+  const room = n + idx.length / 3; // vertices plus room for copies
+  const mark = new Int32Array(room).fill(-1), cnt = new Int32Array(room), seen = new Int32Array(room).fill(-1);
+  const extra: number[] = []; // source vertex of each copy
+  const src = (x: number) => (x < n ? x : extra[x - n]);
+  let out: Uint32Array | null = null;
+  const parent = new Int32Array(64);
+  const find = (i: number): number => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+  const join = (i: number, j: number) => { parent[find(j)] = find(i); };
+  const around: { i: number; angle: number; inward: boolean }[] = [];
+
+  let tag = 0;
+  /** Groups v's triangles into sheets (union-find over `parent`); true if v then splits (more than one sheet). */
+  const groupFan = (v: number, s: number, deg: number, cur: Uint32Array, solid: boolean): boolean => {
+    tag++;
+    for (let i = 0; i < deg; i++) parent[i] = i;
+    for (let i = 0; i < deg; i++)
+      for (let k = 0; k < 3; k++) {
+        const x = cur[fan[s + i] * 3 + k];
+        if (x === v) continue;
+        if (cnt[x] === 2) {
+          for (let j = i + 1; j < deg; j++) {
+            const f = fan[s + j] * 3;
+            if (cur[f] === x || cur[f + 1] === x || cur[f + 2] === x) { join(i, j); break; }
+          }
+          continue;
+        }
+        if (seen[x] === tag) continue;
+        seen[x] = tag;
+        // more than two: order the triangles by angle around the edge v→x and join neighbours across a wedge
+        const o = src(x) * 3;
+        const ux = P[o] - P[v * 3], uy = P[o + 1] - P[v * 3 + 1], uz = P[o + 2] - P[v * 3 + 2];
+        const ul = Math.hypot(ux, uy, uz) || 1;
+        const ax = ux / ul, ay = uy / ul, az = uz / ul;
+        // e1 ⟂ u, e2 = u × e1
+        let e1x = Math.abs(ax) < 0.9 ? 1 : 0, e1y = Math.abs(ax) < 0.9 ? 0 : 1, e1z = 0;
+        const dp = e1x * ax + e1y * ay;
+        e1x -= dp * ax; e1y -= dp * ay; e1z -= dp * az;
+        const el = Math.hypot(e1x, e1y, e1z);
+        e1x /= el; e1y /= el; e1z /= el;
+        const e2x = ay * e1z - az * e1y, e2y = az * e1x - ax * e1z, e2z = ax * e1y - ay * e1x;
+        around.length = 0;
+        for (let j = 0; j < deg; j++) {
+          const f = fan[s + j] * 3;
+          let kx = -1;
+          for (let q = 0; q < 3; q++) if (cur[f + q] === x) kx = q;
+          if (kx < 0) continue;
+          const w = cur[f + 3 - kx - (cur[f] === v ? 0 : cur[f + 1] === v ? 1 : 2)];
+          const ow = src(w) * 3;
+          const dx = P[ow] - P[v * 3], dy = P[ow + 1] - P[v * 3 + 1], dz = P[ow + 2] - P[v * 3 + 2];
+          const angle = Math.atan2(dx * e2x + dy * e2y + dz * e2z, dx * e1x + dy * e1y + dz * e1z);
+          // winding v→x puts the normal (outside) towards larger angles, so the solid lies just below
+          const vx = cur[f + ((kx + 2) % 3)] === v;
+          around.push({ i: j, angle, inward: !vx });
+        }
+        around.sort((p, q) => p.angle - q.angle || p.i - q.i);
+        const c = around.length;
+        let alternates = c % 2 === 0;
+        for (let q = 0; q < c && alternates; q++) alternates = around[q].inward !== around[(q + 1) % c].inward;
+        if (!alternates) continue;
+        // the wedge after a triangle whose solid lies above it (winding x→v) is solid: join across it (or the others)
+        for (let q = 0; q < c; q++) if (around[q].inward === solid) join(around[q].i, around[(q + 1) % c].i);
+      }
+    const first = find(0);
+    for (let i = 1; i < deg; i++) if (find(i) !== first) return true;
+    return false;
+  };
+
+  for (let v = 0; v < n; v++) {
+    const cur: Uint32Array = out ?? idx;
+    const s = start[v], deg = start[v + 1] - s;
+    // triangles on each edge v-x
+    let bad = false;
+    for (let i = s; i < s + deg; i++)
+      for (let k = 0; k < 3; k++) {
+        const x = cur[fan[i] * 3 + k];
+        if (x === v) continue;
+        if (mark[x] !== v) { mark[x] = v; cnt[x] = 0; }
+        if (++cnt[x] > 2) bad = true;
+      }
+    if (!bad || deg > parent.length) continue;
+    // pair across the solid wedges first; if that leaves every sheet joined, across the open ones
+    for (let mode = 0; mode < 2 && !groupFan(v, s, deg, cur, mode === 0); mode++);
+    out ??= idx.slice();
+    // the sheet holding v's first triangle keeps v; each other sheet gets a copy
+    const copy = new Map<number, number>();
+    const first = find(0);
+    for (let i = 0; i < deg; i++) {
+      const r = find(i);
+      if (r === first) continue;
+      let c = copy.get(r);
+      if (c === undefined) { c = n + extra.length; extra.push(v); copy.set(r, c); }
+      const f = fan[s + i] * 3;
+      for (let k = 0; k < 3; k++) if (out[f + k] === v) out[f + k] = c;
+    }
+  }
+  if (!out) return m;
+  const positions = new Float32Array((n + extra.length) * 3);
+  positions.set(P);
+  extra.forEach((v, i) => positions.set(P.subarray(v * 3, v * 3 + 3), (n + i) * 3));
+  return { positions, indices: out };
+}

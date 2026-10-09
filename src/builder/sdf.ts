@@ -1,23 +1,27 @@
 import type { FlatFacing, Role } from '../recipe/schema';
 import { cross, dot, norm, scale, sub, v3, type Vec3 } from '../util/vec';
 import type { BoneDef, Skeleton } from './skeleton';
+import { nearReach } from './sparse';
 
 /**
  * Signed distance to a round cone (a capsule with different end radii).
  * Inigo Quilez, "round cone - exact". Negative inside.
  */
 export function roundCone(p: Vec3, a: Vec3, b: Vec3, r1: number, r2: number): number {
-  const ba = sub(b, a);
-  const l2 = dot(ba, ba);
-  if (l2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y, p.z - a.z) - Math.max(r1, r2);
+  return roundConeAt(p.x - a.x, p.y - a.y, p.z - a.z, b.x - a.x, b.y - a.y, b.z - a.z, r1, r2);
+}
+
+/** `roundCone` for p − a = (ax, ay, az) and b − a = (bx, by, bz), without allocating (it runs millions of times per body). */
+function roundConeAt(ax: number, ay: number, az: number, bx: number, by: number, bz: number, r1: number, r2: number): number {
+  const l2 = bx * bx + by * by + bz * bz;
+  if (l2 < 1e-12) return Math.hypot(ax, ay, az) - Math.max(r1, r2);
   const rr = r1 - r2;
   const a2 = l2 - rr * rr;
   const il2 = 1 / l2;
-  const pa = sub(p, a);
-  const y = dot(pa, ba);
+  const y = ax * bx + ay * by + az * bz;
   const z = y - l2;
-  const xv = sub(scale(pa, l2), scale(ba, y));
-  const x2 = dot(xv, xv);
+  const xx = ax * l2 - bx * y, xy = ay * l2 - by * y, xz = az * l2 - bz * y;
+  const x2 = xx * xx + xy * xy + xz * xz;
   const y2 = y * y * l2;
   const z2 = z * z * l2;
   const k = Math.sign(rr) * rr * rr * x2;
@@ -63,43 +67,78 @@ export const tipRadius = (b: BoneDef) => (b.pointed ? Math.max(0.002, b.r1 * 0.1
 
 /** Distance to one bone's own shape (squash and point applied). */
 export function boneSdf(p: Vec3, b: BoneDef, thin: Vec3 = thinAxis(b)): number {
-  const r1 = tipRadius(b);
-  if (b.squash >= 0.999) return roundCone(p, b.start, b.end, b.r0, r1);
-  // stretch space along the thin axis, measure, then scale back (a slight underestimate, fine for meshing)
-  const s = dot(sub(p, b.start), thin) * (1 / b.squash - 1);
-  const q = { x: p.x + thin.x * s, y: p.y + thin.y * s, z: p.z + thin.z * s };
-  return roundCone(q, b.start, b.end, b.r0, r1) * b.squash;
+  return boneSdfAt(p.x, p.y, p.z, b, thin);
 }
 
-type Prepared = { b: BoneDef; thin: Vec3; k: number; min: Vec3; max: Vec3 };
+/** `boneSdf` at (x, y, z), without allocating. */
+export function boneSdfAt(x: number, y: number, z: number, b: BoneDef, thin: Vec3): number {
+  const r1 = tipRadius(b);
+  const { start: a, end: e } = b;
+  const ax = x - a.x, ay = y - a.y, az = z - a.z;
+  if (b.squash >= 0.999) return roundConeAt(ax, ay, az, e.x - a.x, e.y - a.y, e.z - a.z, b.r0, r1);
+  // stretch space along the thin axis, measure, then scale back (a slight underestimate, fine for meshing)
+  const s = (ax * thin.x + ay * thin.y + az * thin.z) * (1 / b.squash - 1);
+  return roundConeAt(ax + thin.x * s, ay + thin.y * s, az + thin.z * s, e.x - a.x, e.y - a.y, e.z - a.z, b.r0, r1) * b.squash;
+}
+
+/** Per-bone floats bodySdf reads, packed flat: box min/max, start, end − start, r0, tip radius, squash, thin axis, blend, R, sq, 1/|end − start|². */
+const STRIDE = 22;
 
 /** The whole body as one distance function: bones blended in tree order. Eyes are separate meshes. */
 export function bodySdf(sk: Skeleton, margin = 0.03): (x: number, y: number, z: number) => number {
-  const prepared: Prepared[] = [];
-  for (const b of sk.bones) {
-    if (b.role === 'eye') continue;
+  const list = sk.bones.filter((b) => b.role !== 'eye');
+  const n = list.length, F = new Float64Array(n * STRIDE);
+  list.forEach((b, i) => {
     const par = b.parent >= 0 ? sk.bones[b.parent] : null;
     const joint = par ? Math.min(b.r0, Math.max(par.r0, par.r1)) : 0;
     const k = par ? blendFor(b.role) * joint : 0;
     // reach = radius + blend + a margin, so points just off the surface still see this bone exactly
     const r = Math.max(b.r0, b.r1) * 1.5 + k + margin;
-    prepared.push({
-      b, k, thin: thinAxis(b),
-      min: v3(Math.min(b.start.x, b.end.x) - r, Math.min(b.start.y, b.end.y) - r, Math.min(b.start.z, b.end.z) - r),
-      max: v3(Math.max(b.start.x, b.end.x) + r, Math.max(b.start.y, b.end.y) + r, Math.max(b.start.z, b.end.z) + r),
-    });
-  }
+    const t = thinAxis(b);
+    const dx = b.end.x - b.start.x, dy = b.end.y - b.start.y, dz = b.end.z - b.start.z, l2 = dx * dx + dy * dy + dz * dz;
+    F.set([
+      Math.min(b.start.x, b.end.x) - r, Math.min(b.start.y, b.end.y) - r, Math.min(b.start.z, b.end.z) - r,
+      Math.max(b.start.x, b.end.x) + r, Math.max(b.start.y, b.end.y) + r, Math.max(b.start.z, b.end.z) + r,
+      b.start.x, b.start.y, b.start.z, dx, dy, dz,
+      b.r0, tipRadius(b), b.squash, t.x, t.y, t.z, k, Math.max(b.r0, b.r1), Math.min(1, b.squash), l2 > 0 ? 1 / l2 : 0,
+    ], i * STRIDE);
+  });
   const far = 1e3;
   return (x, y, z) => {
     let d = far;
-    const p = { x, y, z };
-    for (const it of prepared) {
-      if (x < it.min.x || y < it.min.y || z < it.min.z || x > it.max.x || y > it.max.y || z > it.max.z) {
+    for (let o = 0; o < n * STRIDE; o += STRIDE) {
+      if (d < far) {
         // outside this bone's reach: it can't lower d below the box distance, skip unless d is still "far"
-        if (d < far) continue;
+        if (x < F[o] || y < F[o + 1] || z < F[o + 2] || x > F[o + 3] || y > F[o + 4] || z > F[o + 5]) continue;
+        // the bone's distance is at least sq·(D − R), D = distance to its segment; when that is ≥ d + k
+        // the blend returns d exactly, so skipping it changes nothing
+        const lim = (d + F[o + 18]) / F[o + 20] + F[o + 19];
+        if (lim <= 0) continue;
+        const dx = F[o + 9], dy = F[o + 10], dz = F[o + 11];
+        const px = x - F[o + 6], py = y - F[o + 7], pz = z - F[o + 8];
+        const u = Math.min(1, Math.max(0, (px * dx + py * dy + pz * dz) * F[o + 21]));
+        const qx = px - dx * u, qy = py - dy * u, qz = pz - dz * u;
+        if (qx * qx + qy * qy + qz * qz >= lim * lim) continue;
       }
-      d = d >= far ? boneSdf(p, it.b, it.thin) : smin(d, boneSdf(p, it.b, it.thin), it.k);
+      // boneSdf, unrolled
+      const ax = x - F[o + 6], ay = y - F[o + 7], az = z - F[o + 8];
+      const bx = F[o + 9], by = F[o + 10], bz = F[o + 11];
+      const squash = F[o + 14];
+      let v: number;
+      if (squash >= 0.999) v = roundConeAt(ax, ay, az, bx, by, bz, F[o + 12], F[o + 13]);
+      else {
+        const tx = F[o + 15], ty = F[o + 16], tz = F[o + 17];
+        const s = (ax * tx + ay * ty + az * tz) * (1 / squash - 1);
+        v = roundConeAt(ax + tx * s, ay + ty * s, az + tz * s, bx, by, bz, F[o + 12], F[o + 13]) * squash;
+      }
+      d = d >= far ? v : smin(d, v, F[o + 18]);
     }
     return d;
   };
 }
+
+/**
+ * The body SDF for a sparse sampler's coarse lattice at fine cell `cell`: its bone-box cull widened by the
+ * near reach, so a coarse corner near a thin part never misses that part (see `sampleSparse`).
+ */
+export const coarseBodySdf = (sk: Skeleton, cell: number, block = 4) => bodySdf(sk, nearReach(cell, block) + 0.03);

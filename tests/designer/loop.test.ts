@@ -10,6 +10,7 @@ import { quadruped } from '../fixtures/recipes';
 const cards = { name: 'Bob', eats: 'flowers', speed: 'slow', mood: 'shy', special: 'spots' };
 const img = { base64: 'x', mediaType: 'image/png' as const };
 const view = { angle: 'side' as const, facing: 'left' as const };
+const body = buildBody(quadruped, [2]); // the loop never looks at the shape: one body serves every build
 
 function deps(looks: LookAgainResult[], opts: { failBuildAt?: number } = {}) {
   let builds = 0;
@@ -24,7 +25,7 @@ function deps(looks: LookAgainResult[], opts: { failBuildAt?: number } = {}) {
     build: async (r: Recipe) => {
       builds++;
       if (builds === opts.failBuildAt) throw new Error('cannot build');
-      return buildBody(r, [2]);
+      return { ...body, key: r.id };
     },
     snapshot: async () => img,
   };

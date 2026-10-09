@@ -4,6 +4,7 @@ import { buildSkeleton } from '../../src/builder/skeleton';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
 import { lerp } from '../../src/util/vec';
+import { fox } from '../../src/cast/fox';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 import { topology } from '../fixtures/mesh';
 
@@ -49,19 +50,60 @@ describe('buildBody', () => {
     for (const r of [quadruped, snake, hexapod, blob, biped, bird]) {
       const b = buildBody(r);
       expect(b.lods).toHaveLength(3);
-      expect(b.lods[0].positions.length).toBeGreaterThan(b.lods[1].positions.length);
-      expect(b.lods[1].positions.length).toBeGreaterThan(b.lods[2].positions.length);
+      const tris = b.lods.map((l) => l.indices.length / 3);
+      expect(tris[0]).toBeGreaterThan(tris[1]);
+      expect(tris[1]).toBeGreaterThan(tris[2]);
+      expect(Math.abs(tris[1] / (tris[0] / 4) - 1)).toBeLessThan(0.3);
+      expect(Math.abs(tris[2] / (tris[0] / 16) - 1)).toBeLessThan(0.4);
       expect(b.lods[0].positions.length / 3).toBeLessThanOrEqual(120_000);
-      for (const p of b.lods[0].positions) expect(Number.isFinite(p)).toBe(true);
-      const { edges } = topology(b.lods[0]);
-      const open = [...edges.values()].filter((c) => c !== 2).length;
-      expect(open / edges.size).toBeLessThan(0.002); // essentially watertight
+      for (const l of b.lods) {
+        for (const p of l.positions) expect(Number.isFinite(p)).toBe(true);
+        for (const p of l.normals) expect(Number.isFinite(p)).toBe(true);
+        const { edges } = topology(l);
+        expect([...edges.values()].every((c) => c === 2)).toBe(true); // closed
+      }
     }
-  }, 30_000); // six bodies at three levels: ~2.6 s alone, past the 5 s default when every test file runs at once
+  }, 60_000); // six bodies sampled finely and simplified to three levels: several seconds each when every test file runs at once
+
+  describe('the fox at full detail', () => {
+    const body = buildBody(fox, [0]);
+    const lod = body.lods[0];
+    const bones = body.skeleton.bones;
+
+    it('has a denser face than flank', () => {
+      // per group: vertices / (sum of incident triangle areas / 3)
+      const area = new Float64Array(lod.positions.length / 3);
+      const P = lod.positions, I = lod.indices;
+      for (let t = 0; t < I.length; t += 3) {
+        const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+        const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+        const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+        const s = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2 / 3;
+        area[I[t]] += s; area[I[t + 1]] += s; area[I[t + 2]] += s;
+      }
+      const density = (roles: string[]) => {
+        let n = 0, a = 0;
+        for (let v = 0; v < area.length; v++) if (roles.includes(bones[lod.boneOf[v]].role)) { n++; a += area[v]; }
+        return n / a;
+      };
+      expect(density(['head', 'mouth'])).toBeGreaterThan(2.5 * density(['torso']));
+    });
+
+    it('stays near today’s triangle budget', () => {
+      const target = 1.2 * 2 * 9560; // today's fox: 9560 vertices at 110 cells
+      expect(Math.abs(lod.indices.length / 3 / target - 1)).toBeLessThan(0.25);
+    });
+  });
 
   it('is deterministic', () => {
     expect(hashNumbers(buildBody(quadruped, [1]).lods[0].positions)).toBe(hashNumbers(buildBody(quadruped, [1]).lods[0].positions));
-  });
+  }, 20_000);
+
+  it('gives one level alone exactly as the full set does', () => {
+    const two = buildBody(quadruped, [2]).lods[0], full = buildBody(quadruped).lods[2];
+    expect(hashNumbers(two.positions)).toBe(hashNumbers(full.positions));
+    expect(hashNumbers(two.indices)).toBe(hashNumbers(full.indices));
+  }, 20_000);
 
   // Wall-clock: flaky on a busy machine, so only with PERF=1 (body build times: npx tsx tools/perf.ts).
   it.skipIf(!process.env.PERF)('builds the full-detail body in under 3 seconds', () => {

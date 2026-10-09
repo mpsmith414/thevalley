@@ -33,7 +33,7 @@ describe('the native cast', () => {
           expect(count('leg')).toBe(0);
           expect(count('fin')).toBeGreaterThanOrEqual(3);
         }
-      });
+      }, 20_000); // a fine build takes up to ~2.5 s alone, more while every test file runs at once
     });
   }
 });
