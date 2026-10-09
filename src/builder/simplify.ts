@@ -8,6 +8,13 @@ export type Simplifier = {
   snapshot(): Snapshot; // compacted copy of the current mesh
 };
 
+/**
+ * Edge-length regulariser: cost += REG · tr(Q_a+Q_b) · |b−a|² (tr = the weighted area around the edge, so the
+ * term has the quadric's units). Along a straight, constant-radius part the quadric costs nothing, and without
+ * it ties by edge id let one vertex swallow a whole axial run (long sliver fans).
+ */
+const REG = 1e-3;
+
 const qs = new Float64Array(10);
 /** vᵀQv for a symmetric 4×4 quadric stored as its upper triangle (10 floats) and v = (x, y, z, 1). */
 function quadErr(q: Float64Array, x: number, y: number, z: number): number {
@@ -56,10 +63,11 @@ class Lists {
 }
 
 /**
- * Garland–Heckbert edge collapse with importance weights: Q_v = w_v · Σ area_f · K_f. The cheapest edge
- * (ties by edge id) collapses its higher vertex into its lower one, subject to the link condition and a
- * no-flip test. Edges with other than two faces lock the vertices of those faces. Pure and deterministic;
- * successive `collapseTo` calls continue from the current state.
+ * Garland–Heckbert edge collapse with importance weights: Q_v = w_v · Σ area_f · K_f, and an edge's cost
+ * (plus the REG length term) is also scaled by max(w_a, w_b), so the effective importance is about w².
+ * The cheapest edge (ties by edge id) collapses its higher vertex into its lower one (which keeps the max
+ * weight), subject to the link condition and a no-flip test. Edges with other than two faces lock the
+ * vertices of those faces. Pure and deterministic; successive `collapseTo` calls continue from the current state.
  */
 export function createSimplifier(input: SimplifyInput): Simplifier {
   const n = input.positions.length / 3, F = input.indices.length / 3;
@@ -179,6 +187,7 @@ export function createSimplifier(input: SimplifyInput): Simplifier {
     const pa = ea[e] * 3, pb = eb[e] * 3;
     const ax = P[pa], ay = P[pa + 1], az = P[pa + 2], bx = P[pb], by = P[pb + 1], bz = P[pb + 2];
     const mx = (ax + bx) / 2, my = (ay + by) / 2, mz = (az + bz) / 2;
+    const L2 = (bx - ax) ** 2 + (by - ay) ** 2 + (bz - az) ** 2;
     let best = quadErr(qs, ax, ay, az), px = ax, py = ay, pz = az;
     let c = quadErr(qs, bx, by, bz);
     if (c < best) { best = c; px = bx; py = by; pz = bz; }
@@ -193,13 +202,13 @@ export function createSimplifier(input: SimplifyInput): Simplifier {
       const oy = -(c01 * q3 + c11 * q6 + c12 * q8) / det;
       const oz = -(c02 * q3 + c12 * q6 + c22 * q8) / det;
       // a nearly flat neighbourhood can put the optimum far away along the surface: keep it near the edge
-      const ex = bx - ax, ey = by - ay, ez = bz - az;
       const dx = ox - mx, dy = oy - my, dz = oz - mz;
-      if (dx * dx + dy * dy + dz * dz <= ex * ex + ey * ey + ez * ez) {
+      if (dx * dx + dy * dy + dz * dz <= L2) {
         c = quadErr(qs, ox, oy, oz);
         if (c < best) { best = c; px = ox; py = oy; pz = oz; }
       }
     }
+    best += REG * tr * L2;
     best *= Math.max(w[ea[e]], w[eb[e]]); // the weight counts twice: in the quadric and on the cost
     eCost[e] = best === best ? best : Infinity;
     eP[e * 3] = px; eP[e * 3 + 1] = py; eP[e * 3 + 2] = pz;

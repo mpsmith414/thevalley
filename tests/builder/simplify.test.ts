@@ -53,6 +53,46 @@ describe('simplify', () => {
     expect(b1.indices).toEqual(b2.indices);
     expect(b1.indices.length).toBeLessThan(a1.indices.length);
   });
+  it('keeps a straight, constant-radius part free of long sliver fans', () => {
+    // a leg-like capsule, radius 4 cm and 68 cm long: its quadric costs nothing along the axis
+    const capsule = (x: number, y: number, z: number) => Math.hypot(x, y, z - Math.max(-0.3, Math.min(0.3, z))) - 0.04;
+    const m = surfaceNetsSparse(sampleSparse(capsule, v3(-0.07, -0.07, -0.37), v3(0.07, 0.07, 0.37), 0.004));
+    const s = createSimplifier({ ...m, weight: new Float32Array(m.positions.length / 3).fill(1) });
+    const edges = (o: { positions: Float32Array; indices: Uint32Array }) => {
+      const P = o.positions, I = o.indices, valence = new Int32Array(P.length / 3);
+      let max = 0, sum = 0;
+      for (let i = 0; i < I.length; i++) {
+        const a = I[i], b = I[i - (i % 3) + ((i + 1) % 3)];
+        const l = Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]);
+        max = Math.max(max, l); sum += l; valence[a]++;
+      }
+      return { max, mean: sum / I.length, valence: Math.max(...valence) };
+    };
+    s.collapseTo(8000);
+    const lod0 = edges(s.snapshot());
+    expect(lod0.valence).toBeLessThanOrEqual(12);
+    expect(lod0.max).toBeLessThan(4 * lod0.mean);
+    s.collapseTo(2000);
+    const lod2 = edges(s.snapshot());
+    expect(lod2.max).toBeLessThan(0.1); // before the regulariser, edges spanned the whole 0.6 m axis
+  });
+  it('collapses a torus as far as it goes and keeps it a closed torus', () => {
+    const torus = (x: number, y: number, z: number) => Math.hypot(Math.hypot(x, z) - 0.5, y) - 0.15;
+    const m = surfaceNetsSparse(sampleSparse(torus, v3(-1, -1, -1), v3(1, 1, 1), 0.03));
+    const s = createSimplifier({ ...m, weight: new Float32Array(m.positions.length / 3).fill(1) });
+    s.collapseTo(0);
+    const out = s.snapshot();
+    expect(closed(out.indices)).toBe(true);
+    const faces = new Set<string>(), edgeSet = new Set<string>();
+    for (let t = 0; t < out.indices.length; t += 3) {
+      const f = [out.indices[t], out.indices[t + 1], out.indices[t + 2]];
+      faces.add([...f].sort((a, b) => a - b).join());
+      for (let e = 0; e < 3; e++) edgeSet.add([f[e], f[(e + 1) % 3]].sort((a, b) => a - b).join());
+    }
+    const F = out.indices.length / 3;
+    expect(faces.size).toBe(F); // no duplicate faces
+    expect(out.positions.length / 3 - edgeSet.size + F).toBe(0); // Euler characteristic of a torus
+  });
   it('leaves a non-manifold edge alone and keeps every other edge closed', () => {
     // two spheres glued along one edge: that edge has four faces
     const m = mesh();
