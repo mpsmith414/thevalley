@@ -7,7 +7,9 @@ export type Mark = 'nose' | 'earInner' | 'mouth' | 'hoof';
 
 export type Shape =
   | { type: 'ellipsoid'; c: Vec3; ax: [Vec3, Vec3, Vec3] /* orthonormal */; r: Vec3 /* radius along each axis */ }
-  | { type: 'cone'; a: Vec3; b: Vec3; r0: number; r1: number }; // round cone, as the bones
+  | { type: 'cone'; a: Vec3; b: Vec3; r0: number; r1: number } // round cone, as the bones
+  // an ellipse in the plane of ax[0], ax[1] (radii r.x, r.y) extruded ±r.z along ax[2]: a slit of even thickness
+  | { type: 'slab'; c: Vec3; ax: [Vec3, Vec3, Vec3] /* orthonormal */; r: Vec3 };
 
 /** An extra shape blended into the body (add), cut out of it (carve), or only colouring it (mark). */
 export type Feature = {
@@ -20,12 +22,19 @@ export type Feature = {
   name?: string; bone?: number; // which rule made it and from which bone (tests, debugging)
 };
 
-/** Signed distance to a shape: ellipsoid by Inigo Quilez's bound k0·(k0 − 1)/k1, cone exactly. */
+/** Signed distance to a shape: ellipsoid (and a slab's ellipse) by Inigo Quilez's bound k0·(k0 − 1)/k1, cone exactly. */
 export function shapeSdf(p: Vec3, s: Shape): number {
   if (s.type === 'cone') return roundCone(p, s.a, s.b, s.r0, s.r1);
   const d = sub(p, s.c);
   const q0 = dot(d, s.ax[0]), q1 = dot(d, s.ax[1]), q2 = dot(d, s.ax[2]);
+  if (s.type === 'slab') return Math.max(ellipseAt(q0, q1, s.r.x, s.r.y), Math.abs(q2) - s.r.z);
   return ellipsoidAt(q0, q1, q2, s.r.x, s.r.y, s.r.z);
+}
+
+/** The ellipse bound for in-plane coordinates (q0, q1) and radii (a, b). */
+export function ellipseAt(q0: number, q1: number, a: number, b: number): number {
+  const k0 = Math.hypot(q0 / a, q1 / b), k1 = Math.hypot(q0 / (a * a), q1 / (b * b));
+  return k1 > 1e-12 ? (k0 * (k0 - 1)) / k1 : -Math.min(a, b);
 }
 
 /** The ellipsoid bound for local coordinates (q0, q1, q2) and radii (a, b, c). */
@@ -45,8 +54,10 @@ function bounds(s: Shape): { min: Vec3; max: Vec3 } {
     };
   }
   const [u, v, w] = s.ax, { x: a, y: b, z: c } = s.r;
-  // half-extent along a world axis: |(a·u_i, b·v_i, c·w_i)|
-  const e = v3(Math.hypot(a * u.x, b * v.x, c * w.x), Math.hypot(a * u.y, b * v.y, c * w.y), Math.hypot(a * u.z, b * v.z, c * w.z));
+  // half-extent along a world axis: |(a·u_i, b·v_i, c·w_i)| (a slab: the ellipse's, plus its thickness)
+  const e = s.type === 'slab'
+    ? v3(Math.hypot(a * u.x, b * v.x) + c * Math.abs(w.x), Math.hypot(a * u.y, b * v.y) + c * Math.abs(w.y), Math.hypot(a * u.z, b * v.z) + c * Math.abs(w.z))
+    : v3(Math.hypot(a * u.x, b * v.x, c * w.x), Math.hypot(a * u.y, b * v.y, c * w.y), Math.hypot(a * u.z, b * v.z, c * w.z));
   return { min: sub(s.c, e), max: v3(s.c.x + e.x, s.c.y + e.y, s.c.z + e.z) };
 }
 

@@ -213,11 +213,14 @@ function boxGrid(packs: Float64Array[], strides: number[], counts: number[]) {
 }
 
 /**
- * Per-feature floats bodySdf reads: box min/max (grown by the margin), type (0 ellipsoid, 1 cone), blend k, then
+ * Per-feature floats bodySdf reads: box min/max (grown by the margin), type (0 ellipsoid, 1 cone, 2 slab), blend k, then
  * ellipsoid: centre, the axes divided by their radii, the axes divided by their radii squared, the smallest radius;
- * cone: start, end − start, r0, r1; then a bounding sphere's centre and radius R, and R / the smallest radius
- * (from 30; the ellipsoid bound is ≥ rmin·(k0 − 1) ≥ (D − R)·rmin/R outside, ≥ D − R inside); then the scale for
- * negative ellipsoid values (35: rmin/rmax when shallow, else 1; |bound|·rmin/rmax ≤ rmin·(1 − k0) ≤ the true depth).
+ * cone: start, end − start, r0, r1; slab: centre, the in-plane axes divided by their radii, the thin axis, the in-plane
+ * axes divided by their radii squared, the half thickness h (26), the ellipse's smaller radius (29);
+ * then a bounding sphere's centre and radius R, and q (from 30; distance ≥ (D − R)/q outside, ≥ D − R inside:
+ * ellipsoid q = R/rmin as its bound is ≥ rmin·(k0 − 1); slab R = rmax + h, q = 2·rmax/rmin, as its in-plane and
+ * across overshoots sum to at least D − R); then the scale for negative ellipse(oid) values (35: rmin/rmax when
+ * shallow, else 1; |bound|·rmin/rmax ≤ rmin·(1 − k0) ≤ the true depth; a slab's max with |q2| − h keeps that).
  */
 const FSTRIDE = 36;
 
@@ -225,8 +228,14 @@ function packFeatures(feats: Feature[], margin: number, shallow: boolean): Float
   const G = new Float64Array(feats.length * FSTRIDE);
   feats.forEach((f, i) => {
     const o = i * FSTRIDE, s = f.shape;
-    G.set([f.min.x - margin, f.min.y - margin, f.min.z - margin, f.max.x + margin, f.max.y + margin, f.max.z + margin, s.type === 'cone' ? 1 : 0, f.k], o);
-    if (s.type === 'cone') {
+    G.set([f.min.x - margin, f.min.y - margin, f.min.z - margin, f.max.x + margin, f.max.y + margin, f.max.z + margin, s.type === 'cone' ? 1 : s.type === 'slab' ? 2 : 0, f.k], o);
+    if (s.type === 'slab') {
+      const [u, v, w] = s.ax, { x: a, y: b, z: h } = s.r, rmin = Math.min(a, b), rmax = Math.max(a, b);
+      G.set([s.c.x, s.c.y, s.c.z, u.x / a, u.y / a, u.z / a, v.x / b, v.y / b, v.z / b, w.x, w.y, w.z,
+        u.x / a ** 2, u.y / a ** 2, u.z / a ** 2, v.x / b ** 2, v.y / b ** 2, v.z / b ** 2, h], o + 8);
+      G[o + 29] = rmin;
+      G.set([s.c.x, s.c.y, s.c.z, rmax + h, (2 * rmax) / rmin, shallow ? rmin / rmax : 1], o + 30);
+    } else if (s.type === 'cone') {
       G.set([s.a.x, s.a.y, s.a.z, s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z, s.r0, s.r1], o + 8);
       const half = 0.5 * Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z);
       G.set([(s.a.x + s.b.x) / 2, (s.a.y + s.b.y) / 2, (s.a.z + s.b.z) / 2, half + Math.max(s.r0, s.r1), 1], o + 30);
@@ -248,6 +257,14 @@ function packFeatures(feats: Feature[], margin: number, shallow: boolean): Float
 function featureAt(G: Float64Array, o: number, x: number, y: number, z: number): number {
   const px = x - G[o + 8], py = y - G[o + 9], pz = z - G[o + 10];
   if (G[o + 6] === 1) return roundConeAt(px, py, pz, G[o + 11], G[o + 12], G[o + 13], G[o + 14], G[o + 15]);
+  if (G[o + 6] === 2) {
+    const a0 = px * G[o + 11] + py * G[o + 12] + pz * G[o + 13], a1 = px * G[o + 14] + py * G[o + 15] + pz * G[o + 16];
+    const b0 = px * G[o + 20] + py * G[o + 21] + pz * G[o + 22], b1 = px * G[o + 23] + py * G[o + 24] + pz * G[o + 25];
+    const across = Math.abs(px * G[o + 17] + py * G[o + 18] + pz * G[o + 19]) - G[o + 26];
+    const k1 = Math.sqrt(b0 * b0 + b1 * b1), k0 = Math.sqrt(a0 * a0 + a1 * a1);
+    const e = k1 < 1e-12 ? -G[o + 29] * G[o + 35] : k0 < 1 ? ((k0 * (k0 - 1)) / k1) * G[o + 35] : (k0 * (k0 - 1)) / k1;
+    return Math.max(e, across);
+  }
   const a0 = px * G[o + 11] + py * G[o + 12] + pz * G[o + 13];
   const a1 = px * G[o + 14] + py * G[o + 15] + pz * G[o + 16];
   const a2 = px * G[o + 17] + py * G[o + 18] + pz * G[o + 19];

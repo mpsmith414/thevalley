@@ -130,7 +130,7 @@ describe('body anatomy', () => {
 
   it('features change the body only inside their reach boxes', () => {
     const { sk, a } = anat(fox);
-    const plain = bodySdf(sk), full = bodySdf(sk, { features: a.features, slim: new Float32Array(sk.bones.length).fill(1) });
+    const plain = bodySdf(sk), full = bodySdf(sk, { features: a.features, slim: new Float32Array(sk.bones.length).fill(1), mouth: null });
     const inAny = (x: number, y: number, z: number) => a.features.some((f: Feature) =>
       f.op !== 'mark' && x >= f.min.x - 0.03 && y >= f.min.y - 0.03 && z >= f.min.z - 0.03 && x <= f.max.x + 0.03 && y <= f.max.y + 0.03 && z <= f.max.z + 0.03);
     let changed = 0;
@@ -146,7 +146,7 @@ describe('body anatomy', () => {
 
   it('evaluates each feature as shapeSdf does, adds then carves', () => {
     const { sk, a } = anat(fox);
-    const plain = bodySdf(sk, { features: [], slim: a.slim }, 1e3), full = bodySdf(sk, a, 1e3); // margin 1e3: nothing is culled
+    const plain = bodySdf(sk, { features: [], slim: a.slim, mouth: null }, 1e3), full = bodySdf(sk, a, 1e3); // margin 1e3: nothing is culled
     const ordered = [...a.features.filter((f) => f.op === 'add'), ...a.features.filter((f) => f.op === 'carve')];
     for (let i = 0; i < 2000; i++) {
       const f = (j: number) => ((i * 7919 + j * 104729) % 1000) / 1000;
@@ -186,7 +186,7 @@ describe('body anatomy', () => {
     // one add ellipsoid (4 : 1) far from every bone, so the body SDF there is the ellipsoid alone
     const sk = buildSkeleton(blob), c = v3(10, 0, 0), r = v3(0.4, 0.1, 0.15);
     const shape = { type: 'ellipsoid' as const, c, ax: [v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)] as [Vec3, Vec3, Vec3], r };
-    const a = { features: [feature('add', shape, 0.01)], slim: new Float32Array(sk.bones.length).fill(1) };
+    const a = { features: [feature('add', shape, 0.01)], slim: new Float32Array(sk.bones.length).fill(1), mouth: null };
     const shallow = bodySdf(sk, a, 0.03, true), plain = bodySdf(sk, a, 0.03);
     const surface: Vec3[] = [];
     for (let i = 0; i <= 120; i++)
@@ -284,7 +284,7 @@ describe('feet', () => {
     expect(blendFor('leg', 'hooves')).toBe(0.25);
     const deer = cast('deer'), sk = buildSkeleton(deer), a = anatomy(sk, deer, FINE);
     expect(a.feet).toBe('hooves');
-    const hoofed = bodySdf(sk, { features: [], slim: a.slim, feet: 'hooves' }), soft = bodySdf(sk, { features: [], slim: a.slim, feet: 'paws' });
+    const hoofed = bodySdf(sk, { features: [], slim: a.slim, feet: 'hooves', mouth: null }), soft = bodySdf(sk, { features: [], slim: a.slim, feet: 'paws', mouth: null });
     let higher = 0;
     for (const b of sk.bones.filter((g) => g.role === 'foot'))
       for (let i = 0; i < 40; i++) {
