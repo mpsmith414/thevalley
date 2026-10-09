@@ -1,4 +1,4 @@
-import { NeutralToneMapping, PerspectiveCamera, Scene } from 'three/webgpu';
+import { NeutralToneMapping, PerspectiveCamera, Scene, type WebGPURenderer } from 'three/webgpu';
 import { BuilderClient } from '../builder/client';
 import { FreeFly, intentFrom, toggleDown, type FlyIntent } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
@@ -73,7 +73,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   CAST.forEach((c) => void builder.build(c.recipe).catch(() => {}));
   const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256), loadFlowerCards(tier === 'high' ? 256 : 128)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
-    createRenderer(canvas, tier).then((r) => (performance.mark('valley-renderer'), r)),
+    createRenderer(canvas, tier).then((r) => (watchDeviceLoss(r.renderer), performance.mark('valley-renderer'), r)),
     loadValley(VALLEY, DEFAULT_GRID, step).then((r) => (performance.mark('valley-loaded'), r)),
   ]);
   // Neutral, not the Lab's AgX: AgX greyed the valley's greens and blues and, with the haze on top, washed the middle distance
@@ -367,12 +367,28 @@ function run(w: World, pace: Pacing) {
 
 // ---------- start ----------
 const loading = openLoading(ui);
+let loadingOpen = true, failed = false;
+/** The friendly failure screen with "Try again" (on the loading screen, or a new one once that has gone), shown once. */
+const fail = (message: string) => {
+  if (failed) return;
+  failed = true;
+  (loadingOpen ? loading : openLoading(ui)).fail(message);
+};
+/** The GPU went away (a driver reset, the GPU process crashing): stop drawing and offer to try again. */
+function watchDeviceLoss(renderer: WebGPURenderer) {
+  const report = renderer.onDeviceLost.bind(renderer);
+  renderer.onDeviceLost = (info) => {
+    report(info);
+    void renderer.setAnimationLoop(null);
+    fail('The picture got stuck for a moment. Shall we try again?');
+  };
+}
 let world: World | null = null;
 try {
   world = await start(loading.step, loading.say);
 } catch (e) {
   console.error('the valley could not start', e);
-  loading.fail('The valley got a bit tangled while we were making it. Shall we try again?');
+  fail('The valley got a bit tangled while we were making it. Shall we try again?');
 }
 if (world) {
   const w = world;
@@ -383,6 +399,7 @@ if (world) {
   if (import.meta.env.DEV) (await import('./dev')).devHooks(w, pace, loop, { canvas, ui, tier, quality });
   run(w, pace);
   loading.close();
+  loadingOpen = false;
   const animals = w.compileRest().catch((e) => console.error('the plants or the animals could not compile', e));
   if (w.audio) await openStart(ui, w.audio); // one press wakes the sound (skipped when the browser already lets it play)
   w.release();
