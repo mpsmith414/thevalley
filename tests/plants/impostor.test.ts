@@ -159,16 +159,18 @@ describe('packImpostors', () => {
   it('keeps each tree where it stands, at its own height, and records its atlas row', () => {
     const { data, count } = packImpostors([tiles[0]], PLANT_KINDS.map(() => 1), heights);
     const src = tiles[0].plants;
-    // the trees of tile 0, in order: plant i is a pine (i % 3 == 0) or a birch (i % 3 == 2)
+    // the trees of tile 0: plant i is a pine (i % 3 == 0) or a birch (i % 3 == 2); find each by its (unique) x
     const trees = Array.from({ length: 300 }, (_, i) => i).filter((i) => i % 3 !== 1);
     expect(count).toBe(trees.length);
-    trees.forEach((i, n) => {
-      const s = i * INSTANCE_STRIDE, at = n * GPU_STRIDE, k = src.kind[i], v = src.variant[i];
+    const byX = new Map(Array.from({ length: count }, (_, n) => [data[n * GPU_STRIDE], n * GPU_STRIDE]));
+    for (const i of trees) {
+      const s = i * INSTANCE_STRIDE, at = byX.get(src.data[s])!, k = src.kind[i], v = src.variant[i];
+      expect(at).toBeDefined();
       for (const f of [0, 1, 2, 3, 5, 6, 7]) expect(data[at + f]).toBe(src.data[s + f]); // x, y, z, yaw, lean, tint
       const baked = [1, 1, 3, 3, 5, 5][v];
       const height = data[at + 4] * heights[k * VARIANTS + baked];
       expect(height).toBeCloseTo(src.data[s + 4] * heights[k * VARIANTS + v], 4); // rescaled to keep its own height
       expect(data[at + 11]).toBe(impostorRow(k, v));
-    });
+    }
   });
 });

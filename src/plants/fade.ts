@@ -11,7 +11,10 @@ import type { WorldQuality } from '../world/quality';
 /** Metres over which a tree cross-fades from its mid mesh to its impostor, ending at `midTree`. */
 export const FADE = 10;
 
-/** The impostor's share (0..1) of a tree `distance` metres from the camera: 0 before `midTree − FADE`, 1 from `midTree`. */
+/**
+ * The impostor's share (0..1) of a tree `distance` metres from the camera: 0 before `midTree − FADE`, 1 from `midTree`.
+ * CPU twin of `farFadeNode` below (used by the mid leaves' mask, the mid bark's fold and the impostors): change them together.
+ */
 export const farFade = (distance: number, q: Pick<WorldQuality, 'midTree'>): number =>
   Math.min(1, Math.max(0, (distance - (q.midTree - FADE)) / FADE));
 

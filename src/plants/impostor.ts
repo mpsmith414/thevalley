@@ -21,8 +21,8 @@ import {
   vec2, vec3, vec4,
 } from 'three/tsl';
 import type { WorldQuality } from '../world/quality';
-import { GPU_STRIDE, MID_VARIANTS, thinned } from '../world/tiles';
-import { INSTANCE_STRIDE, type TileData, type ValleyData } from '../valley/types';
+import { GPU_STRIDE, MID_VARIANTS, collectInstances } from '../world/tiles';
+import type { TileData, ValleyData } from '../valley/types';
 import { bayer4Node, farFadeNode, FADE } from './fade';
 import { tinted, withKind, type PlantMaterial, type PlantMaterials } from './material';
 import type { PlantModelSet } from './generator';
@@ -52,6 +52,7 @@ export const impostorRow = (kind: number, variant: number): number =>
  * The two baked views to blend for a camera at azimuth `cameraAngle` (radians, `atan2(dx, dz)` of the direction from the
  * tree to the camera) of a tree turned by `instanceYaw`: view `a` (the one at or before the angle, in the model's frame),
  * `b` (the next one round) and how far (0..1) the angle is from `a` to `b`.
+ * CPU twin of the vertex shader's `turn`, `f`, `a`, `b`, `t` in `createImpostorLayer`: change them together.
  */
 export function viewIndex(cameraAngle: number, instanceYaw: number, views = IMPOSTOR_VIEWS): { a: number; b: number; t: number } {
   const turn = (cameraAngle - instanceYaw) / (2 * Math.PI);
@@ -61,7 +62,10 @@ export function viewIndex(cameraAngle: number, instanceYaw: number, views = IMPO
   return { a, b: (a + 1) % views, t: f - Math.floor(f) };
 }
 
-/** Whether a tree `distance` metres from the camera has its impostor drawn: from `midTree − FADE` out to `viewDistance`. */
+/**
+ * Whether a tree `distance` metres from the camera has its impostor drawn: from `midTree − FADE` out to `viewDistance`.
+ * CPU twin of the vertex shader's `shown` in `createImpostorLayer` (`fade.start` is midTree − FADE): change them together.
+ */
 export const impostorVisible = (distance: number, q: Pick<WorldQuality, 'midTree' | 'viewDistance'>): boolean =>
   distance >= q.midTree - FADE && distance <= q.viewDistance;
 
@@ -89,32 +93,24 @@ export function viewFrame(positions: Float32Array, views = IMPOSTOR_VIEWS, eleva
 export type ViewFrame = ReturnType<typeof viewFrame>;
 
 /**
- * Every tree of the valley, thinned by `density` (per kind, as the tiles thin), packed `GPU_STRIDE` floats each like the
- * tiles' instances (x, y, z, yaw · scale, leanX, leanZ, tint · age, health, phase, row), in tile order. Each tree is drawn
- * with its baked model (`impostorRow`), its scale changed to keep its own height (`heights`: per model).
+ * Every tree of the valley, thinned by `density` (per kind), packed `GPU_STRIDE` floats each with the atlas row in the last
+ * (x, y, z, yaw · scale, leanX, leanZ, tint · age, health, phase, row), model by model. The instances come from the tiles'
+ * own `collectInstances`, folded onto the baked variants (`MID_VARIANTS`) as the mid band folds them, so the mid trees and
+ * their impostors are the same trees, thinned and rescaled (to keep each tree's own height, `heights`: per model) by one
+ * rule. (The phase is part of that shared layout; the impostors do not read it.)
  */
 export function packImpostors(tiles: readonly TileData[], density: readonly number[], heights: readonly number[]) {
-  const isTree = PLANT_KINDS.map((k) => TREE_KINDS.includes(k));
-  let count = 0;
-  for (const t of tiles) for (let i = 0; i < t.plants.kind.length; i++) {
-    const k = t.plants.kind[i];
-    if (isTree[k] && !thinned(t.plants.data[i * INSTANCE_STRIDE + 7], i, density[k])) count++;
-  }
-  const data = new Float32Array(count * GPU_STRIDE);
-  let n = 0;
-  for (const t of tiles) {
-    const { kind, variant, data: src } = t.plants;
-    for (let i = 0; i < kind.length; i++) {
-      const k = kind[i], s = i * INSTANCE_STRIDE;
-      if (!isTree[k] || thinned(src[s + 7], i, density[k])) continue;
-      const at = n++ * GPU_STRIDE;
-      for (let f = 0; f < INSTANCE_STRIDE; f++) data[at + f] = src[s + f];
-      const ph = src[s] * 0.1317 + src[s + 2] * 0.2713;
-      data[at + INSTANCE_STRIDE] = (ph - Math.floor(ph)) * 2 * Math.PI;
-      data[at + 4] *= heights[k * VARIANTS + variant[i]] / heights[k * VARIANTS + MID_VARIANTS[variant[i]]];
-      data[at + 11] = impostorRow(k, variant[i]);
-    }
-  }
+  const kinds = TREE_KINDS.map((k) => PLANT_KINDS.indexOf(k));
+  const buckets = collectInstances(tiles, tiles.map(() => 'far'), 'far', { kinds, density, heights, remap: MID_VARIANTS });
+  const count = buckets.reduce((n, b) => n + b.count, 0), data = new Float32Array(count * GPU_STRIDE);
+  let at = 0;
+  buckets.forEach((b, m) => {
+    if (!b.count) return;
+    const row = impostorRow(Math.floor(m / VARIANTS), m % VARIANTS);
+    data.set(b.data.subarray(0, b.count * GPU_STRIDE), at);
+    for (let i = 0; i < b.count; i++) data[at + i * GPU_STRIDE + 11] = row; // the model height's slot: the atlas row
+    at += b.count * GPU_STRIDE;
+  });
   return { data, count };
 }
 
@@ -230,6 +226,10 @@ export async function bakeImpostors(renderer: WebGPURenderer, models: PlantModel
       }
       scene.remove(...row.meshes);
     });
+  } catch (e) {
+    atlasA.dispose();
+    atlasN.dispose();
+    throw e;
   } finally {
     renderer.setRenderTarget(target);
     renderer.setClearColor(clear, alpha);
