@@ -20,7 +20,7 @@ export const nearReach = (cell: number, block = 4): number => 1.25 * 0.5 * cell 
  * blocks near the surface plus the neighbours their cells read. The padded origin is min - 2 coarse cells.
  * Precondition on `coarse` (defaults to `sdf`): any point within `nearReach(cell, block)` of the surface
  * must read |coarse| <= that reach, i.e. it must not overestimate distance there. A culling SDF such as
- * `bodySdf` does, so pass `coarse = bodySdf(sk, nearReach(cell, block) + 0.03)`.
+ * `bodySdf` does, so pass `coarse = bodySdf(sk, anat, nearReach(cell, block) + 0.03)` (`coarseBodySdf`).
  */
 export function sampleSparse(sdf: Sdf, min: Vec3, max: Vec3, cell: number, block = 4, coarse: Sdf = sdf): SparseField {
   const C = cell * block, B = block, B3 = B * B * B;

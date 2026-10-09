@@ -1,5 +1,7 @@
 import type { FlatFacing, Role } from '../recipe/schema';
 import { cross, dot, norm, scale, sub, v3, type Vec3 } from '../util/vec';
+import type { Anatomy } from './anatomy';
+import type { Feature } from './anatomy/shapes';
 import type { BoneDef, Skeleton } from './skeleton';
 import { nearReach } from './sparse';
 
@@ -12,7 +14,7 @@ export function roundCone(p: Vec3, a: Vec3, b: Vec3, r1: number, r2: number): nu
 }
 
 /** `roundCone` for p − a = (ax, ay, az) and b − a = (bx, by, bz), without allocating (it runs millions of times per body). */
-function roundConeAt(ax: number, ay: number, az: number, bx: number, by: number, bz: number, r1: number, r2: number): number {
+export function roundConeAt(ax: number, ay: number, az: number, bx: number, by: number, bz: number, r1: number, r2: number): number {
   const l2 = bx * bx + by * by + bz * bz;
   if (l2 < 1e-12) return Math.hypot(ax, ay, az) - Math.max(r1, r2);
   const rr = r1 - r2;
@@ -87,12 +89,17 @@ export function boneSdfAt(x: number, y: number, z: number, b: BoneDef, thin: Vec
  */
 const STRIDE = 22;
 
-/** The whole body as one distance function: bones blended in tree order. Eyes are separate meshes. */
-export function bodySdf(sk: Skeleton, margin = 0.03): (x: number, y: number, z: number) => number {
-  const list = sk.bones.filter((b) => b.role !== 'eye');
+/**
+ * The whole body as one distance function: bones blended in tree order (radii scaled by `anat.slim`), then
+ * the anatomy's `add` features (smooth union), then its `carve`s (smooth subtraction); marks change no shape.
+ * Eyes are separate meshes. Bones and features are skipped outside their reach boxes grown by `margin`.
+ */
+export function bodySdf(sk: Skeleton, anat?: Anatomy, margin = 0.03): (x: number, y: number, z: number) => number {
+  const bones = anat ? sk.bones.map((b, i) => (anat.slim[i] === 1 ? b : { ...b, r0: b.r0 * anat.slim[i], r1: b.r1 * anat.slim[i] })) : sk.bones;
+  const list = bones.filter((b) => b.role !== 'eye');
   const n = list.length, F = new Float64Array(n * STRIDE);
   list.forEach((b, i) => {
-    const par = b.parent >= 0 ? sk.bones[b.parent] : null;
+    const par = b.parent >= 0 ? bones[b.parent] : null;
     const joint = par ? Math.min(b.r0, Math.max(par.r0, par.r1)) : 0;
     const k = par ? blendFor(b.role) * joint : 0;
     // reach = radius + blend + a margin, so points just off the surface still see this bone exactly
@@ -106,10 +113,18 @@ export function bodySdf(sk: Skeleton, margin = 0.03): (x: number, y: number, z: 
       b.r0, tipRadius(b), b.squash, t.x, t.y, t.z, k, Math.max(b.r0, tipRadius(b)), b.squash >= 0.999 ? 1 : b.squash, l2 > 0 ? 1 / l2 : 0,
     ], i * STRIDE);
   });
+  const feats = anat ? [...anat.features.filter((f) => f.op === 'add'), ...anat.features.filter((f) => f.op === 'carve')] : [];
+  const adds = feats.filter((f) => f.op === 'add').length, G = packFeatures(feats, margin);
+  // a coarse grid of the boxes that touch each cell; the root bone is always in (it starts the fold)
+  const grid = boxGrid([F, G], [STRIDE, FSTRIDE], [n, feats.length]);
+  const { x0, y0, z0, inv, nx, ny, nz, outside } = grid, [bs, bi] = grid.lists[0], [fs, fi] = grid.lists[1];
   const far = 1e3;
   return (x, y, z) => {
     let d = far;
-    for (let o = 0; o < n * STRIDE; o += STRIDE) {
+    const gx = Math.floor((x - x0) * inv), gy = Math.floor((y - y0) * inv), gz = Math.floor((z - z0) * inv);
+    const c = gx < 0 || gy < 0 || gz < 0 || gx >= nx || gy >= ny || gz >= nz ? outside : gx + nx * (gy + ny * gz);
+    for (let e = bs[c], end = bs[c + 1]; e < end; e++) {
+      const o = bi[e] * STRIDE;
       if (d < far) {
         // outside this bone's reach: it can't lower d below the box distance, skip unless d is still "far"
         if (x < F[o] || y < F[o + 1] || z < F[o + 2] || x > F[o + 3] || y > F[o + 4] || z > F[o + 5]) continue;
@@ -136,12 +151,114 @@ export function bodySdf(sk: Skeleton, margin = 0.03): (x: number, y: number, z: 
       }
       d = d >= far ? v : smin(d, v, F[o + 18]);
     }
+    for (let e = fs[c], end = fs[c + 1]; e < end; e++) {
+      const i = fi[e], o = i * FSTRIDE;
+      // outside its box an add is at least margin + k away (cannot lower d near the surface), a carve likewise cannot raise it
+      if (x < G[o] || y < G[o + 1] || z < G[o + 2] || x > G[o + 3] || y > G[o + 4] || z > G[o + 5]) continue;
+      // exact skip: the blend returns d unchanged when the feature's distance is ≥ t (add: d + k, carve: k − d), and that
+      // distance is at least (D − R)/q outside its bounding sphere and D − R inside (D = |p − centre|, R its radius, q = R/rmin)
+      const k = G[o + 7], t = i < adds ? d + k : k - d;
+      const lim = G[o + 33] + (t > 0 ? t * G[o + 34] : t);
+      if (lim <= 0) continue;
+      const sx = x - G[o + 30], sy = y - G[o + 31], sz = z - G[o + 32];
+      if (sx * sx + sy * sy + sz * sz >= lim * lim) continue;
+      const v = featureAt(G, o, x, y, z);
+      d = i < adds ? smin(d, v, k) : -smin(-d, v, k);
+    }
     return d;
   };
 }
 
 /**
- * The body SDF for a sparse sampler's coarse lattice at fine cell `cell`: its bone-box cull widened by the
- * near reach, so a coarse corner near a thin part never misses that part (see `sampleSparse`).
+ * A uniform grid (about GRID_CELLS along the longest side) over the boxes of packed bones and features (each box
+ * at the start of its stride): per cell, in order, the indices of the boxes that overlap it, as offsets (`lists[g][0]`)
+ * into indices (`lists[g][1]`). Cell `outside` (the last) lists only bone 0 (the root), for points off the grid.
+ * Box tests stay in bodySdf, so the grid only removes boxes that would be skipped anyway.
  */
-export const coarseBodySdf = (sk: Skeleton, cell: number, block = 4) => bodySdf(sk, nearReach(cell, block) + 0.03);
+const GRID_CELLS = 24;
+
+function boxGrid(packs: Float64Array[], strides: number[], counts: number[]) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  packs.forEach((P, g) => {
+    for (let o = 0; o < counts[g] * strides[g]; o += strides[g]) {
+      x0 = Math.min(x0, P[o]); y0 = Math.min(y0, P[o + 1]); z0 = Math.min(z0, P[o + 2]);
+      x1 = Math.max(x1, P[o + 3]); y1 = Math.max(y1, P[o + 4]); z1 = Math.max(z1, P[o + 5]);
+    }
+  });
+  const size = Math.max(x1 - x0, y1 - y0, z1 - z0, 1e-6) / GRID_CELLS, inv = 1 / size;
+  // floor + 1: a point on the far face of the union box still lands in a cell
+  const nx = Math.floor((x1 - x0) * inv) + 1, ny = Math.floor((y1 - y0) * inv) + 1, nz = Math.floor((z1 - z0) * inv) + 1;
+  const outside = nx * ny * nz;
+  const lists = packs.map((P, g) => {
+    const cells: number[][] = Array.from({ length: outside + 1 }, () => []);
+    for (let i = 0; i < counts[g]; i++) {
+      const o = i * strides[g];
+      const cl = (v: number, m: number) => Math.min(m - 1, Math.max(0, Math.floor(v)));
+      const ia = cl((P[o] - x0) * inv, nx), ib = cl((P[o + 3] - x0) * inv, nx);
+      const ja = cl((P[o + 1] - y0) * inv, ny), jb = cl((P[o + 4] - y0) * inv, ny);
+      const ka = cl((P[o + 2] - z0) * inv, nz), kb = cl((P[o + 5] - z0) * inv, nz);
+      for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let ii = 0; ii < nx; ii++) {
+        // bone 0 everywhere: while d is still "far" the first bone is evaluated whatever its box
+        if ((g === 0 && i === 0) || (ii >= ia && ii <= ib && j >= ja && j <= jb && k >= ka && k <= kb)) cells[ii + nx * (j + ny * k)].push(i);
+      }
+    }
+    if (g === 0 && counts[0] > 0) cells[outside].push(0);
+    const start = new Int32Array(outside + 2);
+    cells.forEach((c, n) => (start[n + 1] = start[n] + c.length));
+    return [start, Int32Array.from(cells.flat())] as const;
+  });
+  return { x0, y0, z0, inv, nx, ny, nz, outside, lists };
+}
+
+/**
+ * Per-feature floats bodySdf reads: box min/max (grown by the margin), type (0 ellipsoid, 1 cone), blend k, then
+ * ellipsoid: centre, the axes divided by their radii, the axes divided by their radii squared, the smallest radius;
+ * cone: start, end − start, r0, r1; then a bounding sphere's centre and radius R, and R / the smallest radius
+ * (from 30; the ellipsoid bound is ≥ rmin·(k0 − 1) ≥ (D − R)·rmin/R outside, ≥ D − R inside).
+ */
+const FSTRIDE = 35;
+
+function packFeatures(feats: Feature[], margin: number): Float64Array {
+  const G = new Float64Array(feats.length * FSTRIDE);
+  feats.forEach((f, i) => {
+    const o = i * FSTRIDE, s = f.shape;
+    G.set([f.min.x - margin, f.min.y - margin, f.min.z - margin, f.max.x + margin, f.max.y + margin, f.max.z + margin, s.type === 'cone' ? 1 : 0, f.k], o);
+    if (s.type === 'cone') {
+      G.set([s.a.x, s.a.y, s.a.z, s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z, s.r0, s.r1], o + 8);
+      const half = 0.5 * Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z);
+      G.set([(s.a.x + s.b.x) / 2, (s.a.y + s.b.y) / 2, (s.a.z + s.b.z) / 2, half + Math.max(s.r0, s.r1), 1], o + 30);
+    } else {
+      const r = [s.r.x, s.r.y, s.r.z];
+      G.set([s.c.x, s.c.y, s.c.z], o + 8);
+      s.ax.forEach((a, j) => {
+        G.set([a.x / r[j], a.y / r[j], a.z / r[j]], o + 11 + 3 * j);
+        G.set([a.x / r[j] ** 2, a.y / r[j] ** 2, a.z / r[j] ** 2], o + 20 + 3 * j);
+      });
+      G[o + 29] = Math.min(...r);
+      G.set([s.c.x, s.c.y, s.c.z, Math.max(...r), Math.max(...r) / Math.min(...r)], o + 30);
+    }
+  });
+  return G;
+}
+
+/** One packed feature's distance at (x, y, z), without allocating (the ellipsoid bound of `shapeSdf`). */
+function featureAt(G: Float64Array, o: number, x: number, y: number, z: number): number {
+  const px = x - G[o + 8], py = y - G[o + 9], pz = z - G[o + 10];
+  if (G[o + 6] === 1) return roundConeAt(px, py, pz, G[o + 11], G[o + 12], G[o + 13], G[o + 14], G[o + 15]);
+  const a0 = px * G[o + 11] + py * G[o + 12] + pz * G[o + 13];
+  const a1 = px * G[o + 14] + py * G[o + 15] + pz * G[o + 16];
+  const a2 = px * G[o + 17] + py * G[o + 18] + pz * G[o + 19];
+  const b0 = px * G[o + 20] + py * G[o + 21] + pz * G[o + 22];
+  const b1 = px * G[o + 23] + py * G[o + 24] + pz * G[o + 25];
+  const b2 = px * G[o + 26] + py * G[o + 27] + pz * G[o + 28];
+  const k1 = Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2);
+  if (k1 < 1e-12) return -G[o + 29];
+  const k0 = Math.sqrt(a0 * a0 + a1 * a1 + a2 * a2);
+  return (k0 * (k0 - 1)) / k1;
+}
+
+/**
+ * The body SDF for a sparse sampler's coarse lattice at fine cell `cell`: its bone and feature box culls widened
+ * by the near reach, so a coarse corner near a thin part or a feature never misses it (see `sampleSparse`).
+ */
+export const coarseBodySdf = (sk: Skeleton, anat: Anatomy | undefined, cell: number, block = 4) => bodySdf(sk, anat, nearReach(cell, block) + 0.03);

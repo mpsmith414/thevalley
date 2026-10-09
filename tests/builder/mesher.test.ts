@@ -86,7 +86,7 @@ describe('splitNonManifold', () => {
   it('leaves no crowded edge on a thin-finned body', () => {
     const sk = buildSkeleton(CAST.find((c) => c.recipe.id === 'trout')!.recipe); // fins one cell thick: dozens of crowded edges
     const cell = Math.max(sk.max.x - sk.min.x, sk.max.y - sk.min.y, sk.max.z - sk.min.z) / 330;
-    const raw = surfaceNetsSparse(sampleSparse(bodySdf(sk), sk.min, sk.max, cell, 4, coarseBodySdf(sk, cell)));
+    const raw = surfaceNetsSparse(sampleSparse(bodySdf(sk), sk.min, sk.max, cell, 4, coarseBodySdf(sk, undefined, cell)));
     const crowded = (m: typeof raw) => [...topology({ ...m, normals: new Float32Array() }).edges.values()].filter((c) => c !== 2).length;
     expect(crowded(raw)).toBeGreaterThan(0);
     expect(crowded(splitNonManifold(raw))).toBe(0);

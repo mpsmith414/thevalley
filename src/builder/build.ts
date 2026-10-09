@@ -2,6 +2,7 @@ import type { Recipe } from '../recipe/schema';
 import { hash } from '../util/hash';
 import { mulberry32 } from '../util/rng';
 import type { Vec3 } from '../util/vec';
+import { anatomy, anatomyBounds, type Anatomy } from './anatomy';
 import { importance } from './importance';
 import { splitNonManifold, surfaceNetsSparse, type MeshData, type Sdf } from './mesher';
 import { bodySdf, coarseBodySdf } from './sdf';
@@ -28,10 +29,13 @@ export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify
 export const bodyKey = (recipe: Recipe) =>
   hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id)) + hash([recipe.build, recipe.face.nose, recipe.face.brow, recipe.skin.eyes.size]);
 
-/** Fine cell for a body: FINE_CELLS along its longest side, coarser when the surface would exceed MAX_RAW_VERTICES. */
-function fineCell(sk: Skeleton, sdf: Sdf, longest: number): number {
-  const c = longest / ESTIMATE_CELLS;
-  const n = surfaceNetsSparse(sampleSparse(sdf, sk.min, sk.max, c, 4, coarseBodySdf(sk, c))).positions.length / 3;
+/**
+ * Fine cell for a body: FINE_CELLS along its longest side, coarser when the surface would exceed MAX_RAW_VERTICES.
+ * The estimate meshes `sdf`, the body with its anatomy at the finest detail, so the features' area counts too.
+ */
+function fineCell(sk: Skeleton, sdf: Sdf, anat: Anatomy, longest: number): number {
+  const c = longest / ESTIMATE_CELLS, { min, max } = anatomyBounds(sk, anat);
+  const n = surfaceNetsSparse(sampleSparse(sdf, min, max, c, 4, coarseBodySdf(sk, anat, c))).positions.length / 3;
   return Math.max(longest / FINE_CELLS, c * Math.sqrt(n / MAX_RAW_VERTICES)); // vertices scale as 1 / cell²
 }
 
@@ -101,12 +105,15 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
   const lap = (k: keyof BuildTimes) => { const now = performance.now(); if (times) times[k] += now - t; t = now; };
   const skeleton = buildSkeleton(recipe);
   const regions = recipe.skin.regions.map((r) => r.id);
-  const sdf = bodySdf(skeleton);
-  const { min, max } = skeleton;
-  const longest = Math.max(max.x - min.x, max.y - min.y, max.z - min.z);
+  const longest = Math.max(skeleton.max.x - skeleton.min.x, skeleton.max.y - skeleton.min.y, skeleton.max.z - skeleton.min.z);
 
-  const fine = fineCell(skeleton, sdf, longest);
-  const field = sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, fine));
+  // anatomy at the finest detail for the estimate; rebuilt at the chosen cell when the vertex cap coarsens it
+  const finest = anatomy(skeleton, recipe, { cell: longest / FINE_CELLS });
+  const fine = fineCell(skeleton, bodySdf(skeleton, finest), finest, longest);
+  const anat = fine === longest / FINE_CELLS ? finest : anatomy(skeleton, recipe, { cell: fine });
+  const sdf = bodySdf(skeleton, anat);
+  const { min, max } = anatomyBounds(skeleton, anat);
+  const field = sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, anat, fine));
   lap('sample');
   const raw = splitNonManifold(surfaceNetsSparse(field));
   const rawVertices = raw.positions.length / 3;

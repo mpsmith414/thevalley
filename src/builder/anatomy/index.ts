@@ -1,0 +1,27 @@
+import type { Recipe } from '../../recipe/schema';
+import { v3, type Vec3 } from '../../util/vec';
+import type { Skeleton } from '../skeleton';
+import { bodyFeatures, slimLowerLegs } from './body';
+import type { Feature } from './shapes';
+
+/** How fine the body is meshed: features smaller than about two cells are skipped. */
+export type Detail = { cell: number };
+
+/** The anatomy layer: extra shapes blended into the bones' SDF, and a radius scale per bone. */
+export type Anatomy = { features: Feature[]; slim: Float32Array /* per bone radius scale */ };
+
+/** Anatomy for a skeleton from its recipe's build (and, later, face) hints. Pure and deterministic. */
+export function anatomy(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin'>, detail: Detail): Anatomy {
+  return { features: bodyFeatures(sk, recipe.build, detail), slim: slimLowerLegs(sk, recipe.build) };
+}
+
+/** The body's bounds: the skeleton's, grown to hold every add feature's reach box (a haunch can stick out past the bones). */
+export function anatomyBounds(sk: Skeleton, anat: Anatomy): { min: Vec3; max: Vec3 } {
+  const min = v3(sk.min.x, sk.min.y, sk.min.z), max = v3(sk.max.x, sk.max.y, sk.max.z);
+  for (const f of anat.features) {
+    if (f.op !== 'add') continue;
+    min.x = Math.min(min.x, f.min.x); min.y = Math.min(min.y, f.min.y); min.z = Math.min(min.z, f.min.z);
+    max.x = Math.max(max.x, f.max.x); max.y = Math.max(max.y, f.max.y); max.z = Math.max(max.z, f.max.z);
+  }
+  return { min, max };
+}

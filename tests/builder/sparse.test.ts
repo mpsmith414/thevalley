@@ -45,7 +45,7 @@ describe('sparse sampling', () => {
       const { min, max } = sk;
       const cell = Math.max(max.x - min.x, max.y - min.y, max.z - min.z) / 28;
       const sdf = bodySdf(sk);
-      const coarse = coarseBodySdf(sk, cell);
+      const coarse = coarseBodySdf(sk, undefined, cell);
       const sparse = surfaceNetsSparse(sampleSparse(sdf, min, max, cell, 4, coarse));
       // dense grid on the sparse field's lattice: its origin is min - 2 coarse cells
       const lo = v3(min.x - 6 * cell, min.y - 6 * cell, min.z - 6 * cell);
