@@ -1,5 +1,5 @@
 import {
-  Bone, BufferAttribute, BufferGeometry, Color, Group, ReferenceNode, Skeleton, SkinnedMesh, Vector3, type Material,
+  Bone, BufferAttribute, BufferGeometry, Color, Group, Skeleton, SkinnedMesh, Vector3, type Material,
 } from 'three/webgpu';
 import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
@@ -9,6 +9,7 @@ import { createFurShells, furMaterial } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
 import { QUALITY, type Tier } from './quality';
+import './skinning-patch'; // equal creature materials share one shader (see there)
 
 /** The materials one species can share (its skin, and one for all its fur shells): more of a kind cost no new shaders. */
 export type CreatureLook = { skin: Material; fur: Material | null };
@@ -34,17 +35,6 @@ export type CreatureObject = {
 
 const BELLY_ROLES = new Set(['torso', 'neck', 'head', 'tail']);
 
-/**
- * three (r186) names a skinned mesh's bone-matrix buffer after the node's id, so every skinned material gets shader code of
- * its own: no two creatures (not even two of one species, or two fur shells) ever share a GPU pipeline, and each new one
- * stalls the GPU for its compile (about 10 s for a furry body on D3D12). A fixed name lets equal materials share.
- */
-type Ref = { name: string | null; property: string; setNodeType(type: string): void };
-const refProto = ReferenceNode.prototype as unknown as Ref, setNodeType = refProto.setNodeType;
-refProto.setNodeType = function (this: Ref, type: string) {
-  if (this.name === null && this.property === 'skeleton.boneMatrices') this.name = 'skinBones';
-  setNodeType.call(this, type);
-};
 
 export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
   const g = new BufferGeometry();
@@ -94,7 +84,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
   const pack = look ? null : packRegions(recipe, body.regions);
-  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!).material, fur: furMaterial(pack!) };
+  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!) };
   const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
   const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
   const meshes = body.lods.map((l) => {

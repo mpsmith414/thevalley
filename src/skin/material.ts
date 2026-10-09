@@ -87,7 +87,10 @@ export function regionNodes(pack: RegionPack) {
   };
 }
 
-/** One shared material for every creature: colour, pattern, belly and finish all come from the region uniforms. */
+/**
+ * One material for a whole species: colour, pattern, belly and finish come from the region uniforms, and each animal's
+ * tint from its objects' `userData.tint`.
+ */
 export function createSkinMaterial(pack: RegionPack) {
   const r = regionNodes(pack);
   const m = new MeshPhysicalNodeMaterial();
@@ -99,5 +102,5 @@ export function createSkinMaterial(pack: RegionPack) {
   m.clearcoatNode = r.clearcoat;
   m.clearcoatRoughnessNode = float(0.15);
   m.normalNode = bumpMap(r.height, float(0.6));
-  return { material: m, tint: r.tint };
+  return m;
 }
