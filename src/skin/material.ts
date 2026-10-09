@@ -9,6 +9,7 @@ import { COVERING_LOOK, type RegionPack } from './patterns';
 type F = ReturnType<typeof float>;
 type C = ReturnType<typeof vec3>;
 type V4 = ReturnType<typeof uniformArray>;
+const NO_TINT = new Vector3(1, 1, 1);
 
 /**
  * Region settings as six vec4 arrays (WebGPU allows 12 uniform buffers per shader stage):
@@ -21,20 +22,23 @@ export function packUniforms(pack: RegionPack) {
     return new Vector4(c.r, c.g, c.b, w);
   };
   const look = pack.covering.map((c) => COVERING_LOOK[COVERINGS[c]]);
+  // named, so equal materials (two animals of one species, the fur shells) get equal shader code and share a GPU pipeline
+  const arr = (name: string, v: Vector4[]) => uniformArray(v, 'vec4').setName(name) as V4;
   return {
-    colA: uniformArray(pack.base.map((h, i) => rgb(h, pack.hasBelly[i])), 'vec4'),
-    colB: uniformArray(pack.belly.map((h, i) => rgb(h, pack.patKind[i])), 'vec4'),
-    colC: uniformArray(pack.patColor.map((h, i) => rgb(h, pack.patScale[i])), 'vec4'),
-    parA: uniformArray(pack.patAmount.map((a, i) => new Vector4(a, pack.patAlong[i], pack.furLength[i], pack.fluff[i])), 'vec4'),
-    parB: uniformArray(look.map((l, i) => new Vector4(pack.covering[i], l.roughness, l.sheen, l.clearcoat)), 'vec4'),
-    parC: uniformArray(look.map((l) => new Vector4(l.bump, 0, 0, 0)), 'vec4'),
+    colA: arr('skinColA', pack.base.map((h, i) => rgb(h, pack.hasBelly[i]))),
+    colB: arr('skinColB', pack.belly.map((h, i) => rgb(h, pack.patKind[i]))),
+    colC: arr('skinColC', pack.patColor.map((h, i) => rgb(h, pack.patScale[i]))),
+    parA: arr('skinParA', pack.patAmount.map((a, i) => new Vector4(a, pack.patAlong[i], pack.furLength[i], pack.fluff[i]))),
+    parB: arr('skinParB', look.map((l, i) => new Vector4(pack.covering[i], l.roughness, l.sheen, l.clearcoat))),
+    parC: arr('skinParC', look.map((l) => new Vector4(l.bump, 0, 0, 0))),
   };
 }
 
 /** The colour/finish nodes every creature surface shares (skin and fur), read from the region uniforms. */
 export function regionNodes(pack: RegionPack) {
   const U = packUniforms(pack);
-  const tint = uniform(new Vector3(1, 1, 1));
+  // each animal's own colour shift is read per object (`userData.tint`), so a whole species can share one material
+  const tint = uniform(new Vector3(1, 1, 1)).onObjectUpdate(({ object }) => (object?.userData.tint as Vector3 | undefined) ?? NO_TINT);
   const info = attribute('partInfo', 'vec4');
   const i = int(info.x.add(0.5).floor());
   const at = (a: V4) => a.element(i) as unknown as ReturnType<typeof vec3> & { w: F; xyz: C };

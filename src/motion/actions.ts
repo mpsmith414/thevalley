@@ -33,6 +33,11 @@ export interface Habitat {
 
 type Step = { kind: 'go'; speed: number; fly?: boolean } | { kind: 'wait'; time: number } | { kind: 'graze'; time: number };
 
+/** How `wander` uses the air: the chance a wander is a flight, and how many laps (min, max) a flight takes. */
+export type Flight = { chance: number; laps: [number, number] };
+/** The lab's fliers: a quarter of their wanders are 3 to 5 laps in the air. */
+export const LAB_FLIGHT: Flight = { chance: 0.25, laps: [3, 5] };
+
 /**
  * Turns a chosen action into intents on the rig, step by step: where to go, how fast,
  * when to lower the head, lie down, call or take off. `wander` strings activities together.
@@ -43,7 +48,7 @@ export class ActionController {
   private timer = 0;
   private lookTimer = 0;
 
-  constructor(private rig: RigIntents, private habitat: Habitat, private rng: () => number, private opts: { shore?: boolean } = {}) {}
+  constructor(private rig: RigIntents, private habitat: Habitat, private rng: () => number, private opts: { shore?: boolean; flight?: Flight } = {}) {}
 
   set(action: Action, camera?: Vec3) {
     this.current = action;
@@ -170,9 +175,11 @@ export class ActionController {
       this.startFirst(plan);
       return plan;
     }
-    if (r.canFly && roll < 0.25) {
+    const flight = this.opts.flight ?? LAB_FLIGHT;
+    if (r.canFly && roll < flight.chance) {
       // a few laps in the air, then down again
-      const laps: Step[] = Array.from({ length: 3 + Math.floor(this.rng() * 3) }, () => ({ kind: 'go', speed: 0.8, fly: true }));
+      const [lo, hi] = flight.laps;
+      const laps: Step[] = Array.from({ length: lo + Math.floor(this.rng() * (hi - lo + 1)) }, () => ({ kind: 'go', speed: 0.8, fly: true }));
       const plan: Step[] = [...laps, { kind: 'go', speed: 0.3 }, { kind: 'wait', time: 1 }];
       this.startFirst(plan);
       return plan;

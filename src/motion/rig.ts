@@ -81,6 +81,8 @@ export class CreatureRig {
   callNow = 0;
   flying = false;
   altitude = 0;
+  /** Flying height above the ground (m); null for the lab's low hop, a couple of body lengths up. */
+  cruise: number | null = null;
   inWater = false;
   private climb = 0;
 
@@ -263,7 +265,7 @@ export class CreatureRig {
     // take off and land
     if (this.canFly && this.wantFly && !this.flying && this.sleepNow < 0.1) this.flying = true;
     if (this.flying) {
-      const cruise = this.wantFly ? 2.2 + this.bodyLength * 2 : 0;
+      const cruise = this.wantFly ? (this.cruise ?? 2.2 + this.bodyLength * 2) : 0;
       const before = this.altitude;
       this.altitude += Math.max(-1.2, Math.min(1.5, (cruise - this.altitude) * 1.2)) * dt;
       this.climb = (this.altitude - before) / Math.max(dt, 1e-6);

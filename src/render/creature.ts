@@ -1,17 +1,22 @@
 import {
-  Bone, BufferAttribute, BufferGeometry, Color, Group, Skeleton, SkinnedMesh, type Material,
+  Bone, BufferAttribute, BufferGeometry, Color, Group, ReferenceNode, Skeleton, SkinnedMesh, Vector3, type Material,
 } from 'three/webgpu';
 import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
 import { createEyes, type Eye } from '../skin/eyes';
-import { createFurShells } from '../skin/fur';
+import { createFurShells, furMaterial } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
 import { QUALITY, type Tier } from './quality';
 
+/** The materials one species can share (its skin, and one for all its fur shells): more of a kind cost no new shaders. */
+export type CreatureLook = { skin: Material; fur: Material | null };
+
 export type CreatureObject = {
   root: Group;
+  /** Its materials, to hand to the next animal of its kind. */
+  look: CreatureLook;
   /** One skinned mesh per level of detail, all sharing one skeleton. */
   meshes: SkinnedMesh<BufferGeometry, Material>[];
   bones: Bone[];
@@ -28,6 +33,18 @@ export type CreatureObject = {
 };
 
 const BELLY_ROLES = new Set(['torso', 'neck', 'head', 'tail']);
+
+/**
+ * three (r186) names a skinned mesh's bone-matrix buffer after the node's id, so every skinned material gets shader code of
+ * its own: no two creatures (not even two of one species, or two fur shells) ever share a GPU pipeline, and each new one
+ * stalls the GPU for its compile (about 10 s for a furry body on D3D12). A fixed name lets equal materials share.
+ */
+type Ref = { name: string | null; property: string; setNodeType(type: string): void };
+const refProto = ReferenceNode.prototype as unknown as Ref, setNodeType = refProto.setNodeType;
+refProto.setNodeType = function (this: Ref, type: string) {
+  if (this.name === null && this.property === 'skeleton.boneMatrices') this.name = 'skinBones';
+  setNodeType.call(this, type);
+};
 
 export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
   const g = new BufferGeometry();
@@ -52,8 +69,11 @@ export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
   return g;
 }
 
-/** A body ready for the scene: bones at their rest positions, skin bound, shadows on. */
-export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier, variation?: Variation): CreatureObject {
+/**
+ * A body ready for the scene: bones at their rest positions, skin bound, shadows on. Pass `look` (from another animal of
+ * the same recipe) to share its materials; the individual's tint is then set per object.
+ */
+export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier, variation?: Variation, look?: CreatureLook): CreatureObject {
   const defs = body.skeleton.bones;
   const bones = defs.map((d) => {
     const b = new Bone();
@@ -73,14 +93,13 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   root.add(bones[0]);
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
-  const pack = packRegions(recipe, body.regions);
-  const skin = createSkinMaterial(pack);
-  if (variation) {
-    const c = new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l);
-    skin.tint.value.set(c.r, c.g, c.b);
-  }
+  const pack = look ? null : packRegions(recipe, body.regions);
+  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!).material, fur: furMaterial(pack!) };
+  const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
+  const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
   const meshes = body.lods.map((l) => {
-    const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body), skin.material);
+    const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body), own.skin);
+    m.userData.tint = tint;
     m.castShadow = true;
     m.receiveShadow = true;
     m.frustumCulled = false; // skinned bounds move with the pose
@@ -91,15 +110,18 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   // fur on the two closer levels of detail (fewer shells on the middle one); none far away
   const shells = meshes.map((m, k) => {
     const count = k === 0 ? QUALITY[tier].furShells : k === 1 ? Math.floor(QUALITY[tier].furShells / 2) : 0;
-    const s = createFurShells(m, pack, count);
-    s.forEach((x) => root.add(x));
+    const s = createFurShells(m, own.fur, count);
+    s.forEach((x) => {
+      x.userData.tint = tint;
+      root.add(x);
+    });
     return s;
   });
   if (variation) root.scale.setScalar(variation.boneScale[0] ?? 1);
   const eyes = createEyes(body, recipe, bones);
 
   const obj: CreatureObject = {
-    root, meshes, bones, skeleton,
+    root, look: own, meshes, bones, skeleton,
     restStart: defs.map((d) => ({ ...d.start })),
     eyes,
     lod: QUALITY[tier].lod,
@@ -119,7 +141,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     },
     dispose() {
       meshes.forEach((m) => m.geometry.dispose());
-      shells.flat().forEach((s) => (s.material as Material).dispose());
+      if (!look) [own.skin, own.fur].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
       root.removeFromParent();
     },
   };

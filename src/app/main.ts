@@ -1,10 +1,13 @@
-import { NeutralToneMapping, PerspectiveCamera, Scene } from 'three/webgpu';
+import { NeutralToneMapping, PerspectiveCamera, Scene, Vector3 } from 'three/webgpu';
+import { BuilderClient } from '../builder/client';
 import { FreeFly, intentFrom, toggleDown } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { isTier, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { Input } from '../shared/input';
 import { stored } from '../shared/settings';
+import { CAST } from '../cast';
+import { CREATURE_LAYER, Residents } from '../residents/residents';
 import { loadValley } from '../valley/cache';
 import { VALLEY } from '../valley/layout';
 import { DEFAULT_GRID } from '../valley/types';
@@ -42,6 +45,9 @@ const ui = document.querySelector<HTMLElement>('#ui')!;
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
+  // the animals' bodies build in the builder's worker while the valley is made (the residents pick them up from its cache)
+  const builder = new BuilderClient();
+  CAST.forEach((c) => void builder.build(c.recipe).catch(() => {}));
   const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256), loadFlowerCards(tier === 'high' ? 256 : 128)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
     createRenderer(canvas, tier),
@@ -96,11 +102,31 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
   // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The impostors (from ~210 m) in the
   // last two (they cast on High only). The land everywhere.
-  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER, IMP = 1 << IMPOSTOR_LAYER;
+  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER, IMP = 1 << IMPOSTOR_LAYER, CREATURE = 1 << CREATURE_LAYER;
   // Mid trees in the nearest cascade cost ~1.8 ms at the forest floor for a barely visible gain (low sun only), so they
   // stay out for now; flip this on if the frame budget allows after the residents and ground cover are in.
   const MID_TREES_IN_CASCADE_0 = false;
-  sky.cascadeLayers([1 | NEAR | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | MID, 1 | MID | IMP, 1 | MID | IMP]);
+  // The animals cast in the first two, like the near plants, once their shaders are ready (see `wakeAnimals`).
+  const cascades = (animals: number) => [1 | NEAR | animals | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | animals | MID, 1 | MID | IMP, 1 | MID | IMP];
+  sky.cascadeLayers(cascades(0));
+
+  // ---------- the resident animals ----------
+  say('Waking the animals…');
+  const residents = new Residents(valley, VALLEY, builder, tier, scene);
+  await residents.spawn();
+  performance.mark('valley-animals');
+  /**
+   * The animals' shaders (about 8 s of compiling) build in the background once the valley is up, and the animals pop in
+   * when they are ready: until then neither the camera nor the shadows see their layer, so nothing compiles mid-frame.
+   */
+  const wakeAnimals = async () => {
+    const eye = camera.clone();
+    eye.layers.enable(CREATURE_LAYER);
+    await residents.compile(() => renderer.compileAsync(residents.object, eye, scene));
+    camera.layers.enable(CREATURE_LAYER);
+    sky.cascadeLayers(cascades(CREATURE));
+    performance.mark('valley-animals-shown');
+  };
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
@@ -203,6 +229,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     setWind(windU, wind);
     veg.update(camera, dt);
     cover.update(camera);
+    residents.update(dt, camera, clock.hour);
     light(dt);
   };
   tick(0);
@@ -211,7 +238,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   await veg.compile(() => cover.compile(() => renderer.compileAsync(scene, camera))); // every plant material, not just those in view now
   performance.mark('valley-ready');
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants, bake, impostors, cover };
+    wind, veg, plants, bake, impostors, cover, residents, wakeAnimals };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -314,11 +341,32 @@ function devHooks(w: World) {
         await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: sheet.toDataURL('image/png') });
         return name;
       },
+      /** The residents themselves (`residents` below lists them as plain data). */
+      animals: w.residents,
+      /** Each resident animal: species, position, action and update band. */
+      get residents() {
+        return w.residents.info();
+      },
+      /** Frame the camera on resident `i`, `dist` m away (by default a few body lengths), `turn` radians round from its left side. */
+      lookAt: (i: number, dist?: number, turn = 0.5, rise = 0.25) => {
+        const a = w.residents.animals[i];
+        if (!a) return null;
+        const size = a.recipe.life.sizeM, root = a.obj.root.position;
+        const c = new Vector3(root.x, root.y + size * 0.35, root.z), r = dist ?? Math.max(1.6, size * 2.6);
+        const dir = a.rig.yaw + Math.PI / 2 + turn;
+        const p = new Vector3(c.x + Math.sin(dir) * r, c.y + r * rise, c.z + Math.cos(dir) * r);
+        const floor = w.valley.isWater(p.x, p.z) ? w.valley.waterLevelAt(p.x, p.z) : w.valley.heightAt(p.x, p.z);
+        p.y = Math.max(p.y, floor + 0.25);
+        const d = c.clone().sub(p);
+        Object.assign(w.fly, { pos: { x: p.x, y: p.y, z: p.z }, yaw: Math.atan2(-d.x, -d.z), pitch: Math.atan2(d.y, Math.hypot(d.x, d.z)), vel: { x: 0, y: 0, z: 0 }, walk: false });
+        w.fly.apply(camera);
+        return w.residents.info()[i];
+      },
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
       /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
       get timings() {
-        return { data: mark('valley-data'), ground: mark('valley-ground'), trees: mark('valley-trees'), scene: mark('valley-scene'), ready: mark('valley-ready') };
+        return { data: mark('valley-data'), ground: mark('valley-ground'), trees: mark('valley-trees'), scene: mark('valley-scene'), animals: mark('valley-animals'), ready: mark('valley-ready'), animalsShown: mark('valley-animals-shown') };
       },
     },
   });
@@ -337,5 +385,6 @@ if (world) {
   if (import.meta.env.DEV) devHooks(world);
   run(world);
   loading.close();
+  world.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
   if (world.cached) toast(ui, 'Welcome back!');
 }
