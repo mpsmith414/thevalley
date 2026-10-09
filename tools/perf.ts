@@ -12,7 +12,7 @@ for (const recipe of all) {
   const t0 = performance.now();
   const lod0 = buildBody(recipe, [0]);
   const t1 = performance.now();
-  const times: BuildTimes = { sample: 0, mesh: 0, weigh: 0, simplify: 0, snap: 0, skin: 0, rawVertices: 0 };
+  const times: BuildTimes = { sample: 0, mesh: 0, weigh: 0, simplify: 0, snap: 0, skin: 0, rawVertices: 0, maxSnap: 0 };
   const full = buildBody(recipe, [0, 1, 2], times);
   const t2 = performance.now();
   const tris = full.lods.map((l) => l.indices.length / 3).join(' / ');

@@ -190,12 +190,13 @@ export function splitNonManifold(m: { positions: Float32Array; indices: Uint32Ar
   const fan = new Int32Array(idx.length), fill = start.slice(0, n);
   for (let i = 0; i < idx.length; i++) fan[fill[idx[i]]++] = (i / 3) | 0;
 
-  const room = n + idx.length / 3; // vertices plus room for copies
+  // vertices plus room for copies: a split vertex gets at most (its triangles − 1) copies, so never more than 3 per triangle
+  const room = n + idx.length;
   const mark = new Int32Array(room).fill(-1), cnt = new Int32Array(room), seen = new Int32Array(room).fill(-1);
   const extra: number[] = []; // source vertex of each copy
   const src = (x: number) => (x < n ? x : extra[x - n]);
   let out: Uint32Array | null = null;
-  const parent = new Int32Array(64);
+  let parent = new Int32Array(32); // union-find over one vertex's triangles; grows for a busier vertex
   const find = (i: number): number => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
   const join = (i: number, j: number) => { parent[find(j)] = find(i); };
   const around: { i: number; angle: number; inward: boolean }[] = [];
@@ -269,7 +270,8 @@ export function splitNonManifold(m: { positions: Float32Array; indices: Uint32Ar
         if (mark[x] !== v) { mark[x] = v; cnt[x] = 0; }
         if (++cnt[x] > 2) bad = true;
       }
-    if (!bad || deg > parent.length) continue;
+    if (!bad) continue;
+    if (deg > parent.length) parent = new Int32Array(deg);
     // pair across the solid wedges first; if that leaves every sheet joined, across the open ones
     for (let mode = 0; mode < 2 && !groupFan(v, s, deg, cur, mode === 0); mode++);
     out ??= idx.slice();

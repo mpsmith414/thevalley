@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildBody, individualVariation } from '../../src/builder/build';
+import { buildBody, individualVariation, type BuildTimes } from '../../src/builder/build';
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
 import { lerp } from '../../src/util/vec';
 import { fox } from '../../src/cast/fox';
+import { hawk } from '../../src/cast/hawk';
+import { trout } from '../../src/cast/trout';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 import { topology } from '../fixtures/mesh';
 
@@ -64,6 +66,23 @@ describe('buildBody', () => {
       }
     }
   }, 60_000); // six bodies sampled finely and simplified to three levels: several seconds each when every test file runs at once
+
+  it('keeps thin parts facing the right way: small snaps, normals that agree with their triangles', () => {
+    for (const r of [trout, hawk]) {
+      const times: BuildTimes = { sample: 0, mesh: 0, weigh: 0, simplify: 0, snap: 0, skin: 0, rawVertices: 0, maxSnap: 0 };
+      const { positions: P, normals: N, indices: I } = buildBody(r, [0], times).lods[0];
+      expect(times.maxSnap).toBeLessThanOrEqual(1 + 1e-9); // at most one fine cell
+      let flipped = 0; // triangles whose face opposes all three of their vertex normals
+      for (let t = 0; t < I.length; t += 3) {
+        const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+        const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+        const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+        const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+        if ([a, b, c].every((o) => fx * N[o] + fy * N[o + 1] + fz * N[o + 2] < 0)) flipped++;
+      }
+      expect(flipped / (I.length / 3)).toBeLessThanOrEqual(0.0005); // measured: trout 3 of 13358, hawk 0
+    }
+  }, 20_000);
 
   describe('the fox at full detail', () => {
     const body = buildBody(fox, [0]);

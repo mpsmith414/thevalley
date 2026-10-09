@@ -81,7 +81,10 @@ export function boneSdfAt(x: number, y: number, z: number, b: BoneDef, thin: Vec
   return roundConeAt(ax + thin.x * s, ay + thin.y * s, az + thin.z * s, e.x - a.x, e.y - a.y, e.z - a.z, b.r0, r1) * b.squash;
 }
 
-/** Per-bone floats bodySdf reads, packed flat: box min/max, start, end − start, r0, tip radius, squash, thin axis, blend, R, sq, 1/|end − start|². */
+/**
+ * Per-bone floats bodySdf reads, packed flat: box min/max, start, end − start, r0, tip radius, squash, thin axis,
+ * blend, R = the larger end radius, sq = the squash the distance is scaled by (1 on the round-cone path), 1/|end − start|².
+ */
 const STRIDE = 22;
 
 /** The whole body as one distance function: bones blended in tree order. Eyes are separate meshes. */
@@ -100,7 +103,7 @@ export function bodySdf(sk: Skeleton, margin = 0.03): (x: number, y: number, z: 
       Math.min(b.start.x, b.end.x) - r, Math.min(b.start.y, b.end.y) - r, Math.min(b.start.z, b.end.z) - r,
       Math.max(b.start.x, b.end.x) + r, Math.max(b.start.y, b.end.y) + r, Math.max(b.start.z, b.end.z) + r,
       b.start.x, b.start.y, b.start.z, dx, dy, dz,
-      b.r0, tipRadius(b), b.squash, t.x, t.y, t.z, k, Math.max(b.r0, b.r1), Math.min(1, b.squash), l2 > 0 ? 1 / l2 : 0,
+      b.r0, tipRadius(b), b.squash, t.x, t.y, t.z, k, Math.max(b.r0, tipRadius(b)), b.squash >= 0.999 ? 1 : b.squash, l2 > 0 ? 1 / l2 : 0,
     ], i * STRIDE);
   });
   const far = 1e3;

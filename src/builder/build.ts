@@ -22,7 +22,7 @@ const ESTIMATE_CELLS = 64;
 export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array };
 export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
 /** Where a build's time went, in ms (filled in by `buildBody` when passed; for tools/perf.ts). */
-export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number };
+export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number; maxSnap: number /* fine cells */ };
 
 /** The key that decides whether two recipes share a body (shape, build, face shape, eye size and region layout). */
 export const bodyKey = (recipe: Recipe) =>
@@ -35,11 +35,16 @@ function fineCell(sk: Skeleton, sdf: Sdf, longest: number): number {
   return Math.max(longest / FINE_CELLS, c * Math.sqrt(n / MAX_RAW_VERTICES)); // vertices scale as 1 / cell²
 }
 
+/** Below this gradient length the SDF is unreliable (inside a part thinner than the difference step). */
+const WEAK_GRADIENT = 0.5;
+
 /**
- * Moves each vertex onto the surface with one Newton step (p -= d·∇d/|∇d|², central differences with
- * step h) and returns the normalised gradient there as its normal. Changes `positions` in place.
+ * Moves each vertex towards the surface with one Newton step (p -= d·∇d/|∇d|², central differences with
+ * step h), at most `maxStep` and never where the gradient is weak, then gives it the normalised gradient
+ * there as its normal, or the area-weighted normal of its triangles where the gradient is weak or disagrees
+ * with them (thin parts). Changes `positions` in place; returns the normals and the longest step taken.
  */
-function snapToSurface(sdf: Sdf, positions: Float32Array, h: number): Float32Array {
+function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32Array, h: number, maxStep: number) {
   const normals = new Float32Array(positions.length);
   const i2h = 1 / (2 * h);
   const grad = (x: number, y: number, z: number, g: Vec3) => {
@@ -48,20 +53,38 @@ function snapToSurface(sdf: Sdf, positions: Float32Array, h: number): Float32Arr
     g.z = (sdf(x, y, z + h) - sdf(x, y, z - h)) * i2h;
   };
   const g = { x: 0, y: 0, z: 0 };
+  let longest = 0;
   for (let v = 0; v < positions.length; v += 3) {
-    let x = positions[v], y = positions[v + 1], z = positions[v + 2];
+    const x = positions[v], y = positions[v + 1], z = positions[v + 2];
     const d = sdf(x, y, z);
     grad(x, y, z, g);
-    const g2 = g.x * g.x + g.y * g.y + g.z * g.z;
-    if (g2 > 1e-6) {
-      x -= (d * g.x) / g2; y -= (d * g.y) / g2; z -= (d * g.z) / g2;
-      positions[v] = x; positions[v + 1] = y; positions[v + 2] = z;
-    }
-    grad(x, y, z, g);
-    const l = Math.hypot(g.x, g.y, g.z) || 1;
-    normals[v] = g.x / l; normals[v + 1] = g.y / l; normals[v + 2] = g.z / l;
+    const gl = Math.hypot(g.x, g.y, g.z);
+    if (gl < WEAK_GRADIENT) continue;
+    const step = Math.min(Math.abs(d) / gl, maxStep, 2 * Math.abs(d)); // |d|/|∇d| is the Newton step's length
+    const k = (Math.sign(d) * step) / gl;
+    positions[v] = x - g.x * k; positions[v + 1] = y - g.y * k; positions[v + 2] = z - g.z * k;
+    longest = Math.max(longest, step);
   }
-  return normals;
+  // area-weighted triangle normals (the cross product's length is twice the area)
+  const area = new Float64Array(positions.length);
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+    const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+    area[a] += fx; area[a + 1] += fy; area[a + 2] += fz;
+    area[b] += fx; area[b + 1] += fy; area[b + 2] += fz;
+    area[c] += fx; area[c + 1] += fy; area[c + 2] += fz;
+  }
+  for (let v = 0; v < positions.length; v += 3) {
+    grad(positions[v], positions[v + 1], positions[v + 2], g);
+    const ax = area[v], ay = area[v + 1], az = area[v + 2];
+    const useGrad = Math.hypot(g.x, g.y, g.z) >= WEAK_GRADIENT && g.x * ax + g.y * ay + g.z * az >= 0;
+    const nx = useGrad ? g.x : ax, ny = useGrad ? g.y : ay, nz = useGrad ? g.z : az;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    normals[v] = nx / l; normals[v + 1] = ny / l; normals[v + 2] = nz / l;
+  }
+  return { normals, longest };
 }
 
 /**
@@ -105,7 +128,8 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
     // a repeated LOD gets its own arrays (the worker transfers each buffer once)
     if (done) return Object.fromEntries(Object.entries(done).map(([k, a]) => [k, a.slice()])) as LodMesh;
     const { positions, indices } = snaps.get(l)!;
-    const normals = snapToSurface(sdf, positions, fine / 2);
+    const { normals, longest: step } = snapToSurface(sdf, positions, indices, fine / 2, fine);
+    if (times) times.maxSnap = Math.max(times.maxSnap, step / fine);
     lap('snap');
     const skin = skinWeights(positions, skeleton, regions);
     lap('skin');
