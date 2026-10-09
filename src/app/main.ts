@@ -153,8 +153,19 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     await residents.compile(() => compileTogether(renderer, residents.object, eye, scene));
     camera.layers.enable(CREATURE_LAYER);
     sky.cascadeLayers(cascades(CREATURE));
+    // their shadow pipelines too, which `compileAsync` cannot make: on the next frame, before it is drawn, one render of only
+    // the animals from a stand-in camera (its own shadow passes; the frame's real render then draws over it)
+    const shadowEye = camera.clone();
+    shadowEye.layers.set(CREATURE_LAYER);
+    warm = () => {
+      shadowEye.copy(camera);
+      shadowEye.layers.set(CREATURE_LAYER);
+      sky.redrawShadows(); // even if the key light is out
+      residents.warmShadows(camera, () => renderer.render(scene, shadowEye));
+    };
     performance.mark('valley-animals-shown');
   };
+  let warm: (() => void) | null = null; // a one-off job for the start of the next frame's render (see `wakeAnimals`)
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
@@ -295,6 +306,11 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     residents.update(dt, camera, clock.hour);
     light(dt);
     hear(dt);
+    if (warm) {
+      const job = warm;
+      warm = null;
+      job();
+    }
   };
   tick(0);
   light(Infinity);
@@ -307,12 +323,12 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   performance.mark('valley-ready');
   console.info(`valley: ready ${seconds('valley-ready')} s after the page opened (${cached ? 'from the cache' : 'made fresh'})`);
   /**
-   * Every plant and ground-cover material (not just those in the opening view) and the animals, compiled in the background
+   * Every plant and ground-cover material (not just those in the opening view), the night sky and the animals, compiled in the background
    * while the start screen is up (about 4 s). A plant whose pipeline is still compiling is skipped until it is ready, so
    * a quick flight down may see the ground cover and near plants arrive a moment late, but nothing stalls a frame.
    */
   const compileRest = async () => {
-    const plants = veg.compile(() => cover.compile(() => compileTogether(renderer, scene, camera)));
+    const plants = veg.compile(() => cover.compile(() => sky.withNight(() => compileTogether(renderer, scene, camera))));
     await Promise.all([plants.then(() => performance.mark('valley-plants')), wakeAnimals()]);
     console.info(`valley: every plant and animal compiled ${(performance.now() / 1000).toFixed(1)} s after the page opened`);
   };

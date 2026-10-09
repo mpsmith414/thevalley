@@ -357,6 +357,32 @@ export class Residents {
     }
   }
 
+  /**
+   * Draw one frame (`render`) with one animal of each species, at every level of detail with its fur, in a row a few metres in
+   * front of `camera`, inside the nearest shadow cascade: three's `compileAsync` (r186) skips the shadow passes, so otherwise each
+   * species' shadow pipelines compile the first time it comes near, stalling that frame (90–430 ms measured on D3D12). The
+   * animals are back where they were when this returns.
+   */
+  warmShadows(camera: Camera, render: () => void): void {
+    const saved = this.animals.map((a) => a.obj.root.position.clone());
+    const ahead = camera.getWorldDirection(new Vector3()), side = new Vector3(-ahead.z, 0, ahead.x); // across the screen
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0); // looking straight down
+    side.normalize();
+    camera.getWorldPosition(eye);
+    this.compile(() => {
+      let i = 0;
+      for (const a of this.animals) {
+        if (!a.obj.root.visible) continue; // `compile` shows one of each species
+        a.obj.root.position.copy(eye).addScaledVector(ahead, 12).addScaledVector(side, (i++ - 4) * 1.5);
+      }
+      try {
+        render();
+      } finally {
+        this.animals.forEach((a, k) => a.obj.root.position.copy(saved[k]));
+      }
+    });
+  }
+
   /** Each animal as plain data (for the dev hooks): species, position, action and update band. */
   info() {
     return this.animals.map((a) => ({

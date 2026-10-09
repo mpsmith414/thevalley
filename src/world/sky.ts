@@ -32,6 +32,8 @@ const ENV_DAY = 0.25, ENV_NIGHT = 1.5;
 const EXPOSURE_TAU = 1.5;
 /** Metres over which the haze thins by e above 40 m (the backdrop's 300–900 m peaks must still fade into the sky). */
 const HAZE_HEIGHT = 800;
+/** Below this key-light intensity the shadow maps are held (not re-rendered): the light they shade is all but out. */
+const SHADOW_MIN = 0.02;
 /** Clip-space depth for the moon: behind everything in the valley and its mountains (≈ 6.9 km), in front of the stars (at the far plane). */
 const MOON_DEPTH = 0.999998;
 
@@ -50,6 +52,13 @@ export type Sky = {
    * render, so the masks are applied once they exist. Without cascades, the one map draws every layer in any mask.
    */
   cascadeLayers(masks: number[]): void;
+  /**
+   * Run `fn` (a compile that gathers what it compiles before it returns, as `compileTogether` does) with the stars, Milky Way
+   * and moon drawable: by day they are hidden, so otherwise their pipelines would compile mid-play at dusk.
+   */
+  withNight<T>(fn: () => T): T;
+  /** Have every shadow map drawn on the next render even while the key light is out (they are held then). */
+  redrawShadows(): void;
 };
 
 /** A vertex at the far plane (or `depth` in clip space), like the sky dome, so it sits behind the whole world. */
@@ -201,6 +210,10 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
     cam.far = 1500;
   }
   const hemi = new HemisphereLight();
+  // A camera finds its lights through its layers: these light every layer, so a camera that draws only some (such as the
+  // animals' shadow warm-up in main.ts) still lights them the same and shares the main view's pipelines.
+  light.layers.enableAll();
+  hemi.layers.enableAll();
   scene.add(light, light.target, hemi);
 
   // ---------- environment: the sky alone, re-rendered as the sun moves ----------
@@ -241,18 +254,35 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
   let aspect = 0, fov = 0;
   let exposure = renderer.toneMappingExposure;
   let masks: number[] | null = null;
+  /** The cascades are made on the first render: give them their layers once they exist. */
+  const applyMasks = () => {
+    if (!csm || !masks || !csm.lights.length) return;
+    csm.lights.forEach((l, i) => (l.shadow!.camera.layers.mask = masks![Math.min(i, masks!.length - 1)]));
+    masks = null;
+  };
 
   return {
     light, hemi, shadows: csm ? 'csm' : 'single',
     cascadeLayers(m) {
       masks = m;
       if (!csm) light.shadow.camera.layers.mask = m.reduce((a, b) => a | b, 0);
+      applyMasks();
+    },
+    withNight(fn) {
+      const was = [nightSky.visible, moon.visible];
+      nightSky.visible = moon.visible = true;
+      try {
+        return fn();
+      } finally {
+        [nightSky.visible, moon.visible] = was;
+      }
+    },
+    redrawShadows() {
+      light.shadow.needsUpdate = true;
+      if (csm) for (const l of csm.lights) l.shadow!.needsUpdate = true;
     },
     update(state, sun, moonDir, camera, hours, dt) {
-      if (csm && masks && csm.lights.length) {
-        csm.lights.forEach((l, i) => (l.shadow!.camera.layers.mask = masks![Math.min(i, masks!.length - 1)]));
-        masks = null;
-      }
+      applyMasks();
       const p = camera.position;
       // sky and sun
       v.set(sun.x, sun.y, sun.z);
@@ -272,7 +302,12 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
       // key light and ambient
       light.color.set(state.keyColor);
       light.intensity = state.keyIntensity;
-      light.castShadow = state.keyIntensity > 0.02;
+      // `castShadow` stays on: three r186 puts it in every lit material's cache key (LightsNode.customCacheKey), so flipping it
+      // at the sun/moon switch rebuilt and recompiled every lit pipeline mid-play (a 2–4 s stall at dusk, measured). Holding the
+      // shadow maps instead saves their passes while the key light is out, and `autoUpdate` is in no cache key.
+      const cast = state.keyIntensity > SHADOW_MIN;
+      light.shadow.autoUpdate = cast;
+      if (csm) for (const l of csm.lights) l.shadow!.autoUpdate = cast;
       const k = state.keyDir;
       if (csm) {
         light.target.position.copy(p);
