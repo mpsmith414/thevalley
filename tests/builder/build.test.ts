@@ -57,7 +57,7 @@ describe('buildBody', () => {
       const open = [...edges.values()].filter((c) => c !== 2).length;
       expect(open / edges.size).toBeLessThan(0.002); // essentially watertight
     }
-  });
+  }, 30_000); // six bodies at three levels: ~2.6 s alone, past the 5 s default when every test file runs at once
 
   it('is deterministic', () => {
     expect(hashNumbers(buildBody(quadruped, [1]).lods[0].positions)).toBe(hashNumbers(buildBody(quadruped, [1]).lods[0].positions));
