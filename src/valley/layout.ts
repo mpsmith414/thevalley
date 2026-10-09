@@ -58,7 +58,7 @@ export const VALLEY: Layout = {
     { name: 'Lake Shore', pos: { x: -70, z: 240, h: 1.7 }, look: { x: 150, z: 200, h: 0 } },
     { name: 'Meadow', pos: { x: -250, z: 200, h: 2 }, look: { x: -80, z: 120, h: 0.5 } },
     { name: 'Ridge Top', pos: { x: 600, z: -100, h: 4 }, look: { x: 0, z: 100, h: 0 } },
-    { name: 'River Bend', pos: { x: -330, z: -150, h: 1.8 }, look: { x: -230, z: -110, h: 0 } },
+    { name: 'River Bend', pos: { x: -345, z: -205, h: 2 }, look: { x: -180, z: -90, h: 0 } }, // on the stream, looking downstream
     { name: 'Forest Floor', pos: { x: -450, z: 520, h: 1.6 }, look: { x: -420, z: 470, h: 1.2 } },
     { name: 'Beach', pos: { x: 260, z: 345, h: 1.7 }, look: { x: 120, z: 180, h: 0 } },
     { name: 'Rocky Knoll', pos: { x: -250, z: 350, h: 3 }, look: { x: 100, z: 200, h: 0 } },
