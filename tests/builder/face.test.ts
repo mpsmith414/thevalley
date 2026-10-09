@@ -7,7 +7,7 @@ import { bodySdf, smin, thinAxis } from '../../src/builder/sdf';
 import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
-import { add, dist, dot, lerp, norm, scale, sub, v3, type Vec3 } from '../../src/util/vec';
+import { add, cross, dist, dot, lerp, norm, scale, sub, v3, type Vec3 } from '../../src/util/vec';
 import { badEdges, productionMesh } from '../fixtures/mesh';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 
@@ -226,36 +226,53 @@ describe('face features', () => {
     expect(out.slice(4)).toEqual(new Float32Array(4));
   });
 
-  it("the fox's inner ear is marked on its front face, not on the head round its base (cupped and thin ears)", () => {
-    const sk = buildSkeleton(fox);
-    for (const d of [detail(sk), { cell: 0.01 }]) {
-      const a = anatomy(sk, fox, d), sdf = bodySdf(sk, a), out = new Float32Array(4);
-      const h = 1e-4, grad = (p: Vec3) => norm(v3(
-        sdf(p.x + h, p.y, p.z) - sdf(p.x - h, p.y, p.z), sdf(p.x, p.y + h, p.z) - sdf(p.x, p.y - h, p.z), sdf(p.x, p.y, p.z + h) - sdf(p.x, p.y, p.z - h)));
-      // the surface along `dir` from `p` (inside): march out, then bisect
-      const surface = (p: Vec3, dir: Vec3) => {
-        let lo = 0, hi = 0;
-        while (sdf(...xyz(at(p, dir, hi))) < 0) { lo = hi; hi += 2e-4; }
-        for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (sdf(...xyz(at(p, dir, m))) < 0) lo = m; else hi = m; }
-        return at(p, dir, hi);
-      };
-      const ears = sk.bones.map((b, i) => [b, i] as const).filter(([b]) => b.role === 'ear');
-      expect(ears).toHaveLength(2);
-      for (const [E] of ears) {
-        const t = thinAxis(E), front = surface(lerp(E.start, E.end, 0.5), t);
-        marksAt(a.features, front, grad(front), out, 0);
-        expect(out[1], `front ${d.cell}`).toBeGreaterThanOrEqual(0.9);
-        // head skin just behind the ear's base: from inside the head, up through the skin behind the ear
-        // (and in front of it, where a round cone round the ear would reach r0 into the forehead)
-        const H = sk.bones.find((b) => b.role === 'head')!, inside = lerp(H.start, H.end, 0.3);
-        for (const [side, s] of [['behind', -1.5], ['in front', 1.5]] as const) {
-          const q = surface(inside, norm(sub(at(E.start, t, s * E.r0), inside)));
-          marksAt(a.features, q, grad(q), out, 0);
-          expect(out[1], `${side} ${d.cell}`).toBeLessThanOrEqual(0.2);
+  // thin, long ears (a hare's, a fennec's from the designer) take the mark-only path too
+  const longEars = (k: number): Recipe => ({ ...fox, parts: fox.parts.map((p) => (p.role === 'ear' ? { ...p, length: p.length * k } : p)) });
+
+  it("the fox's inner ear is marked on its front face, not on the head round its base (cupped, thin and long thin ears)", () => {
+    for (const k of [1, 1.6, 2]) {
+      const r = longEars(k), sk = buildSkeleton(r);
+      for (const d of [detail(sk), { cell: 0.01 }]) {
+        const a = anatomy(sk, r, d), sdf = bodySdf(sk, a), out = new Float32Array(4), tag = `×${k} cell ${d.cell}`;
+        const h = 1e-4, grad = (p: Vec3) => norm(v3(
+          sdf(p.x + h, p.y, p.z) - sdf(p.x - h, p.y, p.z), sdf(p.x, p.y + h, p.z) - sdf(p.x, p.y - h, p.z), sdf(p.x, p.y, p.z + h) - sdf(p.x, p.y, p.z - h)));
+        // the surface along `dir` from `p` (inside): march out, then bisect
+        const surface = (p: Vec3, dir: Vec3) => {
+          let lo = 0, hi = 0;
+          while (sdf(...xyz(at(p, dir, hi))) < 0) { lo = hi; hi += 2e-4; }
+          for (let j = 0; j < 40; j++) { const m = (lo + hi) / 2; if (sdf(...xyz(at(p, dir, m))) < 0) lo = m; else hi = m; }
+          return at(p, dir, hi);
+        };
+        const ear = (q: Vec3) => (marksAt(a.features, q, grad(q), out, 0), out[1]);
+        const ears = sk.bones.filter((b) => b.role === 'ear');
+        expect(ears).toHaveLength(2);
+        for (const E of ears) {
+          const t = thinAxis(E), ea = norm(sub(E.end, E.start)), across = norm(cross(t, ea));
+          expect(ear(surface(lerp(E.start, E.end, 0.5), t)), `front ${tag}`).toBeGreaterThanOrEqual(0.9);
+          // head skin round the ear's base, from inside the head up through the skin: behind it, in front of it (a round
+          // cone round the ear reached r0 into the forehead) and to its sides
+          const H = sk.bones.find((b) => b.role === 'head')!, inside = lerp(H.start, H.end, 0.3);
+          for (const [side, dir, s] of [['behind', t, -1.5], ['in front', t, 1.5], ['left', across, 1], ['right', across, -1]] as const)
+            expect(ear(surface(inside, norm(sub(at(E.start, dir, s * E.r0), inside)))), `${side} ${tag}`).toBeLessThanOrEqual(0.2);
+          // and below it, in the ear's plane: forward-facing head skin under the base (where a slab running on past the
+          // base would reach)
+          for (const s of [0.5, 1, 1.5, 2, 3]) {
+            const p = at(E.start, ea, -s * E.r0);
+            if (sdf(...xyz(p)) < 0) expect(ear(surface(p, t)), `below ${s} ${tag}`).toBeLessThanOrEqual(0.2);
+          }
         }
       }
     }
   });
+
+  it('no vertex off the ears gets the inner-ear mark, even with long thin ears', () => {
+    for (const k of [1, 1.6, 2]) {
+      const body = buildBody(longEars(k), [0]), lod = body.lods[0], bones = body.skeleton.bones;
+      let worst = 0;
+      for (let v = 0; v < lod.boneOf.length; v++) if (bones[lod.boneOf[v]].role !== 'ear') worst = Math.max(worst, lod.feature[v * 4 + 1]);
+      expect(worst, `×${k}`).toBeLessThanOrEqual(0.2);
+    }
+  }, 60_000);
 
   it('frameAlong stays orthonormal when the axis is parallel to up', () => {
     for (const a of [v3(0, 1, 0), v3(0, -1, 0)]) {

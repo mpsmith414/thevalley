@@ -48,7 +48,8 @@ export function regionNodes(pack: RegionPack) {
   // The region. Rounding the interpolated index draws a smooth border, but across a triangle whose corners lie in regions
   // 0 and 4 it passes through 1, 2 and 3: a seam of other regions' colours. So: a = the index at the triangle's first
   // corner (flat), and the other region b from the interpolated index v and index² s (v = a + w(b − a), s = a² + w(b² − a²)
-  // give b = (s − a²)/(v − a) − a); b wins past the midline, w > ½. Exact where two regions meet.
+  // give b = (s − a²)/(v − a) − a); b wins past the midline, w > ½. Exact where two regions meet; in a triangle whose
+  // three corners lie in three regions the formula is only approximate, so a sliver of another region's colour can show there.
   const a = float(varying(int(info.x.add(0.5).floor()))).toVar();
   const dv = info.x.sub(a).toVar();
   const b = bp4.w.sub(a.mul(a)).div(select(abs(dv).greaterThan(1e-4), dv, float(1))).sub(a).toVar();

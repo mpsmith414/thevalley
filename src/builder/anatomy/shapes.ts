@@ -18,6 +18,7 @@ export type Feature = {
   k: number; // blend radius (smooth union / smooth subtraction)
   mark?: Mark; markBand?: number; // vertices within markBand of the shape's surface get the mark
   facing?: Vec3; // earInner only: the ear's front axis (marks only front-facing vertices)
+  cuts?: { p: Vec3; n: Vec3 }[]; // mark only: the shape ∩ these half-spaces (each the side of the plane through p that n points to)
   min: Vec3; max: Vec3; // reach box: shape bounds + max(k, markBand); bodySdf widens it by its margin
   name?: string; bone?: number; // which rule made it and from which bone (tests, debugging)
 };
@@ -62,7 +63,7 @@ function bounds(s: Shape): { min: Vec3; max: Vec3 } {
 }
 
 /** A feature with its reach box (shape bounds grown by its blend radius or mark band). */
-export function feature(op: Feature['op'], shape: Shape, k: number, extra: Partial<Pick<Feature, 'mark' | 'markBand' | 'facing' | 'name' | 'bone'>> = {}): Feature {
+export function feature(op: Feature['op'], shape: Shape, k: number, extra: Partial<Pick<Feature, 'mark' | 'markBand' | 'facing' | 'cuts' | 'name' | 'bone'>> = {}): Feature {
   const { min, max } = bounds(shape);
   const g = Math.max(k, extra.markBand ?? 0);
   return { op, shape, k, ...extra, min: v3(min.x - g, min.y - g, min.z - g), max: v3(max.x + g, max.y + g, max.z + g) };
@@ -76,13 +77,16 @@ const smoothstep = (a: number, b: number, x: number) => { const t = Math.min(Mat
 /**
  * How strongly each mark colours the skin at `p` (normal `n`): writes the per-channel max into out[o … o+3] (MARKS
  * order). A mark-only shape marks its whole inside and fades over markBand outside; an add or carve shape marks its
- * surface, fading over markBand either side. earInner marks only skin facing the ear's front.
+ * surface, fading over markBand either side. Cuts trim a mark to the side of each plane; earInner marks only skin facing
+ * the ear's front.
  */
 export function marksAt(features: Feature[], p: Vec3, n: Vec3, out: Float32Array, o: number): void {
   out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
   for (const f of features) {
     if (!f.mark || p.x < f.min.x || p.y < f.min.y || p.z < f.min.z || p.x > f.max.x || p.y > f.max.y || p.z > f.max.z) continue;
-    const d = shapeSdf(p, f.shape), band = f.markBand ?? 0;
+    let d = shapeSdf(p, f.shape);
+    const band = f.markBand ?? 0;
+    for (const c of f.cuts ?? []) d = Math.max(d, (c.p.x - p.x) * c.n.x + (c.p.y - p.y) * c.n.y + (c.p.z - p.z) * c.n.z);
     let w = 1 - smoothstep(0, band, f.op === 'mark' ? Math.max(d, 0) : Math.abs(d));
     if (f.facing && f.mark === 'earInner') w *= smoothstep(0, 0.3, dot(n, f.facing));
     const c = o + MARKS.indexOf(f.mark);

@@ -147,6 +147,7 @@ describe('buildBody', () => {
   });
 
   it("marks the deer's hooves", () => {
+    // LOD1 is enough (and builds faster than LOD0): the marks come from the same anatomy at every level
     const body = buildBody(deer, [1]), lod = body.lods[0], bones = body.skeleton.bones;
     const feet = new Set(bones.flatMap((b, i) => (b.role === 'foot' ? [i] : [])));
     expect(feet.size).toBeGreaterThan(0);

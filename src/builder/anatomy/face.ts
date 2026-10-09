@@ -72,6 +72,8 @@ export function mouthFrame(sk: Skeleton, face: Face, detail: Detail): MouthFrame
   return { hinge, tip, forward, up, side, halfThick, head: h, mouth: m };
 }
 
+/** Where a thin ear's inner-ear mark starts, in base radii up the ear from its (buried) start. */
+const EAR_CUT = 0.5;
 const ellipsoid = (c: Vec3, ax: [Vec3, Vec3, Vec3], r: Vec3): Shape => ({ type: 'ellipsoid', c, ax, r });
 const sphere = (c: Vec3, r: number): Shape => ({ type: 'ellipsoid', c, ax: [v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)], r: v3(r, r, r) });
 const cone = (a: Vec3, b: Vec3, r0: number, r1: number): Shape => ({ type: 'cone', a, b, r0, r1 });
@@ -168,13 +170,16 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
     if (E.role !== 'ear' || E.squash >= 0.8) return;
     const t = thinAxis(E), ea = norm(sub(E.end, E.start)), rmid = (E.r0 + E.r1) / 2, hth = rmid * E.squash;
     if (hth < 1.5 * cell) {
-      // a slab in the ear's plane, as thick as the squashed ear's base, its ellipse from the base (full width) to past the
-      // tip: it holds the whole ear, so its inside marks the front face (facing keeps the colour off the back), and it is
-      // thin across the plane, so head skin in front of or behind the base stays unmarked (a round cone would reach r0
-      // into the head all round); the band only softens the edge
-      const L = length(E);
-      out.push(feature('mark', { type: 'slab', c: E.start, ax: [ea, norm(cross(t, ea)), t], r: v3(L + E.r1, 1.05 * E.r0, E.r0 * E.squash) }, 0,
-        { mark: 'earInner', markBand: hth, facing: t, name: 'earCup', bone: i }));
+      // the ear's round cone (as wide as the ear all along it) trimmed to the squashed ear's thickness (a round cone alone
+      // reaches r0 into the head all round the base: the forehead took the mark) and cut half a base radius up from the
+      // buried start (below it the cone runs on through the head, and beside the root lies head skin; the crotch between
+      // two close ears too). Inside, it holds the whole ear, so the front face is marked (facing keeps the colour off the
+      // back); the band only softens the edges. (A slab's ellipse bulges past a tapering ear and runs on below the base.)
+      const th = E.r0 * E.squash, cut = (p: Vec3, n: Vec3) => ({ p, n });
+      out.push(feature('mark', cone(E.start, E.end, E.r0, E.r1), 0, {
+        mark: 'earInner', markBand: hth, facing: t, name: 'earCup', bone: i,
+        cuts: [cut(at(E.start, [t, th]), scale(t, -1)), cut(at(E.start, [t, -th]), t), cut(at(E.start, [ea, EAR_CUT * E.r0]), ea)],
+      }));
       return;
     }
     out.push(feature('carve', ellipsoid(at(lerp(E.start, E.end, 0.5), [t, 1.6 * hth]), [ea, norm(cross(t, ea)), t], v3(0.38 * length(E), 0.55 * rmid, 1.4 * hth)),
