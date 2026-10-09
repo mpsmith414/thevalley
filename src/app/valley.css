@@ -63,3 +63,71 @@ body { background: #b9c8cf; color: #14405c; }
 .start-hint { margin: 0; font-size: clamp(16px, 1.8vw, 22px); font-weight: 700; color: #14405cb0; }
 .start.nudge .start-hint { color: #14405c; font-weight: 900; }
 @keyframes start-pulse { 50% { transform: scale(1.05); } }
+
+/* ---------- pause menu (big for the couch: 5% TV-safe margins, 28 px text or more, a ring you can see across the room) ---------- */
+.menu {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 5vh 5vw; box-sizing: border-box; font-size: clamp(30px, 1.8vw, 42px);
+  background: radial-gradient(ellipse at center, #14405c40, #14405c70); animation: menu-in 0.2s ease-out; transition: opacity 0.25s;
+}
+.menu.closing { opacity: 0; pointer-events: none; }
+@keyframes menu-in { from { opacity: 0; } }
+.menu-panel {
+  display: grid; gap: 14px; max-width: 100%; max-height: 100%; box-sizing: border-box; overflow: auto; padding: 30px 44px 38px;
+  border-radius: 40px; background: linear-gradient(#bfe6faf5, #d9efd0f5); box-shadow: 0 12px 48px #0006; color: #14405c;
+}
+.menu-panel[hidden] { display: none; }
+.menu-heading { margin: 0 0 6px; font-size: 1.45em; font-weight: 900; text-align: center; }
+.menu-row { display: grid; grid-template-columns: 7.2em auto; align-items: center; column-gap: 24px; }
+.menu-title { font-weight: 900; }
+.menu-items { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.menu-note { grid-column: 2; margin-top: 6px; font-size: max(28px, 0.85em); font-weight: 700; color: #14405cc8; }
+.menu-btn {
+  min-height: 2.3em; min-width: 2.3em; padding: 0.3em 0.9em; border: 0; border-radius: 999px; background: #fff; color: #14405c;
+  font: inherit; font-weight: 800; line-height: 1.1; white-space: nowrap; cursor: pointer; box-shadow: 0 3px 10px #14405c30;
+  transition: transform 0.1s ease, background 0.15s;
+}
+.menu-btn:hover { background: #f4fbff; }
+.menu-btn.on { background: #5fae4a; color: #fff; }
+.menu-btn.on::before { content: '✓ '; }
+.menu-btn.dim { opacity: 0.45; cursor: default; }
+.menu-btn:focus { outline: none; }
+.menu-btn.focused, .menu-btn:focus-visible {
+  outline: 7px solid #ffd34d; outline-offset: 4px; box-shadow: 0 0 0 14px #ffd34d55, 0 3px 10px #14405c30; transform: scale(1.05);
+}
+.menu-hint { font-weight: 700; opacity: 0.8; }
+.menu-resume { min-width: 8em; padding: 0.35em 1.6em; background: #5fae4a; color: #fff; font-size: 1.25em; font-weight: 900; }
+.menu-row-volume .menu-btn:not(:last-child) { width: 2.3em; padding: 0; font-size: 1.3em; font-weight: 900; }
+.menu-level { display: inline-flex; gap: 7px; align-items: flex-end; height: 56px; padding: 0 6px; }
+.menu-level i { width: 16px; border-radius: 6px; background: #14405c30; }
+.menu-level i.lit { background: #5fae4a; }
+.menu-level.off i.lit { background: #14405c55; }
+.menu-table { border-collapse: collapse; font-size: max(28px, 0.85em); }
+.menu-table th, .menu-table td { padding: 8px 22px; text-align: left; border-bottom: 2px solid #14405c20; }
+.menu-table thead th { font-weight: 900; border-bottom-width: 3px; }
+.menu-table tbody th { font-weight: 800; }
+.menu-table td { font-weight: 700; }
+.menu-back { justify-self: center; margin-top: 10px; min-width: 7em; }
+/* a short screen (720p): tighter rows so the whole menu fits without scrolling */
+@media (max-height: 800px) {
+  .menu-panel { gap: 6px; padding: 16px 36px 22px; }
+  .menu-heading { margin: 0; font-size: 1.15em; }
+  .menu-btn { min-height: 2em; min-width: 2em; }
+  .menu-row-volume .menu-btn:not(:last-child) { width: 2em; }
+  .menu-note { margin-top: 2px; }
+  .menu-table { line-height: 1.15; }
+  .menu-table th, .menu-table td { padding: 2px 18px; }
+  .menu-back { margin-top: 4px; }
+}
+
+/* ---------- labels: a soft pill at the bottom centre (a time jump, a viewpoint reached) ---------- */
+.label-pill {
+  position: absolute; left: 50%; bottom: 7vh; transform: translateX(-50%); padding: 14px 38px; border-radius: 999px; pointer-events: none;
+  background: #ffffffd8; color: #14405c; font-size: 34px; font-weight: 900; box-shadow: 0 6px 22px #0003; white-space: nowrap;
+  animation: label-in 0.4s ease-out; transition: opacity 0.5s, transform 0.5s;
+}
+.label-pill.out { opacity: 0; transform: translate(-50%, 10px); }
+@keyframes label-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+@media (prefers-reduced-motion: reduce) {
+  .menu, .menu-btn, .label-pill { transition: none !important; animation: none !important; }
+  .menu-btn.focused, .menu-btn:focus-visible { transform: none; }
+}
