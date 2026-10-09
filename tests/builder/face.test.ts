@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { anatomy, type Anatomy } from '../../src/builder/anatomy';
 import { faceFeatures, frameAlong, headFrame, mouthFrame } from '../../src/builder/anatomy/face';
 import { buildBody } from '../../src/builder/build';
-import { feature, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
-import { bodySdf, smin } from '../../src/builder/sdf';
+import { feature, marksAt, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
+import { bodySdf, smin, thinAxis } from '../../src/builder/sdf';
 import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
-import { add, dist, dot, lerp, norm, scale, sub, v3 } from '../../src/util/vec';
+import { add, dist, dot, lerp, norm, scale, sub, v3, type Vec3 } from '../../src/util/vec';
 import { badEdges, productionMesh } from '../fixtures/mesh';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 
@@ -16,6 +16,8 @@ const fox = cast('fox');
 const FINE = { cell: 0.0005 }; // fine enough that nothing is skipped
 const detail = (sk: Skeleton) => ({ cell: Math.max(sk.max.x - sk.min.x, sk.max.y - sk.min.y, sk.max.z - sk.min.z) / 330 });
 const faceOf = (r: Recipe, d = FINE) => { const sk = buildSkeleton(r); return { sk, f: faceFeatures(sk, r, d) }; };
+const xyz = (p: Vec3) => [p.x, p.y, p.z] as const;
+const at = (p: Vec3, d: Vec3, s: number) => add(p, scale(d, s));
 const count = (fs: { name?: string }[], name: string) => fs.filter((f) => f.name === name).length;
 /** The anatomy without its face features (the body and feet only). */
 const noFace = (a: Anatomy, faceCount: number): Anatomy => ({ ...a, features: a.features.slice(0, a.features.length - faceCount) });
@@ -205,12 +207,53 @@ describe('face features', () => {
     }
   });
 
-  it("a thin ear's mark band reaches its whole front face, not just the rim", () => {
-    const { sk, f } = faceOf(fox, { cell: 0.01 });
-    for (const g of f.filter((h) => h.name === 'earCup')) {
-      const e = sk.bones[g.bone!], rmid = (e.r0 + e.r1) / 2;
-      // the squashed ear's front face lies rmid·(1 − squash) inside the round cone
-      expect(g.markBand!).toBeGreaterThanOrEqual(rmid * (1 - e.squash));
+  it('marksAt: inside a mark shape is fully marked; add and carve marks fade with distance from their surface', () => {
+    const ball: Shape = { type: 'ellipsoid', c: v3(), ax: [v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)], r: v3(0.1, 0.1, 0.1) };
+    const out = new Float32Array(8).fill(7), up = v3(0, 1, 0);
+    const w = (op: 'mark' | 'add', p = v3(), mark: 'hoof' | 'earInner' = 'hoof', n = up) => {
+      marksAt([feature(op, ball, 0, { mark, markBand: 0.02, facing: v3(0, 0, 1) })], p, n, out, 4);
+      return out[4 + ['nose', 'earInner', 'mouth', 'hoof'].indexOf(mark)];
+    };
+    expect(w('mark')).toBe(1); // deep inside
+    expect(w('add')).toBe(0); // far from the surface
+    expect(w('add', v3(0.1, 0, 0))).toBeCloseTo(1, 6);
+    expect(w('mark', v3(0.11, 0, 0))).toBeCloseTo(0.5, 2);
+    expect(w('mark', v3(0.13, 0, 0))).toBe(0);
+    expect(w('mark', v3(), 'earInner', v3(0, 0, -1))).toBe(0); // faces away from the ear's front
+    expect(w('mark', v3(), 'earInner', v3(0, 0, 1))).toBe(1);
+    expect(out.slice(0, 4)).toEqual(new Float32Array(4).fill(7)); // writes only its own four lanes
+    marksAt([], v3(), up, out, 4);
+    expect(out.slice(4)).toEqual(new Float32Array(4));
+  });
+
+  it("the fox's inner ear is marked on its front face, not on the head round its base (cupped and thin ears)", () => {
+    const sk = buildSkeleton(fox);
+    for (const d of [detail(sk), { cell: 0.01 }]) {
+      const a = anatomy(sk, fox, d), sdf = bodySdf(sk, a), out = new Float32Array(4);
+      const h = 1e-4, grad = (p: Vec3) => norm(v3(
+        sdf(p.x + h, p.y, p.z) - sdf(p.x - h, p.y, p.z), sdf(p.x, p.y + h, p.z) - sdf(p.x, p.y - h, p.z), sdf(p.x, p.y, p.z + h) - sdf(p.x, p.y, p.z - h)));
+      // the surface along `dir` from `p` (inside): march out, then bisect
+      const surface = (p: Vec3, dir: Vec3) => {
+        let lo = 0, hi = 0;
+        while (sdf(...xyz(at(p, dir, hi))) < 0) { lo = hi; hi += 2e-4; }
+        for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (sdf(...xyz(at(p, dir, m))) < 0) lo = m; else hi = m; }
+        return at(p, dir, hi);
+      };
+      const ears = sk.bones.map((b, i) => [b, i] as const).filter(([b]) => b.role === 'ear');
+      expect(ears).toHaveLength(2);
+      for (const [E] of ears) {
+        const t = thinAxis(E), front = surface(lerp(E.start, E.end, 0.5), t);
+        marksAt(a.features, front, grad(front), out, 0);
+        expect(out[1], `front ${d.cell}`).toBeGreaterThanOrEqual(0.9);
+        // head skin just behind the ear's base: from inside the head, up through the skin behind the ear
+        // (and in front of it, where a round cone round the ear would reach r0 into the forehead)
+        const H = sk.bones.find((b) => b.role === 'head')!, inside = lerp(H.start, H.end, 0.3);
+        for (const [side, s] of [['behind', -1.5], ['in front', 1.5]] as const) {
+          const q = surface(inside, norm(sub(at(E.start, t, s * E.r0), inside)));
+          marksAt(a.features, q, grad(q), out, 0);
+          expect(out[1], `${side} ${d.cell}`).toBeLessThanOrEqual(0.2);
+        }
+      }
     }
   });
 

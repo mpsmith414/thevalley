@@ -3,7 +3,8 @@ import { buildBody, individualVariation, snapToSurface, type BuildTimes } from '
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
-import { lerp } from '../../src/util/vec';
+import { add, lerp, norm, scale, sub } from '../../src/util/vec';
+import { deer } from '../../src/cast/deer';
 import { fox } from '../../src/cast/fox';
 import { hawk } from '../../src/cast/hawk';
 import { trout } from '../../src/cast/trout';
@@ -123,11 +124,41 @@ describe('buildBody', () => {
       expect(density(['head', 'mouth'])).toBeGreaterThan(2.5 * density(['torso']));
     });
 
+    it('marks the nose tip, the inner ears and nothing on the hips (the feature attribute)', () => {
+      const F = lod.feature, P = lod.positions, n = P.length / 3;
+      expect(F).toHaveLength(4 * n);
+      const snout = bones.find((b) => b.name === 'snout')!, dir = norm(sub(snout.end, snout.start)), tip = add(snout.end, scale(dir, snout.r1));
+      let nose = 0, ear = 0;
+      for (let v = 0; v < n; v++) {
+        // near the tip (the vertex nearest it lies in the mouth slit, which runs past the tip)
+        if (Math.hypot(P[v * 3] - tip.x, P[v * 3 + 1] - tip.y, P[v * 3 + 2] - tip.z) < snout.r1) nose = Math.max(nose, F[v * 4]);
+        ear = Math.max(ear, F[v * 4 + 1]);
+        for (let k = 0; k < 4; k++) expect(F[v * 4 + k]).toBeGreaterThanOrEqual(0), expect(F[v * 4 + k]).toBeLessThanOrEqual(1);
+        if (bones[lod.boneOf[v]].name === 'hips') for (let k = 0; k < 4; k++) expect(F[v * 4 + k]).toBe(0);
+      }
+      expect(nose).toBeGreaterThan(0.9);
+      expect(ear).toBeGreaterThan(0.5);
+    });
+
     it('stays near today’s triangle budget', () => {
       const target = 1.2 * 2 * 9560; // today's fox: 9560 vertices at 110 cells
       expect(Math.abs(lod.indices.length / 3 / target - 1)).toBeLessThan(0.25);
     });
   });
+
+  it("marks the deer's hooves", () => {
+    const body = buildBody(deer, [1]), lod = body.lods[0], bones = body.skeleton.bones;
+    const feet = new Set(bones.flatMap((b, i) => (b.role === 'foot' ? [i] : [])));
+    expect(feet.size).toBeGreaterThan(0);
+    // the lowest vertex of each foot sits in its hoof
+    const low = new Map<number, number>();
+    for (let v = 0; v < lod.positions.length / 3; v++) {
+      const b = lod.boneOf[v];
+      if (feet.has(b) && (!low.has(b) || lod.positions[v * 3 + 1] < lod.positions[low.get(b)! * 3 + 1])) low.set(b, v);
+    }
+    expect(low.size).toBe(feet.size);
+    for (const v of low.values()) expect(lod.feature[v * 4 + 3]).toBeGreaterThan(0.9);
+  }, 20_000);
 
   it('is deterministic', () => {
     expect(hashNumbers(buildBody(quadruped, [1]).lods[0].positions)).toBe(hashNumbers(buildBody(quadruped, [1]).lods[0].positions));

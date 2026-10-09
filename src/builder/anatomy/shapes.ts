@@ -68,6 +68,28 @@ export function feature(op: Feature['op'], shape: Shape, k: number, extra: Parti
   return { op, shape, k, ...extra, min: v3(min.x - g, min.y - g, min.z - g), max: v3(max.x + g, max.y + g, max.z + g) };
 }
 
+/** The four mark channels, in the order the `feature` vertex attribute holds them. */
+export const MARKS: readonly Mark[] = ['nose', 'earInner', 'mouth', 'hoof'];
+
+const smoothstep = (a: number, b: number, x: number) => { const t = Math.min(Math.max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+
+/**
+ * How strongly each mark colours the skin at `p` (normal `n`): writes the per-channel max into out[o … o+3] (MARKS
+ * order). A mark-only shape marks its whole inside and fades over markBand outside; an add or carve shape marks its
+ * surface, fading over markBand either side. earInner marks only skin facing the ear's front.
+ */
+export function marksAt(features: Feature[], p: Vec3, n: Vec3, out: Float32Array, o: number): void {
+  out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
+  for (const f of features) {
+    if (!f.mark || p.x < f.min.x || p.y < f.min.y || p.z < f.min.z || p.x > f.max.x || p.y > f.max.y || p.z > f.max.z) continue;
+    const d = shapeSdf(p, f.shape), band = f.markBand ?? 0;
+    let w = 1 - smoothstep(0, band, f.op === 'mark' ? Math.max(d, 0) : Math.abs(d));
+    if (f.facing && f.mark === 'earInner') w *= smoothstep(0, 0.3, dot(n, f.facing));
+    const c = o + MARKS.indexOf(f.mark);
+    if (w > out[c]) out[c] = w;
+  }
+}
+
 /** The largest radius of a shape (for skipping features too small to mesh). */
 export const shapeSize = (s: Shape) => (s.type === 'cone' ? Math.max(s.r0, s.r1) : Math.max(s.r.x, s.r.y, s.r.z));
 

@@ -1,9 +1,9 @@
 import { MeshPhysicalNodeMaterial, Vector3, Vector4, Color } from 'three/webgpu';
 import {
-  attribute, bumpMap, float, fract, int, mix, mx_noise_float, mx_worley_noise_float, select, sin, smoothstep, step, uniform,
-  uniformArray, vec3,
+  abs, attribute, bumpMap, color, float, fract, int, max, mix, mx_noise_float, mx_worley_noise_float, select, sin, smoothstep, step, uniform,
+  uniformArray, varying, vec3,
 } from 'three/tsl';
-import { COVERINGS } from '../recipe/schema';
+import { COVERINGS, MAX_REGIONS } from '../recipe/schema';
 import { COVERING_LOOK, type RegionPack } from './patterns';
 
 type F = ReturnType<typeof float>;
@@ -15,6 +15,7 @@ const NO_TINT = new Vector3(1, 1, 1);
  * Region settings as six vec4 arrays (WebGPU allows 12 uniform buffers per shader stage):
  *  colA = base rgb, hasBelly · colB = belly rgb, patKind · colC = pattern rgb, patScale
  *  parA = patAmount, patAlong, furLength, fluff · parB = covering, roughness, sheen, clearcoat · parC = bump
+ *  (parC[0].yzw = the nose rgb, parC[1].yzw = the inner-ear rgb: lanes otherwise unused)
  */
 export function packUniforms(pack: RegionPack) {
   const rgb = (hex: string, w: number) => {
@@ -30,7 +31,10 @@ export function packUniforms(pack: RegionPack) {
     colC: arr('skinColC', pack.patColor.map((h, i) => rgb(h, pack.patScale[i]))),
     parA: arr('skinParA', pack.patAmount.map((a, i) => new Vector4(a, pack.patAlong[i], pack.furLength[i], pack.fluff[i]))),
     parB: arr('skinParB', look.map((l, i) => new Vector4(pack.covering[i], l.roughness, l.sheen, l.clearcoat))),
-    parC: arr('skinParC', look.map((l) => new Vector4(l.bump, 0, 0, 0))),
+    parC: arr('skinParC', look.map((l, i) => {
+      const c = i < 2 ? new Color(i === 0 ? pack.nose : pack.earInner) : null;
+      return new Vector4(l.bump, c?.r ?? 0, c?.g ?? 0, c?.b ?? 0);
+    })),
   };
 }
 
@@ -40,12 +44,20 @@ export function regionNodes(pack: RegionPack) {
   // each animal's own colour shift is read per object (`userData.tint`), so a whole species can share one material
   const tint = uniform(new Vector3(1, 1, 1)).onObjectUpdate(({ object }) => (object?.userData.tint as Vector3 | undefined) ?? NO_TINT);
   const info = attribute('partInfo', 'vec4');
-  const i = int(info.x.add(0.5).floor());
+  const bp4 = attribute('bodyPos', 'vec4');
+  // The region. Rounding the interpolated index draws a smooth border, but across a triangle whose corners lie in regions
+  // 0 and 4 it passes through 1, 2 and 3: a seam of other regions' colours. So: a = the index at the triangle's first
+  // corner (flat), and the other region b from the interpolated index v and index² s (v = a + w(b − a), s = a² + w(b² − a²)
+  // give b = (s − a²)/(v − a) − a); b wins past the midline, w > ½. Exact where two regions meet.
+  const a = float(varying(int(info.x.add(0.5).floor()))).toVar();
+  const dv = info.x.sub(a).toVar();
+  const b = bp4.w.sub(a.mul(a)).div(select(abs(dv).greaterThan(1e-4), dv, float(1))).sub(a).toVar();
+  const i = int(select(abs(dv).mul(2).greaterThan(abs(b.sub(a))).and(abs(dv).greaterThan(1e-4)), b, a).add(0.5).floor().clamp(0, MAX_REGIONS - 1));
   const at = (a: V4) => a.element(i) as unknown as ReturnType<typeof vec3> & { w: F; xyz: C };
   const colA = at(U.colA), colB = at(U.colB), colC = at(U.colC), parA = at(U.parA), parB = at(U.parB), parC = at(U.parC);
   const pt = info.y;
   const ps = info.z;
-  const bp = attribute('bodyPos', 'vec3');
+  const bp = bp4.xyz;
   const rn = attribute('restNormal', 'vec3');
 
   const kind = colB.w;
@@ -80,11 +92,30 @@ export function regionNodes(pack: RegionPack) {
   const isCells = cov.equal(2).or(cov.equal(4)); // scales, shell
   const height = (select(isCells, cells, select(cov.equal(1), ripple, grain)) as unknown as F).mul(parC.x);
 
+  // the colour marks (nose, inner ear, mouth, hoof) and the face colours
+  const feature = attribute('feature', 'vec4');
+  const nose = (U.parC.element(0) as unknown as { yzw: C }).yzw, earInner = (U.parC.element(1) as unknown as { yzw: C }).yzw;
+
   return {
-    tint, i, bp, pt, colorNode, height, mask,
+    tint, i, bp, pt, colorNode, height, mask, feature, nose, earInner,
     furLength: parA.z as unknown as F, fluff: parA.w as unknown as F,
     roughness: parB.y as unknown as F, sheen: parB.z as unknown as F, clearcoat: parB.w as unknown as F,
   };
+}
+
+const LIPS = color(new Color('#3a2220')), GUMS = color(new Color('#9a4a48')), GUM_TONE = 0.2;
+
+/**
+ * The region colour with the face marks painted on: the nose, the inner ears, dark lips with a gum tone deep in the
+ * mouth, and dark hooves.
+ */
+export function markedColor(r: ReturnType<typeof regionNodes>): C {
+  const f = r.feature;
+  const c1 = mix(r.colorNode, r.nose, f.x);
+  const c2 = mix(c1, r.earInner, f.y.mul(0.85));
+  // (only a hint of the gum tone: the closed slit shows its walls, and at full strength it read as a gaping pink mouth)
+  const c3 = mix(mix(c2, LIPS, smoothstep(0, 0.5, f.z)), GUMS, smoothstep(0.75, 1, f.z).mul(GUM_TONE));
+  return mix(c3, r.colorNode.mul(0.3), f.w) as unknown as C;
 }
 
 /**
@@ -92,14 +123,17 @@ export function regionNodes(pack: RegionPack) {
  * tint from its objects' `userData.tint`.
  */
 export function createSkinMaterial(pack: RegionPack) {
-  const r = regionNodes(pack);
+  const r = regionNodes(pack), f = r.feature;
+  const col = markedColor(r);
   const m = new MeshPhysicalNodeMaterial();
-  m.colorNode = r.colorNode;
-  m.roughnessNode = r.roughness;
+  m.colorNode = col;
+  // a damp nose (at 0.25 the sky's reflection turned a big round nose to grey glass), matte hooves
+  m.roughnessNode = mix(mix(r.roughness, 0.4, f.x), 0.5, f.w);
   m.metalnessNode = float(0);
-  m.sheenNode = r.colorNode.mul(r.sheen).add(vec3(0.15).mul(r.sheen));
+  m.sheenNode = col.mul(r.sheen).add(vec3(0.15).mul(r.sheen)).mul(float(1).sub(max(f.x, f.z)));
   m.sheenRoughnessNode = float(0.55);
-  m.clearcoatNode = r.clearcoat;
+  // a wet sheen (at 0.8, the same grey glass)
+  m.clearcoatNode = max(r.clearcoat, f.x.mul(0.35));
   m.clearcoatRoughnessNode = float(0.15);
   m.normalNode = bumpMap(r.height, float(0.6));
   return m;

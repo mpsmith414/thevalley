@@ -1,3 +1,4 @@
+import { Color } from 'three/webgpu';
 import { COVERINGS, MAX_REGIONS, PATTERNS, type Covering, type PatternKind, type Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
 
@@ -14,11 +15,31 @@ export type RegionPack = {
   patAlong: number[];
   furLength: number[];
   fluff: number[];
+  nose: string; // one nose and one inner-ear colour per creature (hex)
+  earInner: string;
 };
 
+/** How much darker than the head a nose is (linear light: 0.25 hardly showed on a fox or a rabbit). */
+const NOSE_DARKEN = 0.65;
+
+/** `hex` darkened by `amount` (0…1, in linear light). */
+const darken = (hex: string, amount: number) => '#' + new Color(hex).multiplyScalar(1 - amount).getHexString();
+/** `a` mixed towards `b` by `t` (in linear light). */
+const mixHex = (a: string, b: string, t: number) => '#' + new Color(a).lerp(new Color(b), t).getHexString();
+
+/**
+ * The recipe's regions packed into MAX_REGIONS slots (in `regions` order), plus the face colours: the nose (the face's,
+ * or the head region darkened) and the inner ear (the face's, or the first ear's region mixed halfway to a warm pink).
+ */
 export function packRegions(recipe: Recipe, regions: string[]): RegionPack {
+  const colorOf = (role: string) => {
+    const id = recipe.parts.find((p) => p.role === role)?.region;
+    return id === undefined ? null : (recipe.skin.regions.find((r) => r.id === id) ?? recipe.skin.regions[0]).color;
+  };
+  const head = colorOf('head') ?? recipe.skin.regions[0].color;
   const pack: RegionPack = {
     base: [], belly: [], hasBelly: [], covering: [], patKind: [], patColor: [], patScale: [], patAmount: [], patAlong: [], furLength: [], fluff: [],
+    nose: recipe.face.noseColor ?? darken(head, NOSE_DARKEN), earInner: recipe.face.earInner ?? mixHex(colorOf('ear') ?? head, '#f0c8b8', 0.5),
   };
   for (let i = 0; i < MAX_REGIONS; i++) {
     const r = recipe.skin.regions.find((x) => x.id === regions[i]) ?? recipe.skin.regions[0];

@@ -1,3 +1,4 @@
+import { Color } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import { packRegions, patternMaskCPU } from '../../src/skin/patterns';
 import { quadruped } from '../fixtures/recipes';
@@ -12,6 +13,27 @@ describe('packRegions', () => {
     expect(p.patKind[1]).toBe(1); // spots
     expect(p.hasBelly[0]).toBe(1);
     expect(p.furLength[1]).toBe(0); // scales have no fur
+  });
+});
+
+describe('packRegions face colours', () => {
+  const headRegion = quadruped.parts.find((p) => p.role === 'head')!.region;
+  const headColor = new Color(quadruped.skin.regions.find((r) => r.id === headRegion)!.color);
+
+  it('a darkened head colour for the nose, unless the face gives one', () => {
+    const nose = new Color(packRegions(quadruped, ['body', 'tail']).nose);
+    expect(nose.r).toBeCloseTo(headColor.r * 0.35, 2);
+    expect(nose.g).toBeCloseTo(headColor.g * 0.35, 2);
+    expect(nose.b).toBeCloseTo(headColor.b * 0.35, 2);
+    expect(packRegions({ ...quadruped, face: { ...quadruped.face, noseColor: '#112233' } }, ['body']).nose).toBe('#112233');
+  });
+
+  it('a warm, lighter ear colour inside the ears, unless the face gives one', () => {
+    const inner = new Color(packRegions(quadruped, ['body']).earInner), pink = new Color('#f0c8b8');
+    const ear = new Color(quadruped.skin.regions.find((r) => r.id === (quadruped.parts.find((p) => p.role === 'ear')?.region ?? headRegion))!.color);
+    expect(inner.r).toBeCloseTo((ear.r + pink.r) / 2, 2);
+    expect(inner.b).toBeCloseTo((ear.b + pink.b) / 2, 2);
+    expect(packRegions({ ...quadruped, face: { ...quadruped.face, earInner: '#ffeedd' } }, ['body']).earInner).toBe('#ffeedd');
   });
 });
 

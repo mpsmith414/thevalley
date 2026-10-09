@@ -52,8 +52,16 @@ export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
     info[v * 4 + 3] = bellyOk[l.boneOf[v]];
   }
   g.setAttribute('partInfo', new BufferAttribute(info, 4));
-  g.setAttribute('bodyPos', new BufferAttribute(l.positions.slice(), 3));
+  // the rest position, and the region index squared: with the index itself (partInfo.x) the fragment shader can tell
+  // which two regions a border triangle joins (see regionNodes)
+  const bodyPos = new Float32Array(l.region.length * 4);
+  for (let v = 0; v < l.region.length; v++) {
+    bodyPos.set(l.positions.subarray(v * 3, v * 3 + 3), v * 4);
+    bodyPos[v * 4 + 3] = l.region[v] * l.region[v];
+  }
+  g.setAttribute('bodyPos', new BufferAttribute(bodyPos, 4));
   g.setAttribute('restNormal', new BufferAttribute(l.normals.slice(), 3));
+  g.setAttribute('feature', new BufferAttribute(l.feature, 4)); // the 8th and last vertex buffer WebGPU allows
   g.setIndex(new BufferAttribute(l.indices, 1));
   g.computeBoundingSphere();
   return g;

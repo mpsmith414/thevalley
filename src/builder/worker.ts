@@ -12,7 +12,7 @@ scope.onmessage = ({ data }: MessageEvent<BuildRequest>) => {
   try {
     const body = buildBody(data.recipe, data.lods);
     const transfer = body.lods.flatMap((l) => [
-      l.positions.buffer, l.normals.buffer, l.indices.buffer, l.skinIndex.buffer, l.skinWeight.buffer, l.region.buffer, l.partT.buffer, l.partS.buffer, l.boneOf.buffer,
+      l.positions.buffer, l.normals.buffer, l.indices.buffer, l.skinIndex.buffer, l.skinWeight.buffer, l.region.buffer, l.partT.buffer, l.partS.buffer, l.boneOf.buffer, l.feature.buffer,
     ]) as ArrayBuffer[];
     scope.postMessage({ id: data.id, body, ms: performance.now() - t0 } satisfies BuildResponse, transfer);
   } catch (e) {

@@ -168,9 +168,13 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
     if (E.role !== 'ear' || E.squash >= 0.8) return;
     const t = thinAxis(E), ea = norm(sub(E.end, E.start)), rmid = (E.r0 + E.r1) / 2, hth = rmid * E.squash;
     if (hth < 1.5 * cell) {
-      // the squashed ear's front face lies rmid·(1 − squash) inside the round cone: a band of rmid reaches all of it
-      // (facing keeps the colour off the back)
-      out.push(feature('mark', cone(E.start, E.end, E.r0, E.r1), 0, { mark: 'earInner', markBand: rmid, facing: t, name: 'earCup', bone: i }));
+      // a slab in the ear's plane, as thick as the squashed ear's base, its ellipse from the base (full width) to past the
+      // tip: it holds the whole ear, so its inside marks the front face (facing keeps the colour off the back), and it is
+      // thin across the plane, so head skin in front of or behind the base stays unmarked (a round cone would reach r0
+      // into the head all round); the band only softens the edge
+      const L = length(E);
+      out.push(feature('mark', { type: 'slab', c: E.start, ax: [ea, norm(cross(t, ea)), t], r: v3(L + E.r1, 1.05 * E.r0, E.r0 * E.squash) }, 0,
+        { mark: 'earInner', markBand: hth, facing: t, name: 'earCup', bone: i }));
       return;
     }
     out.push(feature('carve', ellipsoid(at(lerp(E.start, E.end, 0.5), [t, 1.6 * hth]), [ea, norm(cross(t, ea)), t], v3(0.38 * length(E), 0.55 * rmid, 1.4 * hth)),

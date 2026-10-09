@@ -15,6 +15,15 @@ const disposed = (m: Material) => {
   return () => gone;
 };
 
+describe('the creature geometry', () => {
+  it('has exactly 8 vertex attributes (the WebGPU limit), the last the feature marks', () => {
+    const g = createCreatureObject(body, quadruped, 'high').meshes[0].geometry;
+    expect(Object.keys(g.attributes).sort()).toEqual(['bodyPos', 'feature', 'normal', 'partInfo', 'position', 'restNormal', 'skinIndex', 'skinWeight']);
+    expect(g.attributes.feature.itemSize).toBe(4);
+    expect(g.attributes.feature.array).toBe(body.lods[0].feature);
+  });
+});
+
 describe('createCreatureObject with a shared look', () => {
   it('shares the species materials, with each animal its own tint', () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));

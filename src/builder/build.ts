@@ -3,6 +3,7 @@ import { hash } from '../util/hash';
 import { mulberry32 } from '../util/rng';
 import type { Vec3 } from '../util/vec';
 import { anatomy, anatomyBounds, type Anatomy } from './anatomy';
+import { marksAt, type Feature } from './anatomy/shapes';
 import { importance } from './importance';
 import { splitNonManifold, surfaceNetsSparse, type MeshData, type Sdf } from './mesher';
 import { bodySdf, coarseBodySdf } from './sdf';
@@ -20,7 +21,7 @@ export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2;
 /** Cells along the longest dimension of the quick pass that estimates the surface before fine sampling. */
 const ESTIMATE_CELLS = 64;
 
-export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array };
+export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array; feature: Float32Array /* 4 per vertex: nose, earInner, mouth, hoof (0…1) */ };
 export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
 /** Where a build's time went, in ms (filled in by `buildBody` when passed; for tools/perf.ts). */
 export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number; maxSnap: number /* fine cells */ };
@@ -111,23 +112,44 @@ export function snapToSurface(sdf: Sdf, positions: Float32Array, indices: Uint32
 }
 
 /**
+ * The colour marks per vertex (4 lanes, MARKS order) from the features that carry one. Uses `normals` when given, else
+ * the SDF's normalised gradient (central differences, step h), taken only where a mark can reach.
+ */
+export function featureMarks(features: Feature[], positions: Float32Array, normals: Float32Array | null, sdf: Sdf, h: number): Float32Array {
+  const marked = features.filter((f) => f.mark), n = positions.length / 3;
+  const out = new Float32Array(n * 4), p = { x: 0, y: 0, z: 0 }, g = { x: 0, y: 1, z: 0 };
+  for (let v = 0; v < n; v++) {
+    const x = (p.x = positions[v * 3]), y = (p.y = positions[v * 3 + 1]), z = (p.z = positions[v * 3 + 2]);
+    if (!marked.some((f) => x >= f.min.x && y >= f.min.y && z >= f.min.z && x <= f.max.x && y <= f.max.y && z <= f.max.z)) continue;
+    if (normals) { g.x = normals[v * 3]; g.y = normals[v * 3 + 1]; g.z = normals[v * 3 + 2]; } else {
+      const gx = sdf(x + h, y, z) - sdf(x - h, y, z), gy = sdf(x, y + h, z) - sdf(x, y - h, z), gz = sdf(x, y, z + h) - sdf(x, y, z - h);
+      const l = Math.hypot(gx, gy, gz);
+      if (l > 0) { g.x = gx / l; g.y = gy / l; g.z = gz / l; } else { g.x = 0; g.y = 1; g.z = 0; }
+    }
+    marksAt(marked, p, g, out, v * 4);
+  }
+  return out;
+}
+
+/**
  * Recipe → a skinned body at each level of detail. Pure and deterministic. The body is sampled finely near
  * its surface, meshed, then simplified (more detail kept on faces, feet and joints) down to each LOD's budget;
- * every LOD comes from the same collapse chain, so asking for one LOD gives what the full set would.
+ * every LOD comes from the same collapse chain, so asking for one LOD gives what the full set would. Each vertex
+ * carries its colour marks (nose, inner ear, mouth, hoof) for the skin material.
  */
 export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], times?: BuildTimes): BodyData {
   let t = performance.now();
   const lap = (k: keyof BuildTimes) => { const now = performance.now(); if (times) times[k] += now - t; t = now; };
   const skeleton = buildSkeleton(recipe);
   const regions = recipe.skin.regions.map((r) => r.id);
-  const { longest, fine, sdf, field } = sampleBody(skeleton, recipe);
+  const { longest, fine, anat, sdf, field } = sampleBody(skeleton, recipe);
   lap('sample');
   const raw = splitNonManifold(surfaceNetsSparse(field));
   const rawVertices = raw.positions.length / 3;
   if (times) times.rawVertices = rawVertices;
   lap('mesh');
 
-  const weight = importance(skeleton, raw.positions);
+  const weight = importance(skeleton, raw.positions, featureMarks(anat.features, raw.positions, null, sdf, fine / 2));
   lap('weigh');
   const area = rawVertices * fine * fine;
   const lod0 = Math.round((LOD0_BUDGET * 2 * area) / (longest / LOD0_CELLS) ** 2);
@@ -151,7 +173,7 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
     lap('snap');
     const skin = skinWeights(positions, skeleton, regions);
     lap('skin');
-    const mesh = { positions, normals, indices, ...skin };
+    const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2) };
     made.set(l, mesh);
     return mesh;
   });

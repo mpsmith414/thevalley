@@ -1,8 +1,8 @@
 import { MeshStandardNodeMaterial, SkinnedMesh, type BufferGeometry, type Material } from 'three/webgpu';
 import {
-  float, floor, fract, hash, length, mix, mx_noise_vec3, normalLocal, positionLocal, select, smoothstep, uniform, varying, vec3,
+  float, floor, fract, hash, length, max, mix, mx_noise_vec3, normalLocal, positionLocal, select, smoothstep, uniform, varying, vec3,
 } from 'three/tsl';
-import { regionNodes } from './material';
+import { markedColor, regionNodes } from './material';
 import type { RegionPack } from './patterns';
 
 /** Shell heights as fractions 0..1 of the fur length, packed closer near the skin (where fur is densest). */
@@ -19,8 +19,9 @@ const DENSITY = 320;
  */
 export function furMaterial(pack: RegionPack): MeshStandardNodeMaterial | null {
   if (pack.furLength.every((l) => l <= 0)) return null;
-  const r = regionNodes(pack);
-  const len = r.furLength;
+  const r = regionNodes(pack), f = r.feature;
+  // no fur on the nose, lips or hooves, and short fur inside the ears
+  const len = r.furLength.mul(float(1).sub(max(max(f.x, f.z), max(f.w, f.y.mul(0.7)))));
   const t = uniform(0).onObjectUpdate(({ object }) => (object?.userData.shellT as number | undefined) ?? 0);
   // fluffy fur clumps and wanders; every strand droops a little under gravity
   const wander = mx_noise_vec3(r.bp.mul(40)).mul(r.fluff).mul(len).mul(t).mul(0.8);
@@ -41,7 +42,7 @@ export function furMaterial(pack: RegionPack): MeshStandardNodeMaterial | null {
   m.opacityNode = select(present.and(varying(len).greaterThan(0.0005)), strand, float(0));
   m.alphaTest = 0.5;
   // fur is darker near the skin (self-shadowing), lighter at the tips
-  m.colorNode = varying(r.colorNode).mul(mix(float(0.5), float(1.08), smoothstep(0, 1, t)));
+  m.colorNode = varying(markedColor(r)).mul(mix(float(0.5), float(1.08), smoothstep(0, 1, t)));
   m.roughnessNode = float(0.95);
   return m;
 }

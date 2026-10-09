@@ -11,8 +11,14 @@ export const ROLE_IMPORTANCE: Record<Role, number> = {
 /** Extra weight on a leg within one radius (along the bone) of either end: knees, hocks, hips and wrists. */
 const JOINT_BONUS = 1.5;
 
-/** How much detail each vertex deserves (≥ 1): faces most, then feet and joints. From the nearest bone (eyes included). */
-export function importance(sk: Skeleton, positions: Float32Array): Float32Array {
+/** Extra weight per unit of a vertex's strongest colour mark (nose, inner ear, mouth, hoof keep their detail). */
+const MARK_BONUS = 6;
+
+/**
+ * How much detail each vertex deserves (≥ 1): faces most, then feet and joints, from the nearest bone (eyes included);
+ * plus MARK_BONUS × its strongest mark when `marks` (4 per vertex) is given.
+ */
+export function importance(sk: Skeleton, positions: Float32Array, marks?: Float32Array): Float32Array {
   const bones = sk.bones.map((b) => {
     const ax = b.end.x - b.start.x, ay = b.end.y - b.start.y, az = b.end.z - b.start.z;
     const len = Math.hypot(ax, ay, az) || 1;
@@ -34,6 +40,7 @@ export function importance(sk: Skeleton, positions: Float32Array): Float32Array 
       const t = (p.x - b.start.x) * ax + (p.y - b.start.y) * ay + (p.z - b.start.z) * az;
       if (t <= b.r0 || t >= len - b.r1) w += JOINT_BONUS;
     }
+    if (marks) w += MARK_BONUS * Math.max(marks[v * 4], marks[v * 4 + 1], marks[v * 4 + 2], marks[v * 4 + 3]);
     out[v] = w;
   }
   return out;
