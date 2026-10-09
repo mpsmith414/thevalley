@@ -344,11 +344,52 @@ function step(frames: number, dt = 1 / 60) {
   paused = true;
   for (let i = 0; i < frames; i++) tick(dt);
 }
+/**
+ * Dev: three standard shots of a recipe, idling: `<prefix>-face` (close, in front of the head, a little to its left and
+ * above), `<prefix>-34` (three-quarter from front-left) and `<prefix>-side` (from +x). The camera is put back afterwards.
+ */
+async function portrait(recipe: Recipe, prefix: string) {
+  await show(recipe);
+  setAction('idle');
+  step(90);
+  if (!creature || !rig) return;
+  const saved = { pos: camera.position.clone(), target: controls.target.clone(), min: controls.minDistance };
+  controls.minDistance = 0.01; // close faces sit inside the usual limit
+  const q = creature.root.quaternion;
+  const fwd = new Vector3(0, 0, 1).applyQuaternion(q), left = new Vector3(1, 0, 0).applyQuaternion(q), up = new Vector3(0, 1, 0);
+  /** Unit direction from the target to the camera: azimuth from forward towards the creature's left, then elevation. */
+  const dirAt = (azimuth: number, elevation: number) =>
+    fwd.clone().multiplyScalar(Math.cos(azimuth)).addScaledVector(left, Math.sin(azimuth)).multiplyScalar(Math.cos(elevation))
+      .addScaledVector(up, Math.sin(elevation));
+  const aim = async (target: Vector3, dir: Vector3, dist: number, name: string) => {
+    controls.target.copy(target);
+    camera.position.copy(target).addScaledVector(dir, dist);
+    camera.lookAt(target);
+    await shot(`${prefix}-${name}`);
+  };
+  const deg = Math.PI / 180;
+  const bones = rig.body.skeleton.bones;
+  const headIx = Math.max(0, bones.findIndex((b) => b.role === 'head'));
+  const hb = bones[headIx];
+  // the head bone runs start→end (the neck end is `start`): aim at its middle, and measure its radius as a sphere round it
+  const headMid = creature.bones[headIx].localToWorld(new Vector3((hb.end.x - hb.start.x) / 2, (hb.end.y - hb.start.y) / 2, (hb.end.z - hb.start.z) / 2));
+  const headR = Math.hypot(hb.end.x - hb.start.x, hb.end.y - hb.start.y, hb.end.z - hb.start.z) / 2 + Math.max(hb.r0, hb.r1);
+  await aim(headMid, dirAt(25 * deg, 10 * deg), 2.2 * headR, 'face');
+  const size = Math.max(0.3, recipe.life.sizeM, rig.body.skeleton.max.y);
+  const mid = new Vector3(creature.root.position.x, creature.root.position.y + rig.restHeight, creature.root.position.z);
+  await aim(mid, dirAt(45 * deg, 12 * deg), size * 2.2 + 0.4, '34');
+  await aim(mid, dirAt(90 * deg, 12 * deg), size * 2.2 + 0.4, 'side');
+  camera.position.copy(saved.pos);
+  controls.target.copy(saved.target);
+  controls.minDistance = saved.min;
+  controls.update();
+}
+
 if (import.meta.env.DEV) {
   const fixtures = await import('../../tests/fixtures/recipes');
   Object.assign(window, {
     __lab: {
-      scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen,
+      scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait,
       resume: () => (paused = false),
       act: setAction,
       get creature() { return creature; },
