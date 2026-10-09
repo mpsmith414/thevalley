@@ -25,6 +25,9 @@ export function lakeDistance(isLake: (x: number, z: number) => boolean, x: numbe
   return best;
 }
 
+/** Where the lake is: water at the lake's level (the river runs above it, except in its last metres into the lake). */
+export const isLake = (valley: Valley, level: number) => (x: number, z: number) => valley.isWater(x, z) && valley.waterLevelAt(x, z) <= level + 0.05;
+
 /** The mean forest weight of 8 points `r` m around (x, z). */
 export function forestAround(valley: Valley, x: number, z: number, r = 15): number {
   let sum = 0;

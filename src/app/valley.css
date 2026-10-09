@@ -61,4 +61,5 @@ body { background: #b9c8cf; color: #14405c; }
   font-size: clamp(20px, 2.8vw, 32px); box-shadow: 0 4px 14px #0003; animation: start-pulse 1.6s ease-in-out infinite;
 }
 .start-hint { margin: 0; font-size: clamp(16px, 1.8vw, 22px); font-weight: 700; color: #14405cb0; }
+.start.nudge .start-hint { color: #14405c; font-weight: 900; }
 @keyframes start-pulse { 50% { transform: scale(1.05); } }

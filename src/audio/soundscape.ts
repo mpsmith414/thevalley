@@ -20,8 +20,13 @@ const VOLUME_KEY = 'valley.volume', MUTED_KEY = 'valley.muted';
 
 /** Move `g` towards `target` over `dt` seconds with time constant `tau`. */
 export const ease = (g: number, target: number, dt: number, tau = EASE) => target + (g - target) * Math.exp(-dt / tau);
+/** A remembered volume, made safe: a finite number clamped to 0..1, anything else the default 0.8. */
+export const toVolume = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.8);
+/** A remembered mute, made safe: only `true` mutes. */
+export const toMuted = (v: unknown) => v === true;
 
-export type Source = 'loading' | 'file' | 'synth';
+/** `off`: neither the file nor the stand-in would play (the layer stays silent). */
+export type Source = 'loading' | 'file' | 'synth' | 'off';
 export type Soundscape = {
   /** Resolves once every layer is playing (from its file or synthesised). */
   readonly ready: Promise<void>;
@@ -43,7 +48,7 @@ export type Soundscape = {
 export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; seed?: number; synth?: boolean } = {}): Soundscape {
   const base = opts.base ?? `${import.meta.env.BASE_URL}assets/audio/`;
   const rng = mulberry32(opts.seed ?? 0x5017d);
-  let volume = Math.min(1, Math.max(0, stored(VOLUME_KEY, 0.8))), muted = stored(MUTED_KEY, false);
+  let volume = toVolume(stored<unknown>(VOLUME_KEY, 0.8)), muted = toMuted(stored<unknown>(MUTED_KEY, false));
   const master = ctx.createGain();
   master.gain.value = muted ? 0 : volume;
   master.connect(ctx.destination);
@@ -207,15 +212,26 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
     if (!r.ok) throw new Error(`${name}.ogg: ${r.status}`);
     return ctx.decodeAudioData(await r.arrayBuffer()); // a dev server's HTML fallback fails here too
   };
+  /** Why a file was not used (quiet when the stand-ins were asked for). */
+  const fellBack = (name: string, e: unknown) => {
+    if (!opts.synth) console.warn(`sound: ${name}.ogg did not load (${e instanceof Error ? e.message : e}); synthesising it instead`);
+  };
   const ready = Promise.all([
     ...LAYERS.map(async (k) => {
       try {
         if (opts.synth) throw new Error('synth only');
         loop(await load(k), out[k]);
         source[k] = 'file';
-      } catch {
+        return;
+      } catch (e) {
+        fellBack(k, e);
+      }
+      try {
         synth[k]();
         source[k] = 'synth';
+      } catch (e) {
+        source[k] = 'off';
+        console.warn(`sound: the ${k} layer could not be synthesised either; it stays silent`, e);
       }
     }),
     (async () => {
@@ -223,11 +239,12 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
         if (opts.synth) throw new Error('synth only');
         owlBuffer = await load('owl');
         source.owl = 'file';
-      } catch {
+      } catch (e) {
+        fellBack('owl', e);
         source.owl = 'synth';
       }
     })(),
-  ]).then(() => {});
+  ]).then(() => {}, (e) => console.warn('sound: a layer failed to start', e)); // never rejects
 
   let nextChirp = 0, nextOwl = between(rng, 5, OWL_GAP[1]);
   return {
@@ -258,7 +275,7 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
       return muted;
     },
     setVolume(v) {
-      volume = Math.min(1, Math.max(0, v));
+      volume = toVolume(v);
       remember(VOLUME_KEY, volume);
       setMaster();
     },
@@ -266,6 +283,32 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
       muted = on;
       remember(MUTED_KEY, muted);
       setMaster();
+    },
+  };
+}
+
+/** A soundscape that does nothing: what the valley uses when the browser cannot make sound at all. */
+export function silentSoundscape(): Soundscape {
+  const zero = () => Object.fromEntries(LAYERS.map((k) => [k, 0])) as Record<Layer, number>;
+  let volume = toVolume(stored<unknown>(VOLUME_KEY, 0.8)), muted = toMuted(stored<unknown>(MUTED_KEY, false));
+  return {
+    ready: Promise.resolve(),
+    update() {},
+    gains: zero,
+    sources: () => Object.fromEntries([...LAYERS, 'owl'].map((k) => [k, 'off'])) as Record<Layer | 'owl', Source>,
+    get volume() {
+      return volume;
+    },
+    get muted() {
+      return muted;
+    },
+    setVolume(v) {
+      volume = toVolume(v);
+      remember(VOLUME_KEY, volume);
+    },
+    mute(on) {
+      muted = on;
+      remember(MUTED_KEY, muted);
     },
   };
 }

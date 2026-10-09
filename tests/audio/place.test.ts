@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { forestAround, lakeDistance, listenerPlace } from '../../src/audio/place';
+import { forestAround, isLake as lakeAt, lakeDistance, listenerPlace } from '../../src/audio/place';
 import { VALLEY } from '../../src/valley/layout';
 import { createValley } from '../../src/valley/valley';
 import { smallValleyData } from '../fixtures/valley';
 
 const valley = createValley(smallValleyData(513));
-const isLake = (x: number, z: number) => valley.isWater(x, z) && valley.waterLevelAt(x, z) <= VALLEY.lake.level + 0.05;
+const isLake = lakeAt(valley, VALLEY.lake.level);
 /** Metres to the lake's outline (the drawn shore). */
 const outline = (x: number, z: number) => VALLEY.lake.outline.reduce((m, p) => Math.min(m, Math.hypot(p.x - x, p.z - z)), Infinity);
 

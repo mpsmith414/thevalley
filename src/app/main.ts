@@ -27,8 +27,8 @@ import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '..
 import { createWind, gustAt, setWind, updateWind, windUniforms } from '../plants/wind';
 import { IMPOSTOR_LAYER, bakeImpostors, createImpostorLayer } from '../plants/impostor';
 import { GROUND_COVER_LAYER, createGroundCover, loadFlowerCards } from '../plants/grass';
-import { createSoundscape } from '../audio/soundscape';
-import { listenerPlace } from '../audio/place';
+import { createSoundscape, silentSoundscape, type Soundscape } from '../audio/soundscape';
+import { isLake, listenerPlace } from '../audio/place';
 import { openLoading, toast } from './loading';
 import { openStart } from './start';
 import './valley.css';
@@ -47,9 +47,18 @@ const ui = document.querySelector<HTMLElement>('#ui')!;
 
 /** Everything up to the first frame: the renderer, the Valley (from the cache or the worker), the scene, compiled. */
 async function start(step: Parameters<typeof loadValley>[2], say: (text: string) => void) {
-  // the sound: its context starts suspended (until the start screen's press) while the recordings load with everything else
-  const audio = new AudioContext();
-  const sound = createSoundscape(audio);
+  // the sound: its context starts suspended (until the start screen's press) while the recordings load with everything else;
+  // sound is a nicety, so if the browser cannot make any the valley goes on in silence
+  let audio: AudioContext | null = null, sound: Soundscape;
+  try {
+    audio = new AudioContext();
+    sound = createSoundscape(audio);
+  } catch (e) {
+    console.warn('sound: no audio in this browser; the valley will be silent', e);
+    void audio?.close().catch(() => {});
+    audio = null;
+    sound = silentSoundscape();
+  }
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
   // the animals' bodies build in the builder's worker while the valley is made (the residents pick them up from its cache)
   const builder = new BuilderClient();
@@ -234,8 +243,17 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   resize();
 
   // ---------- the soundscape follows the camera, the hour and the wind ----------
-  const isLake = (x: number, z: number) => valley.isWater(x, z) && valley.waterLevelAt(x, z) <= VALLEY.lake.level + 0.05;
-  const place = listenerPlace(valley, isLake);
+  const place = listenerPlace(valley, isLake(valley, VALLEY.lake.level));
+  let soundFailed = false;
+  /** Mix the sound for the camera; a failure is reported once and never stops the frame. */
+  const hear = (dt: number) => {
+    try {
+      sound.update(listener(), dt);
+    } catch (e) {
+      if (!soundFailed) console.warn('sound: the mix failed this frame', e);
+      soundFailed = true;
+    }
+  };
   /** The camera as the soundscape's listener. */
   const listener = () => {
     const { x, y, z } = camera.position, hour = clock.hour;
@@ -253,7 +271,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     cover.update(camera);
     residents.update(dt, camera, clock.hour);
     light(dt);
-    sound.update(listener(), dt);
+    hear(dt);
   };
   tick(0);
   light(Infinity);
@@ -391,7 +409,7 @@ function devHooks(w: World) {
       audio: () => {
         const r = (v: number) => Math.round(v * 1000) / 1000, g = w.sound.gains(), l = w.listener();
         return {
-          state: w.audio.state, volume: w.sound.volume, muted: w.sound.muted, sources: w.sound.sources(),
+          state: w.audio?.state ?? 'unavailable', volume: w.sound.volume, muted: w.sound.muted, sources: w.sound.sources(),
           gains: Object.fromEntries(Object.entries(g).map(([k, v]) => [k, r(v)])),
           listener: { hour: r(l.hour), sun: r(l.sunElevation), height: r(l.heightAboveGround), lake: r(l.lakeDistance), river: r(l.riverDistance), slope: r(l.riverSlope), forest: r(l.forestAround), gust: r(l.gust), strength: r(l.strength) },
         };
@@ -423,7 +441,7 @@ if (world) {
   run(world);
   loading.close();
   world.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
-  await openStart(ui, world.audio); // one press wakes the sound (skipped when the browser already lets it play)
+  if (world.audio) await openStart(ui, world.audio); // one press wakes the sound (skipped when the browser already lets it play)
   world.release();
   if (world.cached) toast(ui, 'Welcome back!');
 }
