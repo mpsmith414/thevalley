@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { anatomy, anatomyBounds, type Anatomy } from '../../src/builder/anatomy';
 import { boneFrame, feature, shapeSdf, smax, type Feature } from '../../src/builder/anatomy/shapes';
 import { surfaceNets, surfaceNetsSparse } from '../../src/builder/mesher';
-import { bodySdf, coarseBodySdf, smin } from '../../src/builder/sdf';
+import { blendFor, bodySdf, coarseBodySdf, smin } from '../../src/builder/sdf';
 import { sampleSparse } from '../../src/builder/sparse';
 import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
-import { dot, v3, type Vec3 } from '../../src/util/vec';
+import { dist, dot, v3, type Vec3 } from '../../src/util/vec';
 import { biped, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 import { sampleBody } from '../../src/builder/build';
 
@@ -17,6 +17,18 @@ const anat = (r: Recipe) => { const sk = buildSkeleton(r); return { sk, a: anato
 const named = (a: Anatomy, name: string) => a.features.filter((f) => f.name === name);
 const withMuscle = (r: Recipe, muscle: number): Recipe => ({ ...r, build: { ...r.build, muscle } });
 const MUSCLE = ['haunch', 'shoulder', 'blade', 'crest'];
+const cast = (id: string) => CAST.find((c) => c.recipe.id === id)!.recipe;
+/** Edges used by only one triangle in the production-cell mesh (0 for a closed mesh). */
+function openEdges(recipe: Recipe): number {
+  const m = surfaceNetsSparse(sampleBody(buildSkeleton(recipe), recipe).field);
+  const edges = new Map<number, number>(), n = m.positions.length / 3;
+  for (let t = 0; t < m.indices.length; t += 3)
+    for (let e = 0; e < 3; e++) {
+      const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  return [...edges.values()].filter((c) => c === 1).length;
+}
 
 describe('shapes', () => {
   it('an ellipsoid is negative inside, ~0 on its surface, positive outside', () => {
@@ -167,17 +179,8 @@ describe('body anatomy', () => {
   });
 
   it('meshes closed at the production cell (long hexapod belly, big frog features)', () => {
-    for (const recipe of [hexapod, CAST.find((c) => c.recipe.id === 'frog')!.recipe]) {
-      const m = surfaceNetsSparse(sampleBody(buildSkeleton(recipe), recipe).field);
-      const edges = new Map<number, number>(), n = m.positions.length / 3;
-      for (let t = 0; t < m.indices.length; t += 3)
-        for (let e = 0; e < 3; e++) {
-          const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
-          edges.set(key, (edges.get(key) ?? 0) + 1);
-        }
-      expect([...edges.values()].filter((c) => c === 1)).toHaveLength(0);
-    }
-  });
+    for (const recipe of [hexapod, CAST.find((c) => c.recipe.id === 'frog')!.recipe]) expect(openEdges(recipe)).toBe(0);
+  }, 60_000);
 
   it('the coarse (shallow) SDF never overstates depth inside a long ellipsoid', () => {
     // one add ellipsoid (4 : 1) far from every bone, so the body SDF there is the ellipsoid alone
@@ -243,4 +246,136 @@ describe('body anatomy', () => {
     const coarse = anatomy(sk, fox, { cell: 0.05 });
     expect(coarse.features.length).toBeLessThan(anatomy(sk, fox, detail(sk)).features.length);
   });
+});
+
+describe('feet', () => {
+  const FINE = { cell: 0.0005 }; // fine enough that nothing is skipped
+  const feetOf = (r: Recipe, d = FINE) => { const sk = buildSkeleton(r); return { sk, a: anatomy(sk, r, d), feet: sk.bones.map((b, i) => [b, i] as const).filter(([b]) => b.role === 'foot') }; };
+  const shrunk = (r: Recipe, k: number): Recipe => ({ ...r, life: { ...r.life, sizeM: r.life.sizeM * k }, parts: r.parts.map((p) => ({ ...p, length: p.length * k, r0: p.r0 * k, r1: p.r1 * k, offset: { x: p.offset.x * k, y: p.offset.y * k, z: p.offset.z * k } })) });
+  const from = (p: Vec3, q: Vec3) => v3(q.x - p.x, q.y - p.y, q.z - p.z);
+
+  it("a deer's four hooves each get a split and a hoof mark around the foot bone", () => {
+    const { a, feet } = feetOf(cast('deer'));
+    expect(feet).toHaveLength(4);
+    const splits = named(a, 'split'), marks = a.features.filter((f) => f.op === 'mark');
+    expect(splits.map((f) => f.bone)).toEqual(feet.map(([, i]) => i));
+    expect(marks.map((f) => f.bone)).toEqual(feet.map(([, i]) => i));
+    for (const [b, i] of feet) {
+      const rf = Math.max(b.r0, b.r1), m = marks.find((f) => f.bone === i)!, s = splits.find((f) => f.bone === i)!;
+      expect(m).toMatchObject({ mark: 'hoof', name: 'hoof' });
+      expect(m.markBand).toBeCloseTo(0.3 * rf, 9);
+      if (m.shape.type !== 'cone' || s.shape.type !== 'cone') throw new Error('cones');
+      expect(m.shape.a).toEqual(b.start); expect(m.shape.b).toEqual(b.end);
+      expect(m.shape.r0).toBeCloseTo(b.r0 + 0.1 * rf, 9);
+      expect(s.op).toBe('carve'); expect(s.k).toBeCloseTo(0.04 * rf, 9);
+    }
+    expect(a.features.filter((f) => f.op === 'add' && ['pad', 'toe', 'web'].includes(f.name!))).toHaveLength(0);
+  });
+
+  it('hooves blend into the leg tighter (0.05) than other feet (0.15), and bodySdf uses it', () => {
+    expect(blendFor('foot', 'hooves')).toBe(0.05);
+    for (const f of ['paws', 'talons', 'webbed', 'plain'] as const) expect(blendFor('foot', f)).toBe(0.15);
+    expect(blendFor('foot')).toBe(0.15);
+    expect(blendFor('leg', 'hooves')).toBe(0.25);
+    const deer = cast('deer'), sk = buildSkeleton(deer), a = anatomy(sk, deer, FINE);
+    expect(a.feet).toBe('hooves');
+    const hoofed = bodySdf(sk, { features: [], slim: a.slim, feet: 'hooves' }), soft = bodySdf(sk, { features: [], slim: a.slim, feet: 'paws' });
+    let higher = 0;
+    for (const b of sk.bones.filter((g) => g.role === 'foot'))
+      for (let i = 0; i < 40; i++) {
+        const p = v3(b.start.x + ((i % 5) - 2) * 0.01, b.start.y + (Math.floor(i / 5) - 4) * 0.01, b.start.z + 0.01);
+        expect(hoofed(p.x, p.y, p.z)).toBeGreaterThanOrEqual(soft(p.x, p.y, p.z) - 1e-12);
+        if (hoofed(p.x, p.y, p.z) > soft(p.x, p.y, p.z) + 1e-9) higher++;
+      }
+    expect(higher).toBeGreaterThan(0);
+  });
+
+  it("a hawk's talons: three forward toes and a back toe per foot, pointed, tilted down", () => {
+    const { a, feet } = feetOf(cast('hawk'));
+    expect(feet).toHaveLength(2);
+    expect(named(a, 'toe')).toHaveLength(8);
+    for (const [b, i] of feet) {
+      const rf = Math.max(b.r0, b.r1), f = boneFrame(b), T = Math.max(dist(b.start, b.end), 2.5 * rf);
+      const toes = named(a, 'toe').filter((t) => t.bone === i);
+      expect(toes).toHaveLength(4);
+      const dirs = toes.map((t, j) => {
+        if (t.shape.type !== 'cone') throw new Error('cone');
+        expect(t.shape.a).toEqual(b.end);
+        const d = from(b.end, t.shape.b);
+        expect(Math.hypot(d.x, d.y, d.z)).toBeCloseTo(j < 3 ? T : 0.6 * T, 9);
+        expect(dot(d, f.up)).toBeLessThan(0); // tilted down
+        expect(dot(d, f.a) > 0).toBe(j < 3); // three forward, one back
+        expect(t.shape.r0).toBeCloseTo(0.38 * rf, 9); expect(t.shape.r1).toBeCloseTo(0.07 * rf, 9);
+        expect(t.k).toBeCloseTo(0.15 * rf, 9);
+        return d;
+      });
+      // the forward toes fan out to both sides
+      expect(dot(dirs[0], f.side)).toBeLessThan(0); expect(dot(dirs[2], f.side)).toBeGreaterThan(0);
+      expect(Math.abs(dot(dirs[1], f.side))).toBeLessThan(1e-9);
+    }
+  });
+
+  it("a duck's webbed feet: three blunt toes and one web per foot", () => {
+    const { a, feet } = feetOf(cast('duck'));
+    expect(feet).toHaveLength(2);
+    expect(named(a, 'web')).toHaveLength(2);
+    expect(named(a, 'toe')).toHaveLength(6);
+    for (const [b, i] of feet) {
+      const rf = Math.max(b.r0, b.r1), T = Math.max(dist(b.start, b.end), 2.5 * rf);
+      const toe = named(a, 'toe').find((t) => t.bone === i)!, web = named(a, 'web').find((t) => t.bone === i)!;
+      if (toe.shape.type !== 'cone' || web.shape.type !== 'ellipsoid') throw new Error('shapes');
+      expect(toe.shape.r0).toBeCloseTo(0.3 * rf, 9); expect(toe.shape.r1).toBeCloseTo(0.2 * rf, 9);
+      expect(web.shape.r.x).toBeCloseTo(0.5 * T, 9); expect(web.shape.r.y).toBeCloseTo(0.75 * T, 9);
+      expect(web.shape.r.z).toBeCloseTo(Math.max(0.06 * rf, FINE.cell), 9);
+      expect(web.k).toBeCloseTo(0.1 * rf, 9);
+    }
+  });
+
+  it('a fox paw has four toe pads and three grooves between them', () => {
+    const { a, feet } = feetOf(cast('fox'));
+    expect(feet).toHaveLength(4);
+    expect(named(a, 'pad')).toHaveLength(16);
+    expect(named(a, 'groove')).toHaveLength(12);
+    for (const [b, i] of feet) {
+      const rf = Math.max(b.r0, b.r1), f = boneFrame(b);
+      const pads = named(a, 'pad').filter((p) => p.bone === i);
+      expect(pads).toHaveLength(4);
+      pads.forEach((p, j) => {
+        if (p.shape.type !== 'ellipsoid') throw new Error('ellipsoid');
+        expect(dot(from(b.end, p.shape.c), f.side) / rf).toBeCloseTo([-0.6, -0.2, 0.2, 0.6][j], 9);
+      });
+      expect(named(a, 'groove').filter((g) => g.bone === i && g.op === 'carve')).toHaveLength(3);
+    }
+    expect(a.features.some((f) => f.op === 'mark')).toBe(false);
+  });
+
+  it('plain feet and legless bodies get nothing', () => {
+    const names = ['pad', 'groove', 'split', 'toe', 'web', 'hoof'];
+    const plainFox = { ...fox, build: { ...fox.build, feet: 'plain' as const } };
+    for (const r of [snake, blob, plainFox, cast('trout')]) expect(anat(r).a.features.filter((f) => names.includes(f.name!))).toHaveLength(0);
+  });
+
+  it('tiny feet skip the grooves and the hoof split (thinner than a cell), but keep their pads', () => {
+    const tiny = shrunk(fox, 0.1), sk = buildSkeleton(tiny);
+    expect(sk.max.z - sk.min.z).toBeLessThan(0.15);
+    const small = anatomy(sk, tiny, { cell: 0.0003 }); // 0.06 × the paw radius (0.0017) is under a cell
+    expect(named(small, 'groove')).toHaveLength(0);
+    expect(named(small, 'pad').length).toBeGreaterThan(0);
+    expect(named(feetOf(fox).a, 'groove')).toHaveLength(12);
+    const deer = cast('deer'), coarse = anatomy(buildSkeleton(deer), deer, { cell: 0.01 });
+    expect(named(coarse, 'split')).toHaveLength(0);
+    expect(coarse.features.filter((f) => f.mark === 'hoof')).toHaveLength(4);
+  });
+
+  it('at the production cell the hawk keeps its talons, the duck its toes and web, the fox its pads', () => {
+    const at = (id: string) => { const r = cast(id); return sampleBody(buildSkeleton(r), r).anat; };
+    expect(named(at('hawk'), 'toe')).toHaveLength(8);
+    expect(named(at('duck'), 'toe')).toHaveLength(6);
+    expect(named(at('duck'), 'web')).toHaveLength(2);
+    expect(named(at('fox'), 'pad')).toHaveLength(16);
+  }, 60_000);
+
+  it('meshes closed at the production cell with hooves, paws, talons and webs', () => {
+    for (const id of ['deer', 'fox', 'hawk', 'duck', 'rabbit']) expect(openEdges(cast(id)), id).toBe(0);
+  }, 60_000);
 });

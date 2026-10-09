@@ -1,4 +1,4 @@
-import type { FlatFacing, Role } from '../recipe/schema';
+import type { Build, FlatFacing, Role } from '../recipe/schema';
 import { cross, dot, norm, scale, sub, v3, type Vec3 } from '../util/vec';
 import type { Anatomy } from './anatomy';
 import type { Feature } from './anatomy/shapes';
@@ -40,12 +40,12 @@ export function smin(a: number, b: number, k: number): number {
 }
 
 /** How softly each kind of part melts into what it grows from (× the joint radius). */
-export function blendFor(role: Role): number {
+export function blendFor(role: Role, feet?: Build['feet']): number {
   switch (role) {
     case 'torso': case 'neck': case 'head': return 0.6;
     case 'tail': return 0.4;
     case 'leg': return 0.25;
-    case 'foot': return 0.15;
+    case 'foot': return feet === 'hooves' ? 0.05 : 0.15;
     case 'ear': case 'fin': case 'wing': return 0.2;
     case 'horn': case 'antenna': return 0.05;
     case 'eye': return 0;
@@ -103,7 +103,7 @@ export function bodySdf(sk: Skeleton, anat?: Anatomy, margin = 0.03, shallow = f
   list.forEach((b, i) => {
     const par = b.parent >= 0 ? bones[b.parent] : null;
     const joint = par ? Math.min(b.r0, Math.max(par.r0, par.r1)) : 0;
-    const k = par ? blendFor(b.role) * joint : 0;
+    const k = par ? blendFor(b.role, anat?.feet) * joint : 0;
     // reach = radius + blend + a margin, so points just off the surface still see this bone exactly
     const r = Math.max(b.r0, b.r1) * 1.5 + k + margin;
     const t = thinAxis(b);

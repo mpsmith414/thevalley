@@ -14,7 +14,7 @@ import { skinWeights } from './weights';
 /** Fine sampling: cells along the creature's longest dimension (only near the surface). */
 export const FINE_CELLS = 330;
 /** Bulky bodies sample more coarsely than FINE_CELLS so the raw mesh stays near this many vertices (build time). */
-export const MAX_RAW_VERTICES = 160_000;
+export const MAX_RAW_VERTICES = 110_000;
 /** LOD0 budget relative to today's 110-cell mesh; LOD1 and LOD2 are ¼ and 1/16 of LOD0. */
 export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2;
 /** Cells along the longest dimension of the quick pass that estimates the surface before fine sampling. */

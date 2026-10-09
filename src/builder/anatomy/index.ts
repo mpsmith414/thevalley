@@ -1,18 +1,19 @@
-import type { Recipe } from '../../recipe/schema';
+import type { Build, Recipe } from '../../recipe/schema';
 import { v3, type Vec3 } from '../../util/vec';
 import type { Skeleton } from '../skeleton';
 import { bodyFeatures, slimLowerLegs } from './body';
+import { footFeatures } from './feet';
 import type { Feature } from './shapes';
 
 /** How fine the body is meshed: features smaller than about two cells are skipped. */
 export type Detail = { cell: number };
 
 /** The anatomy layer: extra shapes blended into the bones' SDF, and a radius scale per bone. */
-export type Anatomy = { features: Feature[]; slim: Float32Array /* per bone radius scale */ };
+export type Anatomy = { features: Feature[]; slim: Float32Array /* per bone radius scale */; feet?: Build['feet'] /* how feet blend into the leg (hooves are tighter) */ };
 
 /** Anatomy for a skeleton from its recipe's build (and, later, face) hints. Pure and deterministic. */
 export function anatomy(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin'>, detail: Detail): Anatomy {
-  return { features: bodyFeatures(sk, recipe.build, detail), slim: slimLowerLegs(sk, recipe.build) };
+  return { features: [...bodyFeatures(sk, recipe.build, detail), ...footFeatures(sk, recipe.build, detail)], slim: slimLowerLegs(sk, recipe.build), feet: recipe.build.feet };
 }
 
 /** The body's bounds: the skeleton's, grown to hold every add feature's reach box (a haunch can stick out past the bones). */
