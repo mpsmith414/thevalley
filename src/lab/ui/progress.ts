@@ -1,6 +1,6 @@
 import { imageUrl } from '../../designer/image';
 import type { ProgressStep } from '../../designer/loop';
-import { clear, h } from './dom';
+import { clear, h } from '../../shared/dom';
 import { openPanel } from './shell';
 
 /** "Reading your drawing… → Building the body… → Taking a look…", with the drawing beside each build. */

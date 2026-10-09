@@ -1,6 +1,6 @@
 import type { KidCards } from '../../designer/types';
 import type { Action } from '../../motion/actions';
-import { clear, h } from './dom';
+import { clear, h } from '../../shared/dom';
 
 export const ACTION_BUTTONS: { action: Action; label: string; icon: string }[] = [
   { action: 'wander', label: 'Wander', icon: '🌿' },

@@ -4,7 +4,7 @@ import { api, DesignerInvalid, DesignerResting } from '../designer/api';
 import { imageUrl, prepareImage } from '../designer/image';
 import { designCreature, type DesignOutcome } from '../designer/loop';
 import { Gallery, newId } from '../lab/gallery';
-import { h, clear } from '../lab/ui/dom';
+import { h, clear } from '../shared/dom';
 import { createRenderer } from '../render/renderer';
 import { renderView } from '../render/snapshot';
 import './drawings.css';

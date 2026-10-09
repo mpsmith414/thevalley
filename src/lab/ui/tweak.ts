@@ -1,4 +1,4 @@
-import { h } from './dom';
+import { h } from '../../shared/dom';
 import { openPanel } from './shell';
 
 /** "Change it": a few words like "make it bigger" or "give it wings". */

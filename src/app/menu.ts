@@ -1,4 +1,4 @@
-import { h } from '../lab/ui/dom';
+import { h } from '../shared/dom';
 import { QUALITY_CHOICES, type QualityChoice, type Tier } from '../render/quality';
 import { FocusRing } from '../shared/focus';
 import type { Button } from '../shared/input';

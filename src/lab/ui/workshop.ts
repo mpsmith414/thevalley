@@ -1,5 +1,5 @@
 import type { GalleryItem } from '../gallery';
-import { clear, h } from './dom';
+import { clear, h } from '../../shared/dom';
 
 export type WorkshopInfo = {
   item: GalleryItem | null;

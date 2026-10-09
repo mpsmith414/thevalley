@@ -1,7 +1,7 @@
 import { imageUrl } from '../../designer/image';
 import type { ImageIn } from '../../designer/types';
 import type { Gallery, GalleryItem } from '../gallery';
-import { clear, h } from './dom';
+import { clear, h } from '../../shared/dom';
 import { openPanel } from './shell';
 
 export type GalleryHandlers = {

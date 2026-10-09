@@ -1,4 +1,4 @@
-import { h } from './dom';
+import { h } from '../../shared/dom';
 import { openPanel } from './shell';
 
 /** Drop or pick a photo of a drawing, and/or type some words, then "Bring it to life!". */
