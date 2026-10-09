@@ -28,7 +28,8 @@ npm run dev
 - The lab: http://localhost:5180/lab.html
 - The drawing test set: http://localhost:5180/drawings.html
 
-It needs a browser with WebGPU (Chrome or Edge); WebGL 2 is the fallback. `npm test` runs the tests and
+The valley needs a browser with WebGPU (Chrome or Edge): it is built and checked on WebGPU only, and its WebGL 2 path
+is untested. The lab also runs on WebGL 2 (three falls back by itself). `npm test` runs the tests and
 `npm run build` makes the static site in `dist/`.
 
 The creature designer (lab only) needs a Claude API key. Copy `.env.example` to `.env` and put your key in it:
