@@ -337,17 +337,18 @@ export class Residents {
   }
 
   /**
-   * Run `fn` (a `compileAsync`) with one animal of each species drawable at every level of detail with its fur, and the
-   * rest hidden: a species shares its materials, so that covers them all and nothing compiles mid-flight later.
+   * Start `fn` (a compile that gathers what it compiles before it returns, as `compileTogether` does) with one animal of
+   * each species drawable at every level of detail with its fur, and the rest hidden: a species shares its materials, so
+   * that covers them all and nothing compiles mid-flight later. The animals are back as they were when this returns.
    */
-  async compile<T>(fn: () => Promise<T>): Promise<T> {
+  compile<T>(fn: () => T): T {
     const firsts = new Set(this.layout.homes.map((h) => this.animals.find((a) => a.species === h.species)));
     for (const a of this.animals) {
       a.obj.root.visible = firsts.has(a);
       if (firsts.has(a)) a.obj.root.traverse((o) => (o.visible = true));
     }
     try {
-      return await fn();
+      return fn();
     } finally {
       for (const a of this.animals) {
         a.obj.root.visible = a.band !== 'paused';

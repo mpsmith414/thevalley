@@ -355,10 +355,11 @@ export class VegetationTiles {
   }
 
   /**
-   * Run `compile` (e.g. `renderer.compileAsync`) with every plant mesh drawable, so no material compiles mid-flight the
-   * first time its plants come into view. Meshes with nothing in them get a placeholder buffer first.
+   * Start `compile` with every plant mesh drawable, so no material compiles mid-flight the first time its plants come into
+   * view. `compile` must gather what it compiles before it returns (as `compileTogether` does): the meshes are back as they
+   * were when this returns, so it is safe while the live loop runs. Meshes with nothing in them get a placeholder buffer.
    */
-  async compile(compile: () => Promise<unknown>) {
+  compile<T>(compile: () => T): T {
     this.draws.forEach((d, lod) => d.forEach((draw, mi) => { if (draw && !draw.buf) this.attach(draw, this.buckets[lod][mi].data); }));
     const parts = this.draws.flat().flatMap((d) => d?.parts ?? []);
     const was = parts.map(({ mesh, geo }) => [mesh.visible, geo.instanceCount] as const);
@@ -368,7 +369,7 @@ export class VegetationTiles {
       geo.instanceCount = Math.max(1, geo.instanceCount);
     }
     try {
-      await compile();
+      return compile();
     } finally {
       parts.forEach(({ mesh, geo }, i) => {
         mesh.visible = was[i][0];

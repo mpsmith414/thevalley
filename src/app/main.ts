@@ -2,6 +2,7 @@ import { NeutralToneMapping, PerspectiveCamera, Scene } from 'three/webgpu';
 import { BuilderClient } from '../builder/client';
 import { FreeFly, intentFrom, toggleDown, type FlyIntent } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
+import { compileTogether } from '../render/compile';
 import { startQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { Input } from '../shared/input';
@@ -39,6 +40,8 @@ import './valley.css';
 
 /** The lake's mirror shows the forest only within this many metres of the shore (beyond, the lake is a sliver on screen). */
 const MIRROR_PLANTS = 400;
+/** Seconds from the page opening to the performance mark `name` (one decimal). */
+const seconds = (name: string) => ((performance.getEntriesByName(name)[0]?.startTime ?? NaN) / 1000).toFixed(1);
 /** Metres from (x, z) to the nearest point of the lake's outline. */
 const lakeDistance = (x: number, z: number) => VALLEY.lake.outline.reduce((m, p) => Math.min(m, Math.hypot(p.x - x, p.z - z)), Infinity);
 
@@ -70,8 +73,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   CAST.forEach((c) => void builder.build(c.recipe).catch(() => {}));
   const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256), loadFlowerCards(tier === 'high' ? 256 : 128)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
-    createRenderer(canvas, tier),
-    loadValley(VALLEY, DEFAULT_GRID, step),
+    createRenderer(canvas, tier).then((r) => (performance.mark('valley-renderer'), r)),
+    loadValley(VALLEY, DEFAULT_GRID, step).then((r) => (performance.mark('valley-loaded'), r)),
   ]);
   // Neutral, not the Lab's AgX: AgX greyed the valley's greens and blues and, with the haze on top, washed the middle distance
   // out to a pale blue-grey. The lighting table's exposures are tuned for Neutral.
@@ -79,6 +82,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   performance.mark('valley-data');
   say('Rolling out the meadows…');
   const sets = await ground;
+  performance.mark('valley-photos');
   const [barks, cards, flowers] = await plantTex;
   performance.mark('valley-ground');
   const valley = createValley(data);
@@ -106,6 +110,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const plants = createPlantMaterials(cards, barks, windU, tier, sets);
   const veg = new VegetationTiles(data, data.plantModels, plants, WORLD_QUALITY[tier]);
   scene.add(veg.object);
+  performance.mark('valley-built');
   // the far forest: every tree's impostor, baked from the mid trees now that their materials exist
   say('Growing the trees…');
   const bake = await bakeImpostors(renderer, data.plantModels, plants, WORLD_QUALITY[tier].impostorSize);
@@ -119,6 +124,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const cover = createGroundCover(tex, windU, WORLD_QUALITY[tier], { ground: sets, light: plants.light, flowers });
   scene.add(cover.object);
   camera.layers.enable(GROUND_COVER_LAYER);
+  performance.mark('valley-cover');
   // Shadow casters by cascade (about 0–75, 75–154, 154–260 and 260–600 m on High): near plants (within ~60 m) in the first two,
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
   // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The impostors (from ~210 m) in the
@@ -138,13 +144,13 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   await residents.spawn().catch((e) => console.error('the animals could not be made', e));
   performance.mark('valley-animals');
   /**
-   * The animals' shaders (about 8 s of compiling) build in the background once the valley is up, and the animals pop in
+   * The animals' shaders (about 3 s of compiling, beside the plants') build in the background once the valley is up, and the animals pop in
    * when they are ready: until then neither the camera nor the shadows see their layer, so nothing compiles mid-frame.
    */
   const wakeAnimals = async () => {
     const eye = camera.clone();
     eye.layers.enable(CREATURE_LAYER);
-    await residents.compile(() => renderer.compileAsync(residents.object, eye, scene));
+    await residents.compile(() => compileTogether(renderer, residents.object, eye, scene));
     camera.layers.enable(CREATURE_LAYER);
     sky.cascadeLayers(cascades(CREATURE));
     performance.mark('valley-animals-shown');
@@ -293,8 +299,23 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   tick(0);
   light(Infinity);
   performance.mark('valley-scene');
-  await veg.compile(() => cover.compile(() => renderer.compileAsync(scene, camera))); // every plant material, not just those in view now
+  // What the opening view shows compiles behind the loading screen, then one frame is drawn (its shadow passes make
+  // pipelines of their own); everything else compiles in the background once the valley is up (see `compileRest`).
+  await compileTogether(renderer, scene, camera);
+  renderer.render(scene, camera);
+  await gpuDone(renderer)?.();
   performance.mark('valley-ready');
+  console.info(`valley: ready ${seconds('valley-ready')} s after the page opened (${cached ? 'from the cache' : 'made fresh'})`);
+  /**
+   * Every plant and ground-cover material (not just those in the opening view) and the animals, compiled in the background
+   * while the start screen is up (about 4 s). A plant whose pipeline is still compiling is skipped until it is ready, so
+   * a quick flight down may see the ground cover and near plants arrive a moment late, but nothing stalls a frame.
+   */
+  const compileRest = async () => {
+    const plants = veg.compile(() => cover.compile(() => compileTogether(renderer, scene, camera)));
+    await Promise.all([plants.then(() => performance.mark('valley-plants')), wakeAnimals()]);
+    console.info(`valley: every plant and animal compiled ${(performance.now() / 1000).toFixed(1)} s after the page opened`);
+  };
   /** The start screen has gone: hand the controls over. */
   let later: string | null = null; // a label waiting for the start screen to go
   /** Show a label now, or once the start screen has gone. */
@@ -305,7 +326,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     later = null;
   };
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants, bake, impostors, cover, residents, wakeAnimals, audio, sound, listener, release, label, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open };
+    wind, veg, plants, bake, impostors, cover, residents, compileRest, audio, sound, listener, release, label, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open };
 }
 export type World = Awaited<ReturnType<typeof start>>;
 
@@ -345,7 +366,7 @@ if (world) {
   if (import.meta.env.DEV) (await import('./dev')).devHooks(w, pace, loop, { canvas, ui, tier, quality });
   run(w, pace);
   loading.close();
-  const animals = w.wakeAnimals().catch((e) => console.error('the animals could not wake', e));
+  const animals = w.compileRest().catch((e) => console.error('the plants or the animals could not compile', e));
   if (w.audio) await openStart(ui, w.audio); // one press wakes the sound (skipped when the browser already lets it play)
   w.release();
   // Auto measures only now the start screen has gone and the animals' shaders are built (after a 1 s settle): loading

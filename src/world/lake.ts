@@ -1,4 +1,4 @@
-import { Mesh, NodeMaterial, type Camera, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
+import { LinearSRGBColorSpace, Mesh, NodeMaterial, type Camera, type RenderTarget, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
 import { cameraPosition, float, positionWorld, reflector, screenSize, smoothstep, vec2 } from 'three/tsl';
 import type { Tier } from '../render/quality';
 import { offsetPolygon } from '../valley/geom';
@@ -13,7 +13,20 @@ import { rippleNormal, setWater, shadeWater, skyReflection, waterUniforms } from
 /** How far past the shore line the lake's surface reaches (under the land, where it is hidden), in metres. */
 const SKIRT = 30;
 
-type Updater = { updateBefore(frame: { camera: Camera }): unknown; getVirtualCamera(camera: Camera): Camera };
+type Updater = { updateBefore(frame: { camera: Camera; renderer?: unknown }): unknown; getVirtualCamera(camera: Camera): Camera; getRenderTarget(camera: Camera): RenderTarget };
+/**
+ * Tag the mirror's targets as linear like the main view's (three leaves them with no colour space; the pixels are the same
+ * either way). three keys pipelines by the target's colour space, so untagged, every material the mirror draws compiled a
+ * second, identical pipeline: 16 more on D3D12, a second or more of startup when compiled side by side (see `compileTogether`).
+ */
+function shareMirrorPipelines(mirror: Updater) {
+  const get = mirror.getRenderTarget.bind(mirror);
+  mirror.getRenderTarget = (camera) => {
+    const rt = get(camera);
+    rt.texture.colorSpace = LinearSRGBColorSpace;
+    return rt;
+  };
+}
 /**
  * The mirror renders the scene again from below the water, and three would re-render every shadow map for that camera
  * (doubling the shadow passes). Hold the shadow maps during the mirror's render: it uses the main view's.
@@ -70,8 +83,13 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
     mesh.add(mirror.target);
     const base = mirror.reflector as unknown as Updater;
     keepShadows(base, scene);
+    shareMirrorPipelines(base);
     const render = base.updateBefore.bind(base);
     base.updateBefore = (frame) => {
+      // Not while three precompiles (`compileAsync`, r186's flag): the mirror's render there would make the pipelines of
+      // everything it shows one at a time, blocking, instead of in the background with the rest. `false` tells three the
+      // update did not happen, so the frame's real render still draws the mirror (it updates once per frame).
+      if ((frame.renderer as { _isPreCompiling?: boolean } | undefined)?._isPreCompiling) return false;
       if (layers) base.getVirtualCamera(frame.camera).layers.mask = layers(frame.camera);
       return render(frame);
     };

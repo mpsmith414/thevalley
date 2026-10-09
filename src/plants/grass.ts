@@ -240,8 +240,11 @@ export type GroundCover = {
   object: Group;
   /** Follow the camera: snap each layer's rings and hide the layers with nothing to draw (too high, no water near). */
   update(camera: Camera): void;
-  /** Make every layer drawable while `fn` runs (the startup compile), so none compiles mid-flight. */
-  compile<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Make every layer drawable while `fn` starts a compile (which must gather what it compiles before it returns, as
+   * `compileTogether` does), so none compiles mid-flight; the layers are back as they were when this returns.
+   */
+  compile<T>(fn: () => T): T;
   /** Instances per layer, for checking. */
   stats(): Record<string, { instances: number; visible: boolean }>;
   dispose(): void;
@@ -575,13 +578,13 @@ export function createGroundCover(tex: ValleyTextures, wind: WindUniforms, q: Wo
         l.mesh.visible = on || forced;
       }
     },
-    async compile(fn) {
-      forced = true;
+    compile(fn) {
+      const was = layers.map((l) => l.mesh.visible);
       for (const l of layers) l.mesh.visible = true;
       try {
-        return await fn();
+        return fn();
       } finally {
-        forced = false;
+        layers.forEach((l, i) => (l.mesh.visible = was[i]));
       }
     },
     stats: () => Object.fromEntries(layers.map((l) => [l.name, { instances: (l.mesh.geometry as InstancedBufferGeometry).instanceCount, visible: l.mesh.visible }])),
