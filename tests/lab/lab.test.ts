@@ -82,4 +82,25 @@ describe('Gallery', () => {
     expect(await fresh.importAll(backup)).toBe(0); // already there
     expect((await fresh.get('a'))?.drawing).toEqual({ base64: 'eA==', mediaType: 'image/jpeg' });
   });
+
+  it('upgrades an old recipe when it is read back', async () => {
+    const g = await Gallery.open(`test-${Math.random()}`);
+    const v1 = structuredClone(quadruped) as unknown as Record<string, unknown>;
+    delete v1.build; delete v1.face; v1.schemaVersion = 1;
+    await g.save({ ...item('old', 5), recipe: v1 as unknown as GalleryItem['recipe'] });
+    const got = await g.get('old');
+    expect(got?.recipe.schemaVersion).toBe(2);
+    expect(got?.recipe.build.feet).toBe('paws');
+    expect((await g.list()).find((i) => i.id === 'old')?.recipe.face.nose).toBe('pad');
+  });
+
+  it('refreshes a stored native whose recipe changed, keeping its createdAt', async () => {
+    const g = await Gallery.open(`test-${Math.random()}`);
+    const id = `native:${CAST[0].recipe.id}`;
+    await g.save({ ...item(id, 3), recipe: quadruped, native: true });
+    await g.seedNatives(CAST);
+    const got = await g.get(id);
+    expect(got?.recipe).toEqual(CAST[0].recipe);
+    expect(got?.createdAt).toBe(3);
+  });
 });

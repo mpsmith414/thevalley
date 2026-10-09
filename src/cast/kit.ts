@@ -1,5 +1,6 @@
 import { DEFAULT_RECIPE, defaultFlatFacing } from '../recipe/normalize';
-import type { Part, Recipe, Region, Role } from '../recipe/schema';
+import { inferBuild, inferFace } from '../recipe/hints';
+import { SCHEMA_VERSION, type Build, type Face, type Part, type Recipe, type Region, type Role } from '../recipe/schema';
 
 type V = [number, number, number];
 type PartOpts = Partial<Pick<Part, 'squash' | 'pointed' | 'mirror' | 'region' | 'flatFacing'>> & { at?: number; offset?: V };
@@ -32,22 +33,30 @@ type RecipeParts = Pick<Recipe, 'id' | 'name' | 'parts' | 'skin'> & {
   mind?: Partial<Omit<Recipe['mind'], 'senses'>> & { senses?: Partial<Recipe['mind']['senses']> };
   inheritance?: Recipe['inheritance'];
   seed?: number;
+  build?: Partial<Build>;
+  face?: Partial<Face>;
 };
 
-/** A complete native recipe: anything not given comes from the defaults. */
+/** A complete native recipe: anything not given comes from the defaults (build and face hints from the body). */
 export function native(r: RecipeParts): Recipe {
   const d = DEFAULT_RECIPE;
+  const motion = { ...d.motion, ...r.motion };
+  const life = { ...d.life, ...r.life };
+  const mind = { ...d.mind, ...r.mind, senses: { ...d.mind.senses, ...r.mind?.senses } };
+  const hint = { parts: r.parts, skin: r.skin, motion, mind, life };
   return {
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     id: r.id,
     name: r.name,
     seed: r.seed ?? 1,
     source: { kind: 'native', description: '' },
     parts: r.parts,
     skin: r.skin,
-    motion: { ...d.motion, ...r.motion },
-    life: { ...d.life, ...r.life },
-    mind: { ...d.mind, ...r.mind, senses: { ...d.mind.senses, ...r.mind?.senses } },
+    build: { ...inferBuild(hint), ...r.build },
+    face: { ...inferFace(hint), ...r.face },
+    motion,
+    life,
+    mind,
     inheritance: r.inheritance ?? [{ path: 'life.sizeM', spread: 0.06 }, { path: 'life.topSpeed', spread: 0.05 }],
   };
 }

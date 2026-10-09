@@ -2,7 +2,9 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { CastMember } from '../cast';
 import type { PassRecord } from '../designer/loop';
 import type { ImageIn, KidCards } from '../designer/types';
+import { normalizeRecipe, RecipeError } from '../recipe/normalize';
 import type { Recipe } from '../recipe/schema';
+import { hash } from '../util/hash';
 
 /** One saved creature: its recipe, cards, the drawing it came from and a thumbnail. */
 export type GalleryItem = {
@@ -19,6 +21,16 @@ export type GalleryItem = {
 
 const STORE = 'creatures';
 
+/** The item with its recipe upgraded to the current schema (unchanged when the recipe is unusable). */
+function upgraded(item: GalleryItem): GalleryItem {
+  try {
+    return { ...item, recipe: normalizeRecipe(item.recipe).recipe };
+  } catch (e) {
+    if (e instanceof RecipeError) return item;
+    throw e;
+  }
+}
+
 /** The creatures saved in this browser (IndexedDB), with backup export and import. */
 export class Gallery {
   private constructor(private db: IDBPDatabase) {}
@@ -34,13 +46,14 @@ export class Gallery {
 
   /** Made creatures newest first, then the native animals. */
   async list(): Promise<GalleryItem[]> {
-    const all = (await this.db.getAll(STORE)) as GalleryItem[];
+    const all = ((await this.db.getAll(STORE)) as GalleryItem[]).map(upgraded);
     // made creatures newest first, then the native animals in their own order
     return all.sort((a, b) => Number(a.native) - Number(b.native) || (a.native ? a.createdAt - b.createdAt : b.createdAt - a.createdAt));
   }
 
-  get(id: string): Promise<GalleryItem | undefined> {
-    return this.db.get(STORE, id);
+  async get(id: string): Promise<GalleryItem | undefined> {
+    const item = (await this.db.get(STORE, id)) as GalleryItem | undefined;
+    return item && upgraded(item);
   }
 
   async save(item: GalleryItem): Promise<void> {
@@ -55,12 +68,13 @@ export class Gallery {
     return true;
   }
 
-  /** Put the native animals in on first run (and add any new ones later). */
+  /** Put the native animals in on first run, add any new ones later, and refresh ones whose recipe changed. */
   async seedNatives(cast: CastMember[]): Promise<void> {
     for (const [i, c] of cast.entries()) {
       const id = `native:${c.recipe.id}`;
-      if (await this.get(id)) continue;
-      await this.save({ id, recipe: c.recipe, cards: c.cards, drawing: null, words: '', thumb: null, history: [], createdAt: i, native: true });
+      const stored = await this.get(id);
+      if (stored && hash(stored.recipe) === hash(c.recipe)) continue;
+      await this.save({ id, recipe: c.recipe, cards: c.cards, drawing: null, words: '', thumb: null, history: [], createdAt: stored?.createdAt ?? i, native: true });
     }
   }
 

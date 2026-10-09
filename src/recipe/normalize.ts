@@ -1,7 +1,8 @@
 import { norm, type Vec3 } from '../util/vec';
+import { inferBuild, inferFace } from './hints';
 import {
-  ACTIVITY, COVERINGS, DEFAULT_COLOR, FLAT_FACINGS, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
-  PATTERNS, ROLES, SCHEMA_VERSION, SOCIAL,
+  ACTIVITY, COVERINGS, DEFAULT_COLOR, FEET, FLAT_FACINGS, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
+  NOSES, PATTERNS, ROLES, SCHEMA_VERSION, SOCIAL,
   type FlatFacing, type Part, type Pattern, type Recipe, type Region, type Role,
 } from './schema';
 
@@ -13,8 +14,8 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 
-/** Defaults for every section except `parts` (a recipe must bring its own body). */
-export const DEFAULT_RECIPE: Omit<Recipe, 'parts'> = {
+/** Defaults for every section except `parts` (a recipe must bring its own body) and the hints inferred from it. */
+export const DEFAULT_RECIPE: Omit<Recipe, 'parts' | 'build' | 'face'> = {
   schemaVersion: SCHEMA_VERSION,
   id: 'creature',
   name: 'Creature',
@@ -95,6 +96,7 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
     fixes.push(`${name} "${String(v)}" → ${DEFAULT_COLOR}`);
     return DEFAULT_COLOR;
   };
+  const colorOrNull = (v: unknown, name: string): string | null => (v === null || v === undefined ? null : color(v, name));
   const vec = (v: unknown, fallback: Vec3): Vec3 => {
     const o = isObj(v) ? v : {};
     const f = (k: 'x' | 'y' | 'z') => (typeof o[k] === 'number' && Number.isFinite(o[k]) ? (o[k] as number) : fallback[k]);
@@ -241,7 +243,7 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
   const habitat = Array.isArray(mi.habitat) ? [...new Set(mi.habitat.filter((h) => HABITATS.includes(h as never)))] : [];
   if (habitat.length === 0) fixes.push('mind.habitat empty → ground');
 
-  const recipe: Recipe = {
+  const body: Omit<Recipe, 'build' | 'face'> = {
     schemaVersion: SCHEMA_VERSION,
     id: str(raw.id, d.id),
     name: str(raw.name, d.name),
@@ -300,5 +302,26 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
       .filter((t) => typeof t.path === 'string')
       .map((t) => ({ path: t.path as string, spread: num(t.spread, LIMITS.spread, `inheritance ${String(t.path)}`, 0.05) })),
   };
+
+  // ---- build and face hints: whatever is missing is inferred from the body above ----
+  const bi = isObj(raw.build) ? raw.build : null;
+  const fi = isObj(raw.face) ? raw.face : null;
+  if (!bi) fixes.push('build missing → inferred');
+  if (!fi) fixes.push('face missing → inferred');
+  const hb = inferBuild(body);
+  const hf = inferFace(body);
+  const build = bi
+    ? { muscle: num(bi.muscle, LIMITS.muscle, 'build.muscle', hb.muscle), feet: pick(bi.feet, FEET, 'build.feet', hb.feet) }
+    : hb;
+  const face = fi
+    ? {
+        nose: pick(fi.nose, NOSES, 'face.nose', hf.nose),
+        noseColor: colorOrNull(fi.noseColor, 'face.noseColor'),
+        lids: bool(fi.lids, hf.lids),
+        earInner: colorOrNull(fi.earInner, 'face.earInner'),
+        brow: num(fi.brow, LIMITS.brow, 'face.brow', hf.brow),
+      }
+    : hf;
+  const recipe: Recipe = { ...body, build, face };
   return { recipe, fixes };
 }

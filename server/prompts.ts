@@ -41,6 +41,11 @@ Every part must include every field, role included. Keep to at most 40 parts. Ev
 # Skin
 Regions (at most 8) give coverings and colours: fur (with furLength 0.005-0.05 m and fluff 0-1), feathers, scales, skin, shell or slime. "belly" is an optional lighter underside colour. Patterns: stripes, spots, patches, rings (bands around a part) or gradient; scale is the size of one repeat in metres; amount is how much of the region it covers (0-1). Colours are "#rrggbb". Eyes: colour, pupil (round, slit, bar, none) and size (0.2-1).
 
+# Build and face
+"build": muscle 0-1 (0 soft and round like a frog or a baby, 1 lean with defined muscles like a deer) and feet: "paws" (toe pads), "hooves", "talons" (bird toes), "webbed" or "plain".
+"face": nose "pad" (a wet dog, cat or rabbit nose), "beak", "bill" (a duck's), "slits" (small nostrils, for reptiles, frogs and fish) or "none"; noseColor "#rrggbb" or null; lids true unless it is a fish; earInner "#rrggbb" (the colour inside the ears, often pink or pale) or null; brow 0-1 (how heavy the brow over the eyes is: a hawk's is heavy).
+Faces carry a child's creature: give drawn noses, ear colours and feet their shapes here.
+
 # Size, movement, life and mind
 A drawing has no scale. Infer a believable size from what the creature seems to be, or from words like "tiny" or "giant", and put the overall length in life.sizeM. Build every part in metres at that size.
 Fill in motion (gait: walk, hop, slither, waddle, fly, swim, hover; bounce, sway 0-1; stance), life (speeds in m/s, lifespan and maturity in days, litter sizes), mind (diet, temperament, social style, when it is active, habitat, senses) and inheritance (which traits vary in babies, spread 0-0.3) sensibly for the creature as drawn and described. Keep everything kind: creatures may hunt or graze, but nothing is cruel or gory.

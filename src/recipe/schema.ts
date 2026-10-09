@@ -8,7 +8,7 @@ import { z } from 'zod';
  * ranges live in `LIMITS` and `normalizeRecipe` clamps to them.
  */
 
-export const SCHEMA_VERSION = 1 as const;
+export const SCHEMA_VERSION = 2 as const;
 
 export const ROLES = [
   'head', 'neck', 'torso', 'leg', 'foot', 'wing', 'tail', 'fin',
@@ -21,6 +21,8 @@ export const GAITS = ['walk', 'hop', 'slither', 'waddle', 'fly', 'swim', 'hover'
 export const SOCIAL = ['solitary', 'pair', 'herd', 'pack', 'flock'] as const;
 export const ACTIVITY = ['day', 'night', 'twilight'] as const;
 export const HABITATS = ['ground', 'water', 'air', 'trees', 'burrow'] as const;
+export const FEET = ['paws', 'hooves', 'talons', 'webbed', 'plain'] as const;
+export const NOSES = ['pad', 'beak', 'bill', 'slits', 'none'] as const;
 
 const Vec3Schema = z.object({ x: z.number(), y: z.number(), z: z.number() });
 
@@ -59,6 +61,19 @@ export const RegionSchema = z.object({
   pattern: PatternSchema.nullable(),
 });
 
+export const BuildSchema = z.object({
+  muscle: z.number().describe('0..1 how defined the body is: 0 soft and smooth (frog, baby, slug), 1 lean and sculpted (deer, wolf)'),
+  feet: z.enum(FEET).describe('Shape of foot parts: paws (toe pads), hooves, talons (bird toes), webbed, plain'),
+});
+
+export const FaceSchema = z.object({
+  nose: z.enum(NOSES).describe('pad (wet dog/cat/rabbit nose), beak (hooked), bill (duck), slits (reptile, frog, fish nostrils), none'),
+  noseColor: z.string().nullable().describe('#rrggbb nose colour, or null for a darkened head colour'),
+  lids: z.boolean().describe('Has eyelids (false for fish)'),
+  earInner: z.string().nullable().describe('#rrggbb colour inside the ears, or null for a lightened ear colour'),
+  brow: z.number().describe('0..1 how heavy the brow ridge over the eyes is'),
+});
+
 export const RecipeSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   id: z.string(),
@@ -77,6 +92,8 @@ export const RecipeSchema = z.object({
       size: z.number().describe('0..1 eye size relative to the eye part'),
     }),
   }),
+  build: BuildSchema,
+  face: FaceSchema,
   motion: z.object({
     gait: z.enum(GAITS),
     bounce: z.number(),
@@ -122,6 +139,10 @@ export type Covering = (typeof COVERINGS)[number];
 export type PatternKind = (typeof PATTERNS)[number];
 export type Gait = (typeof GAITS)[number];
 export type FlatFacing = (typeof FLAT_FACINGS)[number];
+export type Feet = (typeof FEET)[number];
+export type Nose = (typeof NOSES)[number];
+export type Build = z.infer<typeof BuildSchema>;
+export type Face = z.infer<typeof FaceSchema>;
 export type Part = z.infer<typeof PartSchema>;
 export type Pattern = z.infer<typeof PatternSchema>;
 export type Region = z.infer<typeof RegionSchema>;
@@ -142,6 +163,8 @@ export const LIMITS = {
   unit: [0, 1],
   patScale: [0.005, 2],
   eyeSize: [0.2, 1],
+  muscle: [0, 1],
+  brow: [0, 1],
   sizeM: [0.02, 8],
   massKg: [0.001, 5000],
   topSpeed: [0.05, 25],

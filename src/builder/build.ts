@@ -12,8 +12,9 @@ export const LOD_CELLS = [110, 56, 28] as const;
 export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array };
 export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lods: LodMesh[] };
 
-/** The key that decides whether two recipes share a body (shape and region layout only). */
-export const bodyKey = (recipe: Recipe) => hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id));
+/** The key that decides whether two recipes share a body (shape, build, face shape, eye size and region layout). */
+export const bodyKey = (recipe: Recipe) =>
+  hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id)) + hash([recipe.build, recipe.face.nose, recipe.face.brow, recipe.skin.eyes.size]);
 
 /** Recipe → a skinned body at each level of detail. Pure and deterministic. */
 export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2]): BodyData {

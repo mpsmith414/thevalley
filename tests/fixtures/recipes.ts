@@ -1,3 +1,4 @@
+import { inferBuild, inferFace } from '../../src/recipe/hints';
 import { DEFAULT_RECIPE, defaultFlatFacing } from '../../src/recipe/normalize';
 import type { Part, Recipe, Region, Role } from '../../src/recipe/schema';
 
@@ -22,7 +23,8 @@ export function P(id: string, parent: string | null, role: Role, attach: number,
 }
 
 export function makeRecipe(id: string, parts: Part[], extra: Partial<Recipe> = {}): Recipe {
-  return structuredClone({ ...DEFAULT_RECIPE, id, name: id, parts, ...extra }) as Recipe;
+  const r = structuredClone({ ...DEFAULT_RECIPE, id, name: id, parts, ...extra });
+  return { build: inferBuild(r), face: inferFace(r), ...r } as Recipe;
 }
 
 const furRegions: Region[] = [
