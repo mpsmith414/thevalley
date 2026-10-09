@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MeshStandardNodeMaterial, PerspectiveCamera } from 'three/webgpu';
-import { GPU_STRIDE, MID_LAYER, MID_TREE_LAYER, TILE_RADIUS, VegetationTiles, bandFor, collectInstances, lodsToRefill, thinned, tileDistance,
+import { GPU_STRIDE, MID_LAYER, MID_TREE_LAYER, TILE_RADIUS, VegetationTiles, bandFor, collectInstances, lodsToRefill, midTreeReach, thinned, tileDistance,
   type Band } from '../../src/world/tiles';
 import type { PlantMesh, PlantModelSet } from '../../src/plants/generator';
 import type { PlantMaterials } from '../../src/plants/material';
@@ -189,7 +189,7 @@ const stubModels = (): PlantModelSet => PLANT_KINDS.flatMap((kind) => Array.from
     uvs: new Float32Array(6), info: new Float32Array(12), indices: new Uint32Array([0, 1, 2]), groups: [{ start: 0, count: 3, material: 'bark' }] });
   return { kind, variant, lods: [mesh(), mesh()] as [PlantMesh, PlantMesh], height: 10, radius: 1 };
 }));
-const stubMaterials: PlantMaterials = { get: () => new MeshStandardNodeMaterial(), light: null as never, all: [] };
+const stubMaterials: PlantMaterials = { get: () => new MeshStandardNodeMaterial() as never, light: null as never, all: [], fade: null as never };
 
 describe('VegetationTiles', () => {
   // one tile of pines centred on the origin; the camera sits 100 m west of it, 55 m from its edge (near < 60), so every pine
@@ -209,6 +209,24 @@ describe('VegetationTiles', () => {
     look(cam, -1000); // and turning away again takes them off, rather than leaving ghosts
     veg.update(cam, 1);
     expect(veg.stats().mid).toBe(0);
+  });
+
+  it('leaves far trees to the impostors: mid trees end just past midTree, where the impostors have faded in', () => {
+    const tile = fakeTile(12, 12, 200, [K('pine')], 4), veg = new VegetationTiles({ tiles: [tile] } as never, stubModels(), stubMaterials, q);
+    const cam = new PerspectiveCamera(55, 1, 0.1, 8000);
+    const at = (x: number) => { cam.position.set(x, 5, 0); cam.lookAt(1000, 5, 0); cam.updateMatrixWorld(); };
+    at(-300); // the tile is 255 m off: far (the old placeholder drew it with the mid mesh up to midTree·1.5)
+    veg.update(cam, 1);
+    expect(veg.stats().mid).toBe(0);
+    at(-250); // 205 m off: mid; its pines are 218–282 m away, kept up to midTreeReach (the shader fades them out at midTree)
+    veg.update(cam, 1);
+    const d = tile.plants.data, reach = midTreeReach(q);
+    let want = 0;
+    for (let s = 0; s < d.length; s += INSTANCE_STRIDE) if (Math.hypot(d[s] + 250, d[s + 1] - 5, d[s + 2]) < reach) want++;
+    expect(want).toBeGreaterThan(0);
+    expect(veg.stats().mid).toBe(want);
+    expect(reach).toBeGreaterThan(q.midTree);
+    expect(reach).toBeLessThan(q.midTree * 1.1);
   });
 
   it('puts the mid trees on the mid-tree layer as well, and disposes cleanly', () => {

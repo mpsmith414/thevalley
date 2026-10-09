@@ -22,6 +22,7 @@ import { WORLD_QUALITY } from '../world/quality';
 import { MID_LAYER, MID_TREE_LAYER, NEAR_LAYER, VegetationTiles } from '../world/tiles';
 import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '../plants/material';
 import { createWind, setWind, updateWind, windUniforms } from '../plants/wind';
+import { IMPOSTOR_LAYER, bakeImpostors, createImpostorLayer } from '../plants/impostor';
 import { openLoading, toast } from './loading';
 import './valley.css';
 
@@ -69,23 +70,32 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // the water (after the sky: it mirrors the sky's environment map)
   const lake = createLake(data, tex, tier, scene), river = createRiver(data, tex, tier, scene);
   scene.add(lake.object, river.object);
-  // the mirror draws the mid plants (the far shores' forest) only when the lake is near enough to show them
-  lake.mirrorLayers((cam) => (lakeDistance(cam.position.x, cam.position.z) < MIRROR_PLANTS ? 1 | (1 << MID_LAYER) : 1));
+  // the mirror draws the mid plants and the far forest's impostors only when the lake is near enough to show them
+  // (the impostors cost the mirror about 0.5 ms wherever it renders)
+  lake.mirrorLayers((cam) => (lakeDistance(cam.position.x, cam.position.z) < MIRROR_PLANTS ? 1 | (1 << MID_LAYER) | (1 << IMPOSTOR_LAYER) : 1));
   // ---------- the vegetation, swaying in one shared wind ----------
   const wind = createWind(), windU = windUniforms();
   const plants = createPlantMaterials(cards, barks, windU, tier, sets);
   const veg = new VegetationTiles(data, data.plantModels, plants, WORLD_QUALITY[tier]);
   scene.add(veg.object);
+  // the far forest: every tree's impostor, baked from the mid trees now that their materials exist
+  say('Growing the trees…');
+  const bake = await bakeImpostors(renderer, data.plantModels, plants, WORLD_QUALITY[tier].impostorSize);
+  performance.mark('valley-trees');
+  const impostors = createImpostorLayer(data, bake, WORLD_QUALITY[tier], plants, tier === 'high');
+  scene.add(impostors.object);
   camera.layers.enable(NEAR_LAYER);
   camera.layers.enable(MID_LAYER);
+  camera.layers.enable(IMPOSTOR_LAYER);
   // Shadow casters by cascade (about 0–75, 75–154, 154–260 and 260–600 m on High): near plants (within ~60 m) in the first two,
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
-  // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The land everywhere.
-  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER;
+  // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The impostors (from ~210 m) in the
+  // last two (they cast on High only). The land everywhere.
+  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER, IMP = 1 << IMPOSTOR_LAYER;
   // Mid trees in the nearest cascade cost ~1.8 ms at the forest floor for a barely visible gain (low sun only), so they
   // stay out for now; flip this on if the frame budget allows after the residents and ground cover are in.
   const MID_TREES_IN_CASCADE_0 = false;
-  sky.cascadeLayers([1 | NEAR | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | MID, 1 | MID, 1 | MID]);
+  sky.cascadeLayers([1 | NEAR | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | MID, 1 | MID | IMP, 1 | MID | IMP]);
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
@@ -182,6 +192,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const tick = (dt: number) => {
     clock.update(dt);
     drive(dt);
+    plants.fade.eye.value.copy(camera.position); // the trees' mid/far cross-fade follows the camera
     terrain.update(camera);
     updateWind(wind, dt, VALLEY.seed);
     setWind(windU, wind);
@@ -194,7 +205,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   await veg.compile(() => renderer.compileAsync(scene, camera)); // every plant material, not just those in view now
   performance.mark('valley-ready');
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants };
+    wind, veg, plants, bake, impostors };
 }
 type World = Awaited<ReturnType<typeof start>>;
 
@@ -300,7 +311,9 @@ function devHooks(w: World) {
       /** Median frames per second over the last few seconds. */
       fps: () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0),
       /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
-      get timings() { return { data: mark('valley-data'), ground: mark('valley-ground'), scene: mark('valley-scene'), ready: mark('valley-ready') }; },
+      get timings() {
+        return { data: mark('valley-data'), ground: mark('valley-ground'), trees: mark('valley-trees'), scene: mark('valley-scene'), ready: mark('valley-ready') };
+      },
     },
   });
 }

@@ -28,6 +28,12 @@ const GRACE = 1.1;
 const FRUSTUM_MARGIN = 40;
 /** Re-band at least this often (s), and sooner when the camera moves this far (m) or turns this much (degrees). */
 const EVERY = 0.2, MOVE = 8, TURN = 10;
+/**
+ * How far (m) mid trees are kept: `midTree`, plus the most the camera can move between refills. The plant materials dither a
+ * mid tree out over the 10 m before `midTree` as its impostor dithers in (see `fade.ts`), so past `midTree` the mid
+ * meshes draw nothing; the margin only makes sure that a tree the camera has come closer to since the last refill is there.
+ */
+export const midTreeReach = (q: WorldQuality) => q.midTree + MOVE;
 /** Head room over the tallest plant for a tile's box (m). */
 const TALLEST = 30;
 /** Near tiles are re-split between the near and mid meshes, instance by instance, after the camera moves this far (m). */
@@ -41,8 +47,11 @@ export const NEAR_LAYER = 1, MID_LAYER = 2;
 export const MID_TREE_LAYER = 3;
 /** Kinds whose mid meshes cast no shadow: shrubs and small dead wood, too small to see from the mid band. */
 const MID_NO_SHADOW = new Set<PlantKind>(['juniper', 'blueberry', 'fern', 'log', 'stump']);
-/** The mid band draws three models per kind (one young, two mature), each plant rescaled to its own height: half the draws. */
-const MID_VARIANTS = [1, 1, 3, 3, 5, 5];
+/**
+ * The mid band draws three models per kind (one young, two mature), each plant rescaled to its own height: half the draws.
+ * The far trees' impostors are baked from the same three.
+ */
+export const MID_VARIANTS = [1, 1, 3, 3, 5, 5];
 
 /**
  * Which LODs (near, mid) to refill when a tile of one class goes from drawn band `was` to `now`. The mid meshes also hold the
@@ -202,8 +211,9 @@ const LODS: Band[] = ['near', 'mid'];
  * 8 m or a turn of 10°), keeping only tiles whose box meets the frustum (grown by 40 m), and refills the LODs that changed.
  * As the camera moves (every 4 m), plants are also split by their own distance: near tiles hand their plants past the
  * near edge to the mid meshes, and mid plants end at the band's far edge, since a tile reaches up to 90 m past its band.
- * Far trees are Task 16's impostors; until then the mid mesh stands in for them out to `midTree·1.5`, and far shrubs
- * (midShrub to shrubCull) use their mid mesh too. The mid band draws three models per kind (`MID_VARIANTS`).
+ * Far trees are the impostors' (`impostor.ts`): mid trees are kept to `midTreeReach` and dithered out before `midTree`
+ * by their materials. Far shrubs (midShrub to shrubCull) use their mid mesh. The mid band draws three models per kind
+ * (`MID_VARIANTS`).
  * Near meshes are on `NEAR_LAYER`, mid meshes on `MID_LAYER` (mid trees also on `MID_TREE_LAYER`); mid shrubs, logs and
  * stumps cast no shadow.
  */
@@ -283,7 +293,7 @@ export class VegetationTiles {
       CLASSES.forEach((c, ci) => {
         const band = seen ? bandFor(rep[c], d, this.q, this.band[ci][t]) : 'none';
         this.band[ci][t] = band;
-        const drawn: Band = band === 'far' ? (c === 'shrub' || (c === 'tree' && d < this.q.midTree * 1.5) ? 'mid' : 'none') : band;
+        const drawn: Band = band === 'far' ? (c === 'shrub' || (c === 'tree' && d < midTreeReach(this.q)) ? 'mid' : 'none') : band;
         const was = this.drawn[ci][t];
         if (drawn === was) return;
         lodsToRefill(was, drawn).forEach((d, l) => { if (d) dirty[ci][l] = true; });
@@ -300,7 +310,7 @@ export class VegetationTiles {
       if (!dirty[ci][lod]) return;
       any = true;
       const kinds = this.kindsOf[c], e = edges(rep[c], this.q);
-      const split = { x: p.x, y: p.y, z: p.z, edge: e[0], far: c === 'tree' ? this.q.midTree * 1.5 : e[2] };
+      const split = { x: p.x, y: p.y, z: p.z, edge: e[0], far: c === 'tree' ? midTreeReach(this.q) : e[2] };
       collectInstances(this.tiles, this.drawn[ci], lodBand, { kinds, density: this.density, heights: this.heights, split,
         remap: lod ? MID_VARIANTS : undefined }, this.buckets[lod]);
       for (const k of kinds) for (let v = 0; v < VARIANTS; v++) this.upload(lod, k * VARIANTS + v);

@@ -13,13 +13,15 @@ import {
 import {
   Fn, attribute, cameraPosition, clamp, cos, cross, diffuseColor, dot, float, fract, int, log2, max, mix, mx_noise_float, normalLocal,
   normalMap, normalViewGeometry, normalWorld, positionGeometry, positionWorld, pow, sin, smoothstep, texture, uniform, uv, vec2, vec3, vec4,
-  dFdx, dFdy, abs, uniformArray,
+  dFdx, dFdy, abs, uniformArray, screenCoordinate, select, varying,
 } from 'three/tsl';
 import type { Tier } from '../render/quality';
 import type { LightState } from '../world/lighting';
 import { loadPhotoSets, type GroundSets, type PhotoSets } from '../world/ground';
+import { WORLD_QUALITY } from '../world/quality';
 import { cardTextures, paintCard } from './cards';
-import { PLANT_KINDS, SPECIES, type LeafSpec, type PlantKind } from './species';
+import { bayer4Node, farFadeNode, treeFade, type TreeFade } from './fade';
+import { PLANT_KINDS, SPECIES, TREE_KINDS, type LeafSpec, type PlantKind } from './species';
 import { windNodes, type WindUniforms } from './wind';
 
 export type LeafCard = LeafSpec['card'];
@@ -61,6 +63,9 @@ export function withKind(info: Float32Array, kind: PlantKind): Float32Array {
 }
 /** The vertex's kind (index into PLANT_KINDS), from `info.z`. */
 const kindIndex = int(attribute('info', 'vec4').z.add(0.5));
+/** Trees are the first kinds in PLANT_KINDS, so "is a tree" is `kindIndex < TREES` (no table needed). */
+const TREES = TREE_KINDS.length;
+if (TREE_KINDS.some((k) => PLANT_KINDS.indexOf(k) >= TREES)) throw new Error('the tree kinds must come first in PLANT_KINDS');
 /** A per-kind value table (indexed by `kindIndex`). */
 const perKind = (f: (k: PlantKind) => number) => uniformArray(PLANT_KINDS.map(f), 'float').element(kindIndex) as unknown as Node<'float'>;
 const perKind3 = (f: (k: PlantKind) => [number, number, number]) =>
@@ -120,9 +125,11 @@ function placed(sway: ((base: Node<'vec3'>) => Node<'vec3'>) | null): Node<'vec3
  * A plant material: placement in `positionNode` (so the shadow pass, which copies it, places the instances too), the
  * normal turned with the instance in the main pass, and the colour from `plantColorNode` instead of `colorNode`: the shadow
  * pass reads `colorNode.a` for alpha, so the bark's and rocks' shading stays out of every shadow cascade.
+ * `cutNode` is the leaves' alpha cut alone (`maskNode` adds the trees' far cross-fade): what an impostor bake draws with.
  */
-class PlantMaterial extends MeshStandardNodeMaterial {
+export class PlantMaterial extends MeshStandardNodeMaterial {
   plantColorNode: Node<'vec3'> | null = null;
+  cutNode: Node<'bool'> | null = null;
   setupPosition(builder: NodeBuilder) {
     normalLocal.assign(yawed(normalLocal));
     return super.setupPosition(builder);
@@ -166,10 +173,22 @@ const hueShift = (c: Node<'vec3'>, a: Node<'float'>) => {
   return c.mul(ca).add(cross(k, c).mul(sin(a))).add(k.mul(dot(k, c)).mul(float(1).sub(ca)));
 };
 
+/**
+ * A leaf colour's per-instance tint (`tint` −1..1): ±8% of the hue circle and ±10% value (an independent roll from the same
+ * tint), browning as `health` falls. Linear in the colour, so an impostor can apply it to a baked (averaged) colour too.
+ */
+export const tinted = (c: Node<'vec3'>, tint: Node<'float'>, health: Node<'float'>): Node<'vec3'> => {
+  const value = fract(tint.mul(91.7).add(0.5)).mul(2).sub(1);
+  const t = hueShift(c, tint.mul(0.08 * 2 * Math.PI)).mul(value.mul(0.1).add(1));
+  return mix(vec3(t.dot(vec3(0.3, 0.59, 0.11))).mul(vec3(1.1, 0.85, 0.55)), t, clamp(health, 0, 1));
+};
+
 export type PlantMaterials = {
   /** The material for `kind`'s bark, leaf or rock group (null if the kind has none). */
-  get(kind: PlantKind, group: 'bark' | 'leaf' | 'rock'): MeshStandardNodeMaterial | null;
+  get(kind: PlantKind, group: 'bark' | 'leaf' | 'rock'): PlantMaterial | null;
   light: PlantLight;
+  /** The trees' mid/far cross-fade (`fade.ts`): set `fade.eye` to the camera's position every frame. */
+  fade: TreeFade;
   /** Every material, for compiling up front. */
   all: MeshStandardNodeMaterial[];
 };
@@ -190,12 +209,15 @@ const LIVING_BARK: PlantKind[] = ['pine', 'spruce', 'alder', 'willow', 'juniper'
  */
 export function createPlantMaterials(cards: CardSet, barks: BarkSets, wind: WindUniforms, tier: Tier, ground: GroundSets): PlantMaterials {
   const { sway } = windNodes(wind);
+  // the far cross-fade: a tree's share for its impostor (0 for shrubs and props, which have none)
+  const fade = treeFade(WORLD_QUALITY[tier]);
+  const farShare = select(kindIndex.lessThan(TREES), farFadeNode(fade, i0.xyz), float(0));
   const light: PlantLight = {
     key: uniform(new Color()) as PlantLight['key'],
     keyDir: uniform(new Vector3(0, 1, 0)) as PlantLight['keyDir'],
   };
   const ao = info.w;
-  const all: MeshStandardNodeMaterial[] = [];
+  const all: PlantMaterial[] = [];
   const leafOf = (k: PlantKind) => { const s = SPECIES[k].spec; return 'leaf' in s ? s.leaf : null; };
   const swaying = (base: Node<'vec3'>) => sway(info, base, perKind((k) => leafOf(k)?.flutter ?? 0), i2.w, positionGeometry.y, i1.x, i2.z,
     perKind((k) => TRUNK[k] ?? 0)) as Node<'vec3'>;
@@ -210,6 +232,12 @@ export function createPlantMaterials(cards: CardSet, barks: BarkSets, wind: Wind
   /** Bark from the photo sets, by kind (layer, gain, greyness), with its normal map. `extra` adds birch's or dead wood's touches. */
   const barkMat = (name: string, still: boolean, extra?: (c: Node<'vec3'>) => Node<'vec3'>) => {
     const m = make(name, still), t = uv();
+    if (!still) {
+      // a far-fading tree's bark goes whole, at a random point of the fade (a trunk is a pixel or two wide there): it folds to
+      // the tree's base in the vertex shader, so the bark keeps its early depth test (no discard). The leaves dither (`leaf`).
+      const at = fract(i1.w.mul(7919.31).add(0.37));
+      m.positionNode = select(farShare.greaterThan(at), i0.xyz, m.positionNode!);
+    }
     const layer = int(perKind((k) => BARK_SETS.indexOf(BARK[k].set)));
     const albedo = texture(barks.albedo, t).depth(layer);
     const c = grade(albedo.rgb, perKind3((k) => BARK[k].gain), perKind((k) => BARK[k].grey));
@@ -240,12 +268,12 @@ export function createPlantMaterials(cards: CardSet, barks: BarkSets, wind: Wind
     // The alpha test is a mask, not `alphaTest`: the shadow pass's shared material takes each caster's `alphaTest`, and
     // flipping it between zero and not (bark, ground, leaves) bumps that material's version, which made three re-key every
     // shadow caster every frame (about 7 ms of CPU). The shadow pass honours the mask just the same.
-    m.maskNode = tex.a.mul(float(1).add(mip.mul(0.25))).greaterThan(ALPHA_TEST);
-    // per-instance tint: ±8% of the hue circle, ±10% value (an independent roll from the same tint), browning with ill health
-    const tint = i1.w, value = fract(tint.mul(91.7).add(0.5)).mul(2).sub(1);
-    const gain = perKind3((k) => LEAF_GAIN[leafOf(k)?.card ?? 'pine']);
-    let c: Node<'vec3'> = hueShift(tex.rgb.mul(gain), tint.mul(0.08 * 2 * Math.PI)).mul(value.mul(0.1).add(1));
-    c = mix(vec3(c.dot(vec3(0.3, 0.59, 0.11))).mul(vec3(1.1, 0.85, 0.55)), c, clamp(i2.y, 0, 1));
+    m.cutNode = tex.a.mul(float(1).add(mip.mul(0.25))).greaterThan(ALPHA_TEST);
+    // and the far cross-fade: the pixels the impostor takes (see `fade.ts`). The share is worked out per vertex and passed
+    // as one interpolant: worked out per pixel, it cost the forest floor's leaves about 0.8 ms.
+    m.maskNode = m.cutNode.and(bayer4Node(screenCoordinate.xy).greaterThanEqual(varying(farShare, 'vFarShare')));
+    // per-instance tint and health
+    const c = tinted(tex.rgb.mul(perKind3((k) => LEAF_GAIN[leafOf(k)?.card ?? 'pine'])), i1.w, i2.y);
     const col = max(c, 0).mul(ao).toVar();
     m.plantColorNode = col;
     // light shining through the leaf: towards the key light, seen from the shade side
@@ -275,7 +303,7 @@ export function createPlantMaterials(cards: CardSet, barks: BarkSets, wind: Wind
   })();
 
   return {
-    light, all,
+    light, all, fade,
     get(kind, group) {
       const s = SPECIES[kind].spec;
       if (group === 'rock') return rock;
