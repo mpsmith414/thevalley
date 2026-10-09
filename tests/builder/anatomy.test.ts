@@ -8,6 +8,7 @@ import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
 import { dist, dot, v3, type Vec3 } from '../../src/util/vec';
+import { badEdges, productionMesh } from '../fixtures/mesh';
 import { biped, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 import { sampleBody } from '../../src/builder/build';
 
@@ -18,17 +19,8 @@ const named = (a: Anatomy, name: string) => a.features.filter((f) => f.name === 
 const withMuscle = (r: Recipe, muscle: number): Recipe => ({ ...r, build: { ...r.build, muscle } });
 const MUSCLE = ['haunch', 'shoulder', 'blade', 'crest'];
 const cast = (id: string) => CAST.find((c) => c.recipe.id === id)!.recipe;
-/** Edges used by only one triangle in the production-cell mesh (0 for a closed mesh). */
-function openEdges(recipe: Recipe): number {
-  const m = surfaceNetsSparse(sampleBody(buildSkeleton(recipe), recipe).field);
-  const edges = new Map<number, number>(), n = m.positions.length / 3;
-  for (let t = 0; t < m.indices.length; t += 3)
-    for (let e = 0; e < 3; e++) {
-      const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
-      edges.set(key, (edges.get(key) ?? 0) + 1);
-    }
-  return [...edges.values()].filter((c) => c === 1).length;
-}
+/** Edges not in exactly two triangles in the production-cell mesh (0 for a closed mesh). */
+const openEdges = (recipe: Recipe) => badEdges(productionMesh(recipe));
 
 describe('shapes', () => {
   it('an ellipsoid is negative inside, ~0 on its surface, positive outside', () => {

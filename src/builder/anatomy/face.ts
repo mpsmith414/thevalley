@@ -20,9 +20,17 @@ export function headFrame(h: BoneDef): Frame {
   return f.a.z < 0 ? { a: f.a, up: scale(f.up, -1), side: scale(f.side, -1) } : f;
 }
 
-/** A frame along `a` with `up` made perpendicular to it (side = up × a). */
-function frameAlong(a: Vec3, up: Vec3): Frame {
-  const u = norm(sub(up, scale(a, dot(up, a))), up);
+/**
+ * A frame along `a` with `up` made perpendicular to it (side = up × a). When `a` is parallel to `up`, up falls back to
+ * backward (−z), then to +x, made perpendicular (as boneFrame does for an exactly vertical bone).
+ */
+export function frameAlong(a: Vec3, up: Vec3): Frame {
+  let t = v3();
+  for (const r of [up, v3(0, 0, -1), v3(1, 0, 0)]) {
+    t = sub(r, scale(a, dot(r, a)));
+    if (Math.hypot(t.x, t.y, t.z) > 1e-6) break;
+  }
+  const u = norm(t);
   return { a, up: u, side: norm(cross(u, a)) };
 }
 
@@ -116,7 +124,7 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
   if (nose === 'pad') {
     push(feature('add', ellipsoid(at(T, [nu, 0.2 * rn]), [na, ns, nu], v3(0.55 * rn, 0.85 * rn, 0.6 * rn)), 0.3 * rn, { mark: 'nose', markBand: 0.25 * rn, name: 'nose', bone: m >= 0 ? m : h }));
     if (0.2 * rn >= 1.5 * cell)
-      for (const s of [-1, 1]) out.push(feature('carve', sphere(at(T, [na, 0.35 * rn], [ns, s * 0.38 * rn], [nu, 0.15 * rn]), 0.2 * rn), 0.08 * rn, { mark: 'nose', name: 'nostril', bone: m >= 0 ? m : h }));
+      for (const s of [-1, 1]) out.push(feature('carve', sphere(at(T, [na, 0.35 * rn], [ns, s * 0.38 * rn], [nu, 0.15 * rn]), 0.2 * rn), 0.08 * rn, { mark: 'nose', markBand: 0.1 * rn, name: 'nostril', bone: m >= 0 ? m : h }));
     if (0.07 * rn >= 0.7 * cell) {
       const r = Math.max(0.07 * rn, cell);
       out.push(feature('carve', cone(at(T, [nu, -0.15 * rn], [na, 0.3 * rn]), at(T, [nu, -0.8 * rn], [na, 0.2 * rn]), r, r), 0.5 * r, { name: 'philtrum', bone: m >= 0 ? m : h }));
@@ -130,12 +138,13 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
       out.push(feature('add', cone(at(T, [na, -0.2 * rn]), at(T, [na, 0.6 * rn], [nu, -0.9 * rn]), r0, r1), 0.2 * rn, { name: 'hook', bone: m }));
     } else push(feature('add', ellipsoid(lerp(M.start, M.end, 0.6), [na, ns, nu], v3(0.55 * lM, 1.25 * rM, 0.35 * rM)), 0.3 * M.r0, { name: 'bill', bone: m }));
     if (0.12 * M.r0 >= 1.5 * cell)
-      for (const s of [-1, 1]) out.push(feature('carve', sphere(at(M.start, [na, 0.3 * lM], [nu, 0.6 * M.r0], [ns, s * 0.4 * M.r0]), 0.12 * M.r0), 0.05 * M.r0, { mark: 'nose', name: 'nostril', bone: m }));
+      for (const s of [-1, 1]) out.push(feature('carve', sphere(at(M.start, [na, 0.3 * lM], [nu, 0.6 * M.r0], [ns, s * 0.4 * M.r0]), 0.12 * M.r0), 0.05 * M.r0, { mark: 'nose', markBand: 0.06 * M.r0, name: 'nostril', bone: m }));
   } else if (nose === 'slits' && 0.08 * rn >= 0.7 * cell) {
     const r = Math.max(0.08 * rn, cell);
     for (const s of [-1, 1]) {
+      // from inside the head out through the skin (the tip's surface curves back from T, so p sits just outside it)
       const p = at(T, [nu, 0.4 * rn], [ns, s * 0.3 * rn]);
-      out.push(feature('carve', cone(p, at(p, [na, 0.25 * rn]), r, r), 0.5 * r, { mark: 'nose', name: 'slit', bone: m >= 0 ? m : h }));
+      out.push(feature('carve', cone(at(p, [na, -0.25 * rn]), p, r, r), 0.5 * r, { mark: 'nose', markBand: r, name: 'slit', bone: m >= 0 ? m : h }));
     }
   }
 
@@ -159,7 +168,9 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
     if (E.role !== 'ear' || E.squash >= 0.8) return;
     const t = thinAxis(E), ea = norm(sub(E.end, E.start)), rmid = (E.r0 + E.r1) / 2, hth = rmid * E.squash;
     if (hth < 1.5 * cell) {
-      out.push(feature('mark', cone(E.start, E.end, E.r0, E.r1), 0, { mark: 'earInner', markBand: hth, facing: t, name: 'earCup', bone: i }));
+      // the squashed ear's front face lies rmid·(1 − squash) inside the round cone: a band of rmid reaches all of it
+      // (facing keeps the colour off the back)
+      out.push(feature('mark', cone(E.start, E.end, E.r0, E.r1), 0, { mark: 'earInner', markBand: rmid, facing: t, name: 'earCup', bone: i }));
       return;
     }
     out.push(feature('carve', ellipsoid(at(lerp(E.start, E.end, 0.5), [t, 1.6 * hth]), [ea, norm(cross(t, ea)), t], v3(0.38 * length(E), 0.55 * rmid, 1.4 * hth)),

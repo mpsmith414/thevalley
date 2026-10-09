@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { anatomy, type Anatomy } from '../../src/builder/anatomy';
-import { faceFeatures, headFrame, mouthFrame } from '../../src/builder/anatomy/face';
-import { buildBody, sampleBody } from '../../src/builder/build';
-import { surfaceNetsSparse } from '../../src/builder/mesher';
+import { faceFeatures, frameAlong, headFrame, mouthFrame } from '../../src/builder/anatomy/face';
+import { buildBody } from '../../src/builder/build';
 import { feature, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
 import { bodySdf, smin } from '../../src/builder/sdf';
 import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
-import { add, dist, dot, norm, scale, sub, v3 } from '../../src/util/vec';
+import { add, dist, dot, lerp, norm, scale, sub, v3 } from '../../src/util/vec';
+import { badEdges, productionMesh } from '../fixtures/mesh';
 import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
 
 const cast = (id: string) => CAST.find((c) => c.recipe.id === id)!.recipe;
@@ -75,7 +75,7 @@ describe('face features', () => {
     const sk = buildSkeleton(fox), d = detail(sk), m = mouthFrame(sk, fox.face, d)!;
     expect(m).not.toBeNull();
     expect(m.tip.z).toBeGreaterThan(m.hinge.z);
-    for (const e of sk.bones.filter((b) => b.role === 'eye')) expect(m.hinge.y).toBeLessThan(e.start.y);
+    for (const e of sk.bones.filter((b) => b.role === 'eye')) expect(m.hinge.y).toBeLessThan(lerp(e.start, e.end, 0.5).y); // the eyeball centre
     expect(m.halfThick).toBeGreaterThanOrEqual(1.1 * d.cell);
     expect(sk.bones[m.head].role).toBe('head');
     expect(sk.bones[m.mouth].role).toBe('mouth');
@@ -185,6 +185,43 @@ describe('face features', () => {
     for (const g of coarse) expect(g).toMatchObject({ op: 'mark', mark: 'earInner' });
   });
 
+  it('every mark has a band (Task 9 shades by distance / markBand)', () => {
+    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, biped, bird])
+      for (const d of [FINE, { cell: 0.01 }])
+        for (const g of anatomy(buildSkeleton(r), r, d).features.filter((h) => h.mark)) expect(g.markBand, `${r.id} ${g.name}`).toBeGreaterThan(0);
+  });
+
+  it("slit nostrils run inward through the skin (their inner end is deep inside the head)", () => {
+    for (const r of [cast('frog'), cast('trout'), hexapod]) {
+      const sk = buildSkeleton(r), a = anatomy(sk, r, FINE), face = faceFeatures(sk, r, FINE), plain = bodySdf(sk, noFace(a, face.length));
+      const slits = face.filter((g) => g.name === 'slit');
+      expect(slits, r.id).toHaveLength(2);
+      for (const s of slits) {
+        if (s.shape.type !== 'cone') throw new Error('cone');
+        const { a: inner, b: outer, r0 } = s.shape;
+        expect(plain(inner.x, inner.y, inner.z), r.id).toBeLessThan(-r0);
+        expect(plain(outer.x, outer.y, outer.z), r.id).toBeGreaterThan(-r0); // and it reaches the skin
+      }
+    }
+  });
+
+  it("a thin ear's mark band reaches its whole front face, not just the rim", () => {
+    const { sk, f } = faceOf(fox, { cell: 0.01 });
+    for (const g of f.filter((h) => h.name === 'earCup')) {
+      const e = sk.bones[g.bone!], rmid = (e.r0 + e.r1) / 2;
+      // the squashed ear's front face lies rmid·(1 − squash) inside the round cone
+      expect(g.markBand!).toBeGreaterThanOrEqual(rmid * (1 - e.squash));
+    }
+  });
+
+  it('frameAlong stays orthonormal when the axis is parallel to up', () => {
+    for (const a of [v3(0, 1, 0), v3(0, -1, 0)]) {
+      const fr = frameAlong(a, v3(0, 1, 0));
+      for (const [u, w] of [[fr.a, fr.up], [fr.a, fr.side], [fr.up, fr.side]]) expect(Math.abs(dot(u, w))).toBeLessThan(1e-9);
+      for (const u of [fr.up, fr.side]) expect(dot(u, u)).toBeCloseTo(1, 9);
+    }
+  });
+
   it('is deterministic', () => {
     expect(faceOf(fox).f).toEqual(faceOf(fox).f);
   });
@@ -192,27 +229,10 @@ describe('face features', () => {
 
 describe('faces mesh cleanly', () => {
   it('every native and fixture meshes closed at the production cell', () => {
-    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird]) {
-      const m = surfaceNetsSparse(sampleBody(buildSkeleton(r), r).field), edges = new Map<number, number>(), n = m.positions.length / 3;
-      for (let t = 0; t < m.indices.length; t += 3)
-        for (let e = 0; e < 3; e++) {
-          const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
-          edges.set(key, (edges.get(key) ?? 0) + 1);
-        }
-      expect([...edges.values()].filter((c) => c === 1), r.id).toHaveLength(0);
-    }
+    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird]) expect(badEdges(productionMesh(r)), r.id).toBe(0);
   }, 120_000);
 
   it('the fox builds closed meshes at all three LODs (the slit does not tear)', () => {
-    const body = buildBody(fox);
-    for (const m of body.lods) {
-      const edges = new Map<number, number>(), n = m.positions.length / 3;
-      for (let t = 0; t < m.indices.length; t += 3)
-        for (let e = 0; e < 3; e++) {
-          const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
-          edges.set(key, (edges.get(key) ?? 0) + 1);
-        }
-      expect([...edges.values()].filter((c) => c !== 2)).toHaveLength(0);
-    }
+    for (const m of buildBody(fox).lods) expect(badEdges(m)).toBe(0);
   }, 60_000);
 });
