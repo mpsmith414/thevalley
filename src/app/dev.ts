@@ -2,8 +2,10 @@ import { Vector3 } from 'three/webgpu';
 import { viewpointPose } from '../camera/viewpoints';
 import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
+import { VALLEY } from '../valley/layout';
+import { PRESETS } from '../world/clock';
 import type { World } from './main';
-import type { Pacing } from './pacing';
+import { gpuDone, type Pacing } from './pacing';
 
 /** The live loop's dev controls: `paused` freezes the world (`step`), `heavy` adds busy ms per frame, `onFrame` samples fps. */
 export type Loop = { paused: boolean; heavy: number; onFrame: ((dt: number) => void) | null };
@@ -61,8 +63,62 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     loop.paused = true;
     for (let i = 0; i < frames; i++) tick(dt);
   };
+  /** Jump the clock forward to `hour` o'clock and relight at once (a following `shot` shows it). */
+  const time = (hour: number) => {
+    clock.jumpTo(hour);
+    light(Infinity);
+    return clock.hour;
+  };
+  const views = VALLEY.viewpoints.length;
+  /**
+   * The contact sheet's shots: every viewpoint at dawn, noon, golden hour and night. Each goes to the viewpoint's end pose
+   * (where its glide lands), steps 120 frames (the plants fade in, the animals move on) and saves .shots/<prefix>-v<n>-<time>.png.
+   */
+  const tour = async (prefix = 'tour') => {
+    const names: string[] = [];
+    for (let n = 1; n <= views; n++) {
+      for (const [id, hour] of Object.entries(PRESETS)) {
+        w.view(n);
+        time(hour);
+        step(120);
+        names.push(await shot(`${prefix}-v${n}-${id}`));
+      }
+    }
+    return names;
+  };
+  /**
+   * Frame cost at every viewpoint at noon, at full resolution: 180 frames each, one at a time, each timed from its start to
+   * the GPU finishing it (pacing's working time, with no overlap between frames, so a little pessimistic). Returns the
+   * median ms, the draw calls and the triangles of a frame (shadow passes and the lake's mirror included).
+   */
+  const perf = async (frames = 180, hour: number = PRESETS.noon) => {
+    const done = gpuDone(renderer);
+    if (!done) return 'no GPU timing on WebGL 2';
+    const rows: { view: string; ms: number; p90: number; drawCalls: number; triangles: number }[] = [];
+    for (let n = 1; n <= views; n++) {
+      const name = w.view(n);
+      time(hour);
+      step(120);
+      await renderer.compileAsync(scene, camera);
+      const ms: number[] = [];
+      let drawCalls = 0, triangles = 0;
+      for (let i = 0; i < frames; i++) {
+        const t0 = performance.now();
+        tick(1 / 60);
+        renderer.info.reset(); // the live loop's animation resets it; stepping by hand must
+        renderer.render(scene, camera);
+        ({ drawCalls, triangles } = renderer.info.render);
+        await done();
+        ms.push(performance.now() - t0);
+      }
+      ms.sort((a, b) => a - b);
+      const at = (q: number) => Math.round(ms[Math.floor(q * (ms.length - 1))] * 10) / 10;
+      rows.push({ view: `${n} ${name}`, ms: at(0.5), p90: at(0.9), drawCalls, triangles });
+    }
+    console.table(rows);
+    return rows;
+  };
   const fpsNow = () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0);
-  const mark = (name: string) => Math.round(performance.getEntriesByName(name)[0]?.startTime ?? NaN);
   Object.assign(window, {
     __valley: {
       ...w, tier, step, shot, screen, pace,
@@ -73,12 +129,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
         Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
         w.fly.apply(camera);
       },
-      /** Jump the clock forward to `hour` o'clock and relight at once (a following `shot` shows it). */
-      time: (hour: number) => {
-        clock.jumpTo(hour);
-        light(Infinity);
-        return clock.hour;
-      },
+      time, tour, perf,
       /** Paint every leaf card (colour above, height below, on a sky-grey ground) and save the sheet as .shots/<name>.png. */
       cards: async (size = 256, name = 'cards') => {
         const { CARD_KINDS, paintCard } = await import('../plants/cards');
@@ -150,9 +201,10 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
       },
       /** Median frames per second over the last few seconds. */
       fps: fpsNow,
-      /** Milliseconds since navigation until the data arrived, the ground textures were in, and the first frame was ready. */
+      /** Milliseconds since navigation to each startup mark (`valley-*`, in the order they came; see `start` in main.ts). */
       get timings() {
-        return { data: mark('valley-data'), ground: mark('valley-ground'), trees: mark('valley-trees'), scene: mark('valley-scene'), animals: mark('valley-animals'), ready: mark('valley-ready'), animalsShown: mark('valley-animals-shown') };
+        const marks = performance.getEntriesByType('mark').filter((m) => m.name.startsWith('valley-')).sort((a, b) => a.startTime - b.startTime);
+        return Object.fromEntries(marks.map((m) => [m.name.slice(7), Math.round(m.startTime)]));
       },
     },
   });
