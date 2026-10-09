@@ -20,6 +20,7 @@ import {
   int, max, mix, normalGeometry, positionGeometry, positionWorld, pow, screenCoordinate, select, texture, uniform, uniformArray, uv, varying,
   vec2, vec3, vec4,
 } from 'three/tsl';
+import { probe } from '../render/probe';
 import type { WorldQuality } from '../world/quality';
 import { GPU_STRIDE, MID_VARIANTS, collectInstances } from '../world/tiles';
 import type { TileData, ValleyData } from '../valley/types';
@@ -238,6 +239,13 @@ export async function bakeImpostors(renderer: WebGPURenderer, models: PlantModel
     rtA.dispose();
     rtN.dispose();
   }
+  // the last copy made the mips (three r186's copyTextureToTexture honours `generateMipmaps`); without them the far forest shimmers
+  if (import.meta.env.DEV) {
+    const backend = renderer.backend as unknown as { get(t: Texture): { texture?: { mipLevelCount?: number } }; copyTextureToTexture?: unknown };
+    const levels = backend.get(atlasA.texture).texture?.mipLevelCount; // WebGPU only
+    const makesMips = String(backend.copyTextureToTexture).includes('generateMipmaps');
+    if (levels !== undefined) probe(levels > 1 && makesMips, `the impostor atlas has ${levels} mip level(s) and the copy ${makesMips ? 'does' : 'does not'} make mips, so the far forest may shimmer (impostor.ts)`);
+  }
   const bytes = Math.round((size * V * size * R + ns * V * ns * R) * 4 * (4 / 3));
   return {
     albedo: atlasA.texture, normal: atlasN.texture, frames: rows.map((r) => r.frame), size, ms: performance.now() - t0, bytes,
@@ -258,6 +266,8 @@ const CROWN_SHADE = 0.65;
 class CrownLightingModel extends PhysicalLightingModel {
   constructor(private readonly shade: Node<'float'>) { super(); }
   direct(input: Parameters<PhysicalLightingModel['direct']>[0], builder: NodeBuilder) {
+    // three r186 passes the light's colour as `input.lightColor`; without it, light the crowns unshaded rather than fail
+    if (!probe(!!input?.lightColor, "PhysicalLightingModel.direct's input has no lightColor, so far crowns are lit unshaded (impostor.ts)")) return super.direct(input, builder);
     super.direct({ ...input, lightColor: (input.lightColor as Node<'vec3'>).mul(this.shade) }, builder);
   }
 }

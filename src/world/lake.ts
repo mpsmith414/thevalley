@@ -1,5 +1,6 @@
 import { LinearSRGBColorSpace, Mesh, NodeMaterial, type Camera, type RenderTarget, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
 import { cameraPosition, float, positionWorld, reflector, screenSize, smoothstep, vec2 } from 'three/tsl';
+import { probe } from '../render/probe';
 import type { Tier } from '../render/quality';
 import { offsetPolygon } from '../valley/geom';
 import { VALLEY } from '../valley/layout';
@@ -33,12 +34,19 @@ function shareMirrorPipelines(mirror: Updater) {
  */
 function keepShadows(mirror: Updater, scene: Scene) {
   const render = mirror.updateBefore.bind(mirror);
+  let frames = 0;
   mirror.updateBefore = (frame) => {
     const held: LightShadow[] = [];
+    let cascaded = false, standIns = 0;
     for (const o of scene.children) { // the key light, and the cascades' stand-in lights (plain Object3Ds with a shadow)
-      const shadow = (o as { shadow?: LightShadow }).shadow;
-      if (shadow?.autoUpdate) { shadow.autoUpdate = false; held.push(shadow); }
+      const shadow = (o as { shadow?: LightShadow & { shadowNode?: unknown } }).shadow;
+      if (!shadow) continue;
+      if ((o as { isLight?: boolean }).isLight) cascaded ||= !!shadow.shadowNode; // a custom shadow node: the CSM cascades
+      else standIns++;
+      if (shadow.autoUpdate) { shadow.autoUpdate = false; held.push(shadow); } // (at night the sky holds them all already)
     }
+    // the cascades add their stand-ins to the scene on the first render, so look from the second frame on
+    if (++frames > 2) probe(!cascaded || standIns > 0, "the lake's mirror found no shadow-cascade lights in scene.children, so it re-renders every shadow map (lake.ts keepShadows)");
     try { return render(frame); } finally { for (const shadow of held) shadow.autoUpdate = true; }
   };
 }
@@ -89,6 +97,7 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
       // Not while three precompiles (`compileAsync`, r186's flag): the mirror's render there would make the pipelines of
       // everything it shows one at a time, blocking, instead of in the background with the rest. `false` tells three the
       // update did not happen, so the frame's real render still draws the mirror (it updates once per frame).
+      if (frame.renderer) probe('_isPreCompiling' in (frame.renderer as object), "renderer._isPreCompiling is gone, so the lake's mirror renders (and compiles one pipeline at a time) during compileAsync (lake.ts)");
       if ((frame.renderer as { _isPreCompiling?: boolean } | undefined)?._isPreCompiling) return false;
       if (layers) base.getVirtualCamera(frame.camera).layers.mask = layers(frame.camera);
       return render(frame);
