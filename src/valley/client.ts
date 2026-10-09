@@ -17,10 +17,14 @@ export class ValleyClient {
       if (data.data) p.resolve(data.data);
       else p.reject(new Error(data.error ?? 'generation failed'));
     };
-    this.worker.onerror = (e) => {
-      for (const p of this.pending.values()) p.reject(new Error(e.message || 'generation worker failed'));
-      this.pending.clear();
-    };
+    this.worker.onerror = (e) => this.failAll(e.message || 'generation worker failed');
+    // a reply that cannot be read (it would not deserialise): the request it answered can never resolve
+    this.worker.onmessageerror = () => this.failAll('the generation worker sent a message that could not be read');
+  }
+
+  private failAll(message: string) {
+    for (const p of this.pending.values()) p.reject(new Error(message));
+    this.pending.clear();
   }
 
   generate(layout: Layout, grid: number, onProgress: (stage: GenStage, frac: number) => void = () => {}): Promise<ValleyData> {

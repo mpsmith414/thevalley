@@ -92,7 +92,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
 
   const tex = valleyTextures(data);
   const terrain = createTerrain(tex, tier, sets);
-  const backdrop = createBackdrop(data);
+  const backdrop = createBackdrop(data, VALLEY.seed);
   scene.add(terrain.object, backdrop);
 
   // ---------- time of day: the clock drives the sun, moon, sky, light and fog ----------

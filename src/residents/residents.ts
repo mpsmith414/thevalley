@@ -226,7 +226,8 @@ export class Residents {
     for (const a of this.animals) {
       const { rig, obj } = a, p = rig.position;
       const afloat = rig.inWater && (rig.swimmer || rig.floater);
-      sphere.center.set(p.x, (afloat ? this.valley.waterLevelAt(p.x, p.z) : this.valley.heightAt(p.x, p.z) + rig.altitude) + a.recipe.life.sizeM * 0.3, p.z);
+      const water = afloat ? this.valley.waterLevelAt(p.x, p.z) : NaN; // NaN off the water's map (dry land): use the ground
+      sphere.center.set(p.x, (water === water ? water : this.valley.heightAt(p.x, p.z) + rig.altitude) + a.recipe.life.sizeM * 0.3, p.z);
       sphere.radius = a.recipe.life.sizeM;
       const d = sphere.center.distanceTo(eye), seen = frustum.intersectsSphere(sphere);
       a.band = seen && d < FULL_RANGE ? 'full' : seen && d < QUARTER_RANGE ? 'quarter' : 'paused';

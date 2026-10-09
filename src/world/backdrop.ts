@@ -2,7 +2,6 @@ import { BufferAttribute, BufferGeometry, DoubleSide, Mesh, MeshStandardNodeMate
 import { cameraPosition, color, mix, positionWorld, smoothstep } from 'three/tsl';
 import { createNoise2D, ridged } from '../valley/generate/noise';
 import { sampleHeight, type HeightGrid } from '../valley/generate/shape';
-import { fnv1a } from '../util/hash';
 import type { ValleyData } from '../valley/types';
 
 const AROUND = 256, OUT = 48, FAR = 6000, SKIRT = 40;
@@ -15,11 +14,11 @@ const smooth = (a: number, b: number, x: number) => {
  * The mountains around the Valley: a polar grid (256 around × 48 out) from the valley square's edge out to 6 km.
  * The inner ring takes the valley's border height (the lowest along its two neighbouring segments, so it never pokes
  * above the terrain's edge) with a short skirt below it; heights rise outward to 300–900 m of ridged noise.
- * The seed comes from the layout's cache key. Casts no shadows.
+ * `seed` is the layout's (so the mountains stay put when only the generator or the grid changes). Casts no shadows.
  */
-export function createBackdrop(d: ValleyData): Mesh {
+export function createBackdrop(d: ValleyData, seed: number): Mesh {
   const half = d.size / 2, g: HeightGrid = { grid: d.grid, size: d.size, cell: d.size / (d.grid - 1), h: d.height };
-  const noise = createNoise2D(parseInt(fnv1a(d.key).slice(0, 8), 16) ^ 0x6d6f756e);
+  const noise = createNoise2D(seed ^ 0x6d6f756e);
   const edge = (a: number) => {
     const c = Math.cos(a), s = Math.sin(a), r = half / Math.max(Math.abs(c), Math.abs(s));
     return { x: c * r, z: s * r, r };
