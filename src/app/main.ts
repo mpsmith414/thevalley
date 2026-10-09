@@ -82,7 +82,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
   // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The land everywhere.
   const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER;
-  sky.cascadeLayers([1 | NEAR | MID_TREE, 1 | NEAR | MID, 1 | MID, 1 | MID]);
+  // Mid trees in the nearest cascade cost ~1.8 ms at the forest floor for a barely visible gain (low sun only), so they
+  // stay out for now; flip this on if the frame budget allows after the residents and ground cover are in.
+  const MID_TREES_IN_CASCADE_0 = false;
+  sky.cascadeLayers([1 | NEAR | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | MID, 1 | MID, 1 | MID]);
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
