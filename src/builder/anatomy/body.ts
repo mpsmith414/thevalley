@@ -18,6 +18,13 @@ const slim = (sk: Skeleton, b: BoneDef, m: number) => (isLowerLeg(sk, b) ? 1 - 0
 const ellipsoid = (c: Vec3, f: Frame, along: number, side: number, up: number): Shape =>
   ({ type: 'ellipsoid', c, ax: [f.a, f.side, f.up], r: v3(along, side, up) });
 
+/**
+ * A leg muscle ellipsoid: along the bone, its front/back radius on whichever across axis points more along z (a leg
+ * that sprawls sideways has its frame up, not its side, pointing forward), its side radius on the other.
+ */
+const legEllipsoid = (c: Vec3, f: Frame, along: number, side: number, frontBack: number): Shape =>
+  Math.abs(f.up.z) >= Math.abs(f.side.z) ? ellipsoid(c, f, along, side, frontBack) : ellipsoid(c, f, along, frontBack, side);
+
 /** The extra shapes that give a body its muscles, joints, ribcage, belly and neck (see the rules in the plan). */
 export function bodyFeatures(sk: Skeleton, build: Build, detail: Detail): Feature[] {
   const m = build.muscle, muscle = m >= 0.05;
@@ -36,10 +43,10 @@ export function bodyFeatures(sk: Skeleton, build: Build, detail: Detail): Featur
     if (muscle && isUpperLeg(sk, b)) {
       if (b.start.z < midZ) {
         const c = add(add(add(lerp(b.start, b.end, 0.25), scale(o, 0.2 * r)), scale(UP, 0.15 * r)), scale(BACK, 0.15 * r));
-        push(feature('add', ellipsoid(c, f, 0.42 * len, r * (0.85 + 0.35 * m), r * (1.0 + 0.4 * m)), 0.5 * r, { name: 'haunch', bone: i }));
+        push(feature('add', legEllipsoid(c, f, 0.42 * len, r * (0.85 + 0.35 * m), r * (1.0 + 0.4 * m)), 0.5 * r, { name: 'haunch', bone: i }));
       } else {
         const c = add(lerp(b.start, b.end, 0.18), scale(o, 0.15 * r));
-        push(feature('add', ellipsoid(c, f, 0.38 * len, r * (0.75 + 0.25 * m), r * (0.95 + 0.3 * m)), 0.45 * r, { name: 'shoulder', bone: i }));
+        push(feature('add', legEllipsoid(c, f, 0.38 * len, r * (0.75 + 0.25 * m), r * (0.95 + 0.3 * m)), 0.45 * r, { name: 'shoulder', bone: i }));
       }
     }
     // 2. joint knob where a leg grows from a leg, sized from the slimmed radii (else it swells into a ball)

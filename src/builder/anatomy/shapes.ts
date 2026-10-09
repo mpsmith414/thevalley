@@ -60,18 +60,18 @@ export function feature(op: Feature['op'], shape: Shape, k: number, extra: Parti
 /** The largest radius of a shape (for skipping features too small to mesh). */
 export const shapeSize = (s: Shape) => (s.type === 'cone' ? Math.max(s.r0, s.r1) : Math.max(s.r.x, s.r.y, s.r.z));
 
-/** A bone's frame: `a` along it, `up` = world up made perpendicular (forward, then side, if it is vertical), side = up × a. */
+/**
+ * A bone's frame: `a` along it, `up` = world up made perpendicular (the dorsal side: backwards for a bone that leans
+ * forward from upright), side = up × a. An exactly vertical bone takes −z (dorsal for an upright body).
+ */
 export type Frame = { a: Vec3; up: Vec3; side: Vec3 };
 
-const WORLD_UP = v3(0, 1, 0), FORWARD = v3(0, 0, 1), SIDE = v3(1, 0, 0);
+const WORLD_UP = v3(0, 1, 0), BACKWARD = v3(0, 0, -1);
 
 export function boneFrame(b: BoneDef): Frame {
   const a = norm(sub(b.end, b.start));
-  let up = FORWARD;
-  for (const f of [WORLD_UP, FORWARD, SIDE]) {
-    const t = sub(f, scale(a, dot(f, a)));
-    if (Math.hypot(t.x, t.y, t.z) > 0.2) { up = norm(t); break; }
-  }
+  const t = sub(WORLD_UP, scale(a, dot(WORLD_UP, a)));
+  const up = Math.hypot(t.x, t.y, t.z) > 1e-6 ? norm(t) : BACKWARD;
   return { a, up, side: norm(cross(up, a)) };
 }
 

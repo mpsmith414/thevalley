@@ -39,6 +39,21 @@ function fineCell(sk: Skeleton, sdf: Sdf, anat: Anatomy, longest: number): numbe
   return Math.max(longest / FINE_CELLS, c * Math.sqrt(n / MAX_RAW_VERTICES)); // vertices scale as 1 / cell²
 }
 
+/**
+ * The body's fine field: the cell (FINE_CELLS, or coarser under the vertex cap), the anatomy at that detail,
+ * its SDF, and the sparse samples over its bounds (add features can reach past the bones).
+ */
+export function sampleBody(skeleton: Skeleton, recipe: Recipe) {
+  const longest = Math.max(skeleton.max.x - skeleton.min.x, skeleton.max.y - skeleton.min.y, skeleton.max.z - skeleton.min.z);
+  // anatomy at the finest detail for the estimate; rebuilt at the chosen cell when the vertex cap coarsens it
+  const finest = anatomy(skeleton, recipe, { cell: longest / FINE_CELLS });
+  const fine = fineCell(skeleton, bodySdf(skeleton, finest), finest, longest);
+  const anat = fine === longest / FINE_CELLS ? finest : anatomy(skeleton, recipe, { cell: fine });
+  const sdf = bodySdf(skeleton, anat);
+  const { min, max } = anatomyBounds(skeleton, anat);
+  return { longest, fine, anat, sdf, field: sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, anat, fine)) };
+}
+
 /** Below this gradient length the SDF is unreliable (inside a part thinner than the difference step). */
 const WEAK_GRADIENT = 0.5;
 
@@ -105,15 +120,7 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
   const lap = (k: keyof BuildTimes) => { const now = performance.now(); if (times) times[k] += now - t; t = now; };
   const skeleton = buildSkeleton(recipe);
   const regions = recipe.skin.regions.map((r) => r.id);
-  const longest = Math.max(skeleton.max.x - skeleton.min.x, skeleton.max.y - skeleton.min.y, skeleton.max.z - skeleton.min.z);
-
-  // anatomy at the finest detail for the estimate; rebuilt at the chosen cell when the vertex cap coarsens it
-  const finest = anatomy(skeleton, recipe, { cell: longest / FINE_CELLS });
-  const fine = fineCell(skeleton, bodySdf(skeleton, finest), finest, longest);
-  const anat = fine === longest / FINE_CELLS ? finest : anatomy(skeleton, recipe, { cell: fine });
-  const sdf = bodySdf(skeleton, anat);
-  const { min, max } = anatomyBounds(skeleton, anat);
-  const field = sampleSparse(sdf, min, max, fine, 4, coarseBodySdf(skeleton, anat, fine));
+  const { longest, fine, sdf, field } = sampleBody(skeleton, recipe);
   lap('sample');
   const raw = splitNonManifold(surfaceNetsSparse(field));
   const rawVertices = raw.positions.length / 3;

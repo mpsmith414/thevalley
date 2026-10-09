@@ -93,8 +93,10 @@ const STRIDE = 22;
  * The whole body as one distance function: bones blended in tree order (radii scaled by `anat.slim`), then
  * the anatomy's `add` features (smooth union), then its `carve`s (smooth subtraction); marks change no shape.
  * Eyes are separate meshes. Bones and features are skipped outside their reach boxes grown by `margin`.
+ * `shallow` (the coarse lattice's SDF) scales depths inside ellipsoids by rmin/rmax: the ellipsoid bound can
+ * overstate depth inside a long ellipsoid, and a coarse SDF must never overstate distance (see `sampleSparse`).
  */
-export function bodySdf(sk: Skeleton, anat?: Anatomy, margin = 0.03): (x: number, y: number, z: number) => number {
+export function bodySdf(sk: Skeleton, anat?: Anatomy, margin = 0.03, shallow = false): (x: number, y: number, z: number) => number {
   const bones = anat ? sk.bones.map((b, i) => (anat.slim[i] === 1 ? b : { ...b, r0: b.r0 * anat.slim[i], r1: b.r1 * anat.slim[i] })) : sk.bones;
   const list = bones.filter((b) => b.role !== 'eye');
   const n = list.length, F = new Float64Array(n * STRIDE);
@@ -114,7 +116,7 @@ export function bodySdf(sk: Skeleton, anat?: Anatomy, margin = 0.03): (x: number
     ], i * STRIDE);
   });
   const feats = anat ? [...anat.features.filter((f) => f.op === 'add'), ...anat.features.filter((f) => f.op === 'carve')] : [];
-  const adds = feats.filter((f) => f.op === 'add').length, G = packFeatures(feats, margin);
+  const adds = feats.filter((f) => f.op === 'add').length, G = packFeatures(feats, margin, shallow);
   // a coarse grid of the boxes that touch each cell; the root bone is always in (it starts the fold)
   const grid = boxGrid([F, G], [STRIDE, FSTRIDE], [n, feats.length]);
   const { x0, y0, z0, inv, nx, ny, nz, outside } = grid, [bs, bi] = grid.lists[0], [fs, fi] = grid.lists[1];
@@ -214,11 +216,12 @@ function boxGrid(packs: Float64Array[], strides: number[], counts: number[]) {
  * Per-feature floats bodySdf reads: box min/max (grown by the margin), type (0 ellipsoid, 1 cone), blend k, then
  * ellipsoid: centre, the axes divided by their radii, the axes divided by their radii squared, the smallest radius;
  * cone: start, end − start, r0, r1; then a bounding sphere's centre and radius R, and R / the smallest radius
- * (from 30; the ellipsoid bound is ≥ rmin·(k0 − 1) ≥ (D − R)·rmin/R outside, ≥ D − R inside).
+ * (from 30; the ellipsoid bound is ≥ rmin·(k0 − 1) ≥ (D − R)·rmin/R outside, ≥ D − R inside); then the scale for
+ * negative ellipsoid values (35: rmin/rmax when shallow, else 1; |bound|·rmin/rmax ≤ rmin·(1 − k0) ≤ the true depth).
  */
-const FSTRIDE = 35;
+const FSTRIDE = 36;
 
-function packFeatures(feats: Feature[], margin: number): Float64Array {
+function packFeatures(feats: Feature[], margin: number, shallow: boolean): Float64Array {
   const G = new Float64Array(feats.length * FSTRIDE);
   feats.forEach((f, i) => {
     const o = i * FSTRIDE, s = f.shape;
@@ -235,7 +238,7 @@ function packFeatures(feats: Feature[], margin: number): Float64Array {
         G.set([a.x / r[j] ** 2, a.y / r[j] ** 2, a.z / r[j] ** 2], o + 20 + 3 * j);
       });
       G[o + 29] = Math.min(...r);
-      G.set([s.c.x, s.c.y, s.c.z, Math.max(...r), Math.max(...r) / Math.min(...r)], o + 30);
+      G.set([s.c.x, s.c.y, s.c.z, Math.max(...r), Math.max(...r) / Math.min(...r), shallow ? Math.min(...r) / Math.max(...r) : 1], o + 30);
     }
   });
   return G;
@@ -252,13 +255,13 @@ function featureAt(G: Float64Array, o: number, x: number, y: number, z: number):
   const b1 = px * G[o + 23] + py * G[o + 24] + pz * G[o + 25];
   const b2 = px * G[o + 26] + py * G[o + 27] + pz * G[o + 28];
   const k1 = Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2);
-  if (k1 < 1e-12) return -G[o + 29];
+  if (k1 < 1e-12) return -G[o + 29] * G[o + 35];
   const k0 = Math.sqrt(a0 * a0 + a1 * a1 + a2 * a2);
-  return (k0 * (k0 - 1)) / k1;
+  return k0 < 1 ? ((k0 * (k0 - 1)) / k1) * G[o + 35] : (k0 * (k0 - 1)) / k1;
 }
 
 /**
  * The body SDF for a sparse sampler's coarse lattice at fine cell `cell`: its bone and feature box culls widened
  * by the near reach, so a coarse corner near a thin part or a feature never misses it (see `sampleSparse`).
  */
-export const coarseBodySdf = (sk: Skeleton, anat: Anatomy | undefined, cell: number, block = 4) => bodySdf(sk, anat, nearReach(cell, block) + 0.03);
+export const coarseBodySdf = (sk: Skeleton, anat: Anatomy | undefined, cell: number, block = 4) => bodySdf(sk, anat, nearReach(cell, block) + 0.03, true);

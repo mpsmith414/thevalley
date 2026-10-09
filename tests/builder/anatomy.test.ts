@@ -8,7 +8,8 @@ import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
 import { dot, v3, type Vec3 } from '../../src/util/vec';
-import { blob, hexapod, quadruped, snake } from '../fixtures/recipes';
+import { biped, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
+import { sampleBody } from '../../src/builder/build';
 
 const fox = CAST.find((c) => c.recipe.id === 'fox')!.recipe;
 const detail = (sk: Skeleton) => ({ cell: Math.max(sk.max.x - sk.min.x, sk.max.y - sk.min.y, sk.max.z - sk.min.z) / 330 });
@@ -145,7 +146,7 @@ describe('body anatomy', () => {
   });
 
   it('the coarse SDF with anatomy keeps the sparse mesh equal to a dense one', () => {
-    for (const recipe of [fox, quadruped]) {
+    for (const recipe of [fox, quadruped, hexapod]) {
       const sk = buildSkeleton(recipe), a = anatomy(sk, recipe, detail(sk));
       const { min, max } = sk;
       const cell = Math.max(max.x - min.x, max.y - min.y, max.z - min.z) / 28;
@@ -163,6 +164,73 @@ describe('body anatomy', () => {
     expect(min.x).toBeLessThan(sk.min.x);
     for (const f of a.features.filter((g) => g.op === 'add'))
       for (const k of ['x', 'y', 'z'] as const) { expect(f.min[k]).toBeGreaterThanOrEqual(min[k]); expect(f.max[k]).toBeLessThanOrEqual(max[k]); }
+  });
+
+  it('meshes closed at the production cell (long hexapod belly, big frog features)', () => {
+    for (const recipe of [hexapod, CAST.find((c) => c.recipe.id === 'frog')!.recipe]) {
+      const m = surfaceNetsSparse(sampleBody(buildSkeleton(recipe), recipe).field);
+      const edges = new Map<number, number>(), n = m.positions.length / 3;
+      for (let t = 0; t < m.indices.length; t += 3)
+        for (let e = 0; e < 3; e++) {
+          const p = m.indices[t + e], q = m.indices[t + ((e + 1) % 3)], key = Math.min(p, q) * n + Math.max(p, q);
+          edges.set(key, (edges.get(key) ?? 0) + 1);
+        }
+      expect([...edges.values()].filter((c) => c === 1)).toHaveLength(0);
+    }
+  });
+
+  it('the coarse (shallow) SDF never overstates depth inside a long ellipsoid', () => {
+    // one add ellipsoid (4 : 1) far from every bone, so the body SDF there is the ellipsoid alone
+    const sk = buildSkeleton(blob), c = v3(10, 0, 0), r = v3(0.4, 0.1, 0.15);
+    const shape = { type: 'ellipsoid' as const, c, ax: [v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)] as [Vec3, Vec3, Vec3], r };
+    const a = { features: [feature('add', shape, 0.01)], slim: new Float32Array(sk.bones.length).fill(1) };
+    const shallow = bodySdf(sk, a, 0.03, true), plain = bodySdf(sk, a, 0.03);
+    const surface: Vec3[] = [];
+    for (let i = 0; i <= 120; i++)
+      for (let j = 0; j < 240; j++) {
+        const th = (Math.PI * i) / 120, ph = (2 * Math.PI * j) / 240;
+        surface.push(v3(r.x * Math.sin(th) * Math.cos(ph), r.y * Math.sin(th) * Math.sin(ph), r.z * Math.cos(th)));
+      }
+    let overstated = 0;
+    for (let i = 0; i < 300; i++) {
+      const f = (j: number) => (((i * 7919 + j * 104729) % 1000) / 1000) * 2 - 1;
+      const q = v3(r.x * f(1) * 0.7, r.y * f(2) * 0.7, r.z * f(3) * 0.7);
+      if ((q.x / r.x) ** 2 + (q.y / r.y) ** 2 + (q.z / r.z) ** 2 >= 1) continue;
+      const depth = Math.min(...surface.map((s) => Math.hypot(s.x - q.x, s.y - q.y, s.z - q.z)));
+      expect(-shallow(c.x + q.x, c.y + q.y, c.z + q.z)).toBeLessThanOrEqual(depth + 1e-3);
+      if (-plain(c.x + q.x, c.y + q.y, c.z + q.z) > depth + 1e-3) overstated++;
+    }
+    expect(overstated).toBeGreaterThan(0); // the plain bound does overstate: the test has teeth
+  });
+
+  it('puts the neck crest on the dorsal side and the throat on the ventral side (duck neck, near upright)', () => {
+    const duck = CAST.find((c) => c.recipe.id === 'duck')!.recipe;
+    const { sk, a } = anat(duck);
+    const neck = sk.bones.find((b) => b.role === 'neck')!;
+    const crest = named(a, 'crest')[0].shape, throat = named(a, 'throat')[0].shape;
+    if (crest.type !== 'cone' || throat.type !== 'cone') throw new Error('cones');
+    expect(crest.a.z).toBeLessThan(neck.start.z); // behind the neck (it leans forward from upright)
+    expect(throat.a.z).toBeGreaterThan(neck.start.z);
+  });
+
+  it("carves an upright biped's belly tuck into its front, not its back", () => {
+    const { sk, a } = anat(biped);
+    const belly = named(a, 'belly')[0];
+    if (belly.shape.type !== 'ellipsoid') throw new Error('ellipsoid');
+    const t = sk.bones[belly.bone!], mid = { z: t.start.z + 0.7 * (t.end.z - t.start.z) };
+    expect(belly.shape.c.z).toBeGreaterThan(mid.z);
+  });
+
+  it("gives a sprawled leg's muscle its front/back radius along z", () => {
+    const { a } = anat(hexapod);
+    const legs = [...named(a, 'haunch'), ...named(a, 'shoulder')];
+    expect(legs.length).toBeGreaterThan(0);
+    for (const f of legs) {
+      if (f.shape.type !== 'ellipsoid') throw new Error('ellipsoid');
+      const { ax, r } = f.shape;
+      const zAxis = Math.abs(ax[1].z) > Math.abs(ax[2].z) ? r.y : r.z, other = Math.abs(ax[1].z) > Math.abs(ax[2].z) ? r.z : r.y;
+      expect(zAxis).toBeGreaterThan(other); // front/back r·(1 + 0.4m) > side r·(0.85 + 0.35m)
+    }
   });
 
   it('is deterministic', () => {
