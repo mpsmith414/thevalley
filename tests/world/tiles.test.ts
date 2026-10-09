@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { GPU_STRIDE, TILE_RADIUS, bandFor, collectInstances, thinned, tileDistance, type Band } from '../../src/world/tiles';
+import { MeshStandardNodeMaterial, PerspectiveCamera } from 'three/webgpu';
+import { GPU_STRIDE, MID_LAYER, MID_TREE_LAYER, TILE_RADIUS, VegetationTiles, bandFor, collectInstances, lodsToRefill, thinned, tileDistance,
+  type Band } from '../../src/world/tiles';
+import type { PlantMesh, PlantModelSet } from '../../src/plants/generator';
+import type { PlantMaterials } from '../../src/plants/material';
 import { WORLD_QUALITY } from '../../src/world/quality';
 import { INSTANCE_STRIDE, TILE_SIZE, type TileData } from '../../src/valley/types';
 import { PLANT_KINDS, VARIANTS } from '../../src/plants/species';
@@ -160,5 +164,64 @@ describe('collectInstances', () => {
     expect(again).toBe(out);
     expect(total(again)).toBe(150 + 100 + 100);
     for (const b of again) expect(b.data.length).toBeGreaterThanOrEqual(b.count * GPU_STRIDE);
+  });
+});
+
+describe('lodsToRefill', () => {
+  it('refills the LODs of the bands a tile leaves and enters', () => {
+    expect(lodsToRefill('none', 'mid')).toEqual([false, true]);
+    expect(lodsToRefill('mid', 'none')).toEqual([false, true]);
+    expect(lodsToRefill('mid', 'mid')).toEqual([false, false]);
+  });
+
+  it('also refills mid when a tile enters or leaves near: mid holds the far part of near tiles', () => {
+    for (const other of ['none', 'mid', 'far'] as Band[]) {
+      expect(lodsToRefill(other, 'near')).toEqual([true, true]);
+      expect(lodsToRefill('near', other)).toEqual([true, true]);
+    }
+    expect(lodsToRefill('near', 'near')).toEqual([false, false]);
+  });
+});
+
+/** A one-triangle model for every (kind, variant), two LODs, one bark group. */
+const stubModels = (): PlantModelSet => PLANT_KINDS.flatMap((kind) => Array.from({ length: VARIANTS }, (_, variant) => {
+  const mesh = (): PlantMesh => ({ positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    uvs: new Float32Array(6), info: new Float32Array(12), indices: new Uint32Array([0, 1, 2]), groups: [{ start: 0, count: 3, material: 'bark' }] });
+  return { kind, variant, lods: [mesh(), mesh()] as [PlantMesh, PlantMesh], height: 10, radius: 1 };
+}));
+const stubMaterials: PlantMaterials = { get: () => new MeshStandardNodeMaterial(), light: null as never, all: [] };
+
+describe('VegetationTiles', () => {
+  // one tile of pines centred on the origin; the camera sits 100 m west of it, 55 m from its edge (near < 60), so every pine
+  // is more than 60 m from the camera: the tile is "near", but its plants all belong to the mid meshes
+  const make = () => new VegetationTiles({ tiles: [fakeTile(12, 12, 200, [K('pine')], 4)] } as never, stubModels(), stubMaterials, q);
+  const look = (c: PerspectiveCamera, x: number) => { c.position.set(-100, 5, 0); c.lookAt(x, 5, 0); c.updateMatrixWorld(); };
+
+  it('shows the far part of a tile that comes into view by turning the camera on the spot', () => {
+    const veg = make(), cam = new PerspectiveCamera(55, 1, 0.1, 8000);
+    look(cam, -1000); // looking away: the tile is not in view
+    veg.update(cam, 1);
+    expect(veg.stats().mid).toBe(0);
+    look(cam, 1000); // turn round, without moving: the tile enters the near band, all of its plants past the near edge
+    expect(veg.update(cam, 1)).toBe(true);
+    expect(veg.stats().near).toBe(0);
+    expect(veg.stats().mid).toBeGreaterThan(150); // (before the fix, the mid meshes stayed empty until the camera moved 4 m)
+    look(cam, -1000); // and turning away again takes them off, rather than leaving ghosts
+    veg.update(cam, 1);
+    expect(veg.stats().mid).toBe(0);
+  });
+
+  it('puts the mid trees on the mid-tree layer as well, and disposes cleanly', () => {
+    const veg = make();
+    const meshes = veg.object.children as import('three/webgpu').Mesh[];
+    const mids = meshes.filter((m) => m.name.includes('-mid-')), nears = meshes.filter((m) => m.name.includes('-near-'));
+    expect(mids.length).toBeGreaterThan(0);
+    for (const m of mids) {
+      expect(m.layers.isEnabled(MID_LAYER)).toBe(true);
+      expect(m.layers.isEnabled(MID_TREE_LAYER)).toBe(/^(pine|spruce|birch|alder|willow)-/.test(m.name));
+    }
+    for (const m of nears) expect(m.layers.isEnabled(MID_TREE_LAYER)).toBe(false);
+    veg.dispose();
+    expect(veg.object.children.length).toBe(0);
   });
 });

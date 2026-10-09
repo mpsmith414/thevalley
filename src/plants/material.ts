@@ -177,7 +177,13 @@ export type PlantMaterials = {
 const LIVING_BARK: PlantKind[] = ['pine', 'spruce', 'alder', 'willow', 'juniper', 'blueberry'];
 
 /**
- * The plant materials. Leaves: alpha test 0.45 (with the alpha boosted down the mip chain so far cards keep their cover),
+ * The plant materials. **The kind must be in `info.z`** of the geometry's `info` attribute (an index into PLANT_KINDS): every
+ * per-kind value (card layer, bark layer, gains, greyness, flutter, trunk stiffness) is looked up by it from a uniform array,
+ * which is how the kinds share five materials. `withKind` (here; `tiles.ts` applies it when it builds a model's geometry) writes
+ * it; anything else that draws plants with these materials (an impostor baker, say) must write it too, or every plant is
+ * drawn as the first kind. Each material binds at most 3 per-kind `uniformArray`s in a stage (6 uniform buffers in all, with
+ * the object, render and cascade ones; the limit is 12), so they are left unpacked.
+ * Leaves: alpha test 0.45 (with the alpha boosted down the mip chain so far cards keep their cover),
  * double sided, tinted per instance (±8% hue, ±10% value), and glowing `key·0.35·max(dot(−viewDir, keyDir), 0)` when the
  * light shines through them. Bark: the photo sets with their normal maps; birch's twigs dark and its base fissured; dead
  * wood mossy on top. Rocks: the ground's granite, mossy where they face up. Everything but rocks and dead wood sways.

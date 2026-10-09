@@ -5,7 +5,7 @@
  */
 import {
   Box3, BufferAttribute, DynamicDrawUsage, Frustum, Group, InstancedBufferGeometry, InstancedInterleavedBuffer, InterleavedBufferAttribute,
-  Matrix4, Mesh, Sphere, Vector3, type Camera, type Material,
+  Matrix4, Mesh, Sphere, Vector3, type Camera,
 } from 'three/webgpu';
 import { PLANT_KINDS, TREE_KINDS, VARIANTS, type PlantKind } from '../plants/species';
 import { withKind, type PlantMaterials } from '../plants/material';
@@ -37,10 +37,22 @@ const SPLIT_MOVE = 4;
  * and the lake's mirror choose (see main.ts).
  */
 export const NEAR_LAYER = 1, MID_LAYER = 2;
+/** Mid *trees* are also on this layer, so the nearest shadow cascade can draw them (and not the mid shrubs, logs and stumps). */
+export const MID_TREE_LAYER = 3;
 /** Kinds whose mid meshes cast no shadow: shrubs and small dead wood, too small to see from the mid band. */
 const MID_NO_SHADOW = new Set<PlantKind>(['juniper', 'blueberry', 'fern', 'log', 'stump']);
 /** The mid band draws three models per kind (one young, two mature), each plant rescaled to its own height: half the draws. */
 const MID_VARIANTS = [1, 1, 3, 3, 5, 5];
+
+/**
+ * Which LODs (near, mid) to refill when a tile of one class goes from drawn band `was` to `now`. The mid meshes also hold the
+ * far part of near tiles (the per-instance split), so a tile entering or leaving `near` changes the mid meshes as well.
+ */
+export function lodsToRefill(was: Band, now: Band): [boolean, boolean] {
+  if (was === now) return [false, false];
+  const touched = (l: number) => LODS[l] === was || LODS[l] === now;
+  return [touched(0), touched(1) || was === 'near' || now === 'near'];
+}
 
 const SHRUBS: PlantKind[] = ['juniper', 'blueberry', 'fern'];
 export const classOf = (kind: PlantKind): PlantClass => (TREE_KINDS.includes(kind) ? 'tree' : SHRUBS.includes(kind) ? 'shrub' : 'prop');
@@ -175,6 +187,13 @@ function groupGeometries(m: PlantMesh, kind: PlantKind): InstancedBufferGeometry
   });
 }
 
+/** `materials.get(kind, group)`, or a clear error when the model has a group the kind has no material for. */
+function checked(materials: PlantMaterials, kind: PlantKind, group: 'bark' | 'leaf' | 'rock') {
+  const m = materials.get(kind, group);
+  if (!m) throw new Error(`no ${group} material for plant kind "${kind}" (its model has a ${group} group)`);
+  return m;
+}
+
 const CLASSES: PlantClass[] = ['tree', 'shrub', 'prop'];
 const LODS: Band[] = ['near', 'mid'];
 
@@ -185,7 +204,8 @@ const LODS: Band[] = ['near', 'mid'];
  * near edge to the mid meshes, and mid plants end at the band's far edge, since a tile reaches up to 90 m past its band.
  * Far trees are Task 16's impostors; until then the mid mesh stands in for them out to `midTree·1.5`, and far shrubs
  * (midShrub to shrubCull) use their mid mesh too. The mid band draws three models per kind (`MID_VARIANTS`).
- * Near meshes are on `NEAR_LAYER`, mid meshes on `MID_LAYER`; mid shrubs, logs and stumps cast no shadow.
+ * Near meshes are on `NEAR_LAYER`, mid meshes on `MID_LAYER` (mid trees also on `MID_TREE_LAYER`); mid shrubs, logs and
+ * stumps cast no shadow.
  */
 export class VegetationTiles {
   readonly object = new Group();
@@ -228,11 +248,12 @@ export class VegetationTiles {
       if (!pm.indices.length || (lod === 1 && MID_VARIANTS[model.variant] !== model.variant)) return null; // folded away
       const geos = groupGeometries(pm, kind);
       const parts = pm.groups.map((grp, gi) => {
-        const mesh = new Mesh(geos[gi], materials.get(kind, grp.material) as Material);
+        const mesh = new Mesh(geos[gi], checked(materials, kind, grp.material));
         mesh.name = `${kind}-${model.variant}-${LODS[lod]}-${grp.material}`;
         mesh.receiveShadow = true;
         mesh.castShadow = lod === 0 || !MID_NO_SHADOW.has(kind);
         mesh.layers.set(lod === 0 ? NEAR_LAYER : MID_LAYER);
+        if (lod === 1 && TREE_KINDS.includes(kind)) mesh.layers.enable(MID_TREE_LAYER);
         mesh.visible = false;
         this.object.add(mesh);
         return { mesh, geo: geos[gi] };
@@ -265,7 +286,7 @@ export class VegetationTiles {
         const drawn: Band = band === 'far' ? (c === 'shrub' || (c === 'tree' && d < this.q.midTree * 1.5) ? 'mid' : 'none') : band;
         const was = this.drawn[ci][t];
         if (drawn === was) return;
-        for (const x of [was, drawn]) { const l = LODS.indexOf(x); if (l >= 0) dirty[ci][l] = true; }
+        lodsToRefill(was, drawn).forEach((d, l) => { if (d) dirty[ci][l] = true; });
         this.drawn[ci][t] = drawn;
       });
     }
@@ -309,7 +330,14 @@ export class VegetationTiles {
     }
   }
 
-  /** Point every part of `draw` at a new instance buffer over `data`. */
+  /**
+   * Point every part of `draw` at a new instance buffer over `data`. The replaced buffer is not disposed by hand: three 0.186
+   * has no `dispose` for an `InterleavedBuffer` (the renderer frees a geometry's buffers only when the geometry is disposed:
+   * Geometries.js still says "once we support BufferAttribute.dispose()"), and disposing the part's geometry would also
+   * destroy the position, normal, uv and index buffers its sibling parts share. The old attribute is unreachable once
+   * replaced (the renderer keys its GPU data by weak reference), so the buffer is freed with it. Buckets only double, so the
+   * most that is ever replaced is the final size again (`dispose()` frees the last ones).
+   */
   private attach(draw: Draw, data: Float32Array) {
     const buf = (draw.buf = new InstancedInterleavedBuffer(data, GPU_STRIDE, 1).setUsage(DynamicDrawUsage));
     const attrs = [0, 1, 2].map((i) => new InterleavedBufferAttribute(buf, 4, i * 4));
@@ -337,6 +365,22 @@ export class VegetationTiles {
         geo.instanceCount = was[i][1];
         mesh.frustumCulled = true;
       });
+    }
+  }
+
+  /**
+   * Free the geometries (and with them their GPU vertex, index and instance buffers) and take the meshes out of the scene.
+   * The materials are shared and belong to whoever made them.
+   */
+  dispose() {
+    for (const draw of this.draws.flat()) {
+      if (!draw) continue;
+      for (const { mesh, geo } of draw.parts) {
+        this.object.remove(mesh);
+        geo.dispose();
+      }
+      draw.parts.length = 0;
+      draw.buf = null;
     }
   }
 

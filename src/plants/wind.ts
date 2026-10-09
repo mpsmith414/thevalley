@@ -13,8 +13,13 @@ export type WindState = { dirX: number; dirZ: number; strength: number; time: nu
 
 /** Metres per lattice cell of the gust field, and the speed (m/s) gusts roll downwind. */
 export const GUST_SCALE = 70, GUST_SPEED = 6;
-/** The lattice repeats every `PERIOD` cells (the hash takes 8 bits per axis), so the travelled offset wraps at PERIOD·GUST_SCALE m. */
-const PERIOD = 256, WRAP = PERIOD * GUST_SCALE;
+/**
+ * The lattice repeats every `PERIOD` cells (the hash takes 8 bits per axis), so the travelled offset wraps at PERIOD·GUST_SCALE
+ * m. Both octaves repeat over that wrap: the second runs at `OCTAVE2` times the first's frequency, a whole number, so it fits
+ * `OCTAVE2·PERIOD` cells in the same length (a fractional lacunarity such as 2.07 would jump at the wrap).
+ */
+const PERIOD = 256, OCTAVE2 = 2;
+export const WRAP = PERIOD * GUST_SCALE;
 /** Strength wanders in 0.25–0.7; the direction within ±25° of west→east (+x). Seconds per step of each wander's noise. */
 const S_MIN = 0.25, S_MAX = 0.7, SPREAD = (25 * Math.PI) / 180, S_PERIOD = 45, A_PERIOD = 70;
 
@@ -46,7 +51,7 @@ function wander(seed: number, t: number): number {
 
 /** Two octaves of value noise, sharpened into calm patches and gusts (0..1). Shared formula: see `gustNode`. */
 function gustField(px: number, py: number): number {
-  const n = 0.65 * valueNoise(px, py) + 0.35 * valueNoise(px * 2.07 + 17.3, py * 2.07 + 5.9);
+  const n = 0.65 * valueNoise(px, py) + 0.35 * valueNoise(px * OCTAVE2 + 17.3, py * OCTAVE2 + 5.9);
   const t = Math.min(1, Math.max(0, (n - 0.2) / 0.6));
   return t * t * (3 - 2 * t);
 }
@@ -121,7 +126,7 @@ const valueNoiseNode = (p: Node<'vec2'>) => {
 export const windNodes = (w: WindUniforms) => {
   const gust = (xz: Node<'vec2'>): Node<'float'> => {
     const p = xz.sub(w.off).div(GUST_SCALE);
-    const n = valueNoiseNode(p).mul(0.65).add(valueNoiseNode(p.mul(2.07).add(vec2(17.3, 5.9))).mul(0.35));
+    const n = valueNoiseNode(p).mul(0.65).add(valueNoiseNode(p.mul(OCTAVE2).add(vec2(17.3, 5.9))).mul(0.35));
     return smoothstep(0.2, 0.8, n);
   };
   const sway = Fn(([info, base, flutter, height, y, scale, phase, trunk]: [Node<'vec4'>, Node<'vec3'>, Node<'float'>, Node<'float'>,

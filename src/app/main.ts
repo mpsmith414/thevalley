@@ -19,7 +19,7 @@ import { createSky } from '../world/sky';
 import { createTerrain } from '../world/terrain';
 import { valleyTextures } from '../world/textures';
 import { WORLD_QUALITY } from '../world/quality';
-import { MID_LAYER, NEAR_LAYER, VegetationTiles } from '../world/tiles';
+import { MID_LAYER, MID_TREE_LAYER, NEAR_LAYER, VegetationTiles } from '../world/tiles';
 import { createPlantMaterials, loadBarkSets, loadCards, setPlantLight } from '../plants/material';
 import { createWind, setWind, updateWind, windUniforms } from '../plants/wind';
 import { openLoading, toast } from './loading';
@@ -79,9 +79,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   camera.layers.enable(NEAR_LAYER);
   camera.layers.enable(MID_LAYER);
   // Shadow casters by cascade (about 0–75, 75–154, 154–260 and 260–600 m on High): near plants (within ~60 m) in the first two,
-  // mid plants (from ~60 m) in all but the first. The land everywhere.
-  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER;
-  sky.cascadeLayers([1 | NEAR, 1 | NEAR | MID, 1 | MID, 1 | MID]);
+  // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
+  // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The land everywhere.
+  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER;
+  sky.cascadeLayers([1 | NEAR | MID_TREE, 1 | NEAR | MID, 1 | MID, 1 | MID]);
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
