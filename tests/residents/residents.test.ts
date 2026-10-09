@@ -170,6 +170,59 @@ describe('Residents', () => {
     }
   });
 
+  it('steps round the trunks and back on course (not by the push-out net)', async () => {
+    const res = new Residents(valley, VALLEY, fakeBuilder, 'low', new Scene());
+    await res.spawn();
+    const camera = meadowCamera(2);
+    let ended = 0, chained = 0, restored = 0, retargeted = 0, crossed = 0;
+    for (let f = 0; f < 600 * 15; f++) {
+      const before = res.animals.map((a) => a.detour);
+      res.update(1 / 15, camera, 9);
+      res.animals.forEach((a, i) => {
+        const d = before[i];
+        if (!d || a.detour === d) return;
+        if (a.detour?.final === d.final) return void chained++; // straight round the next trunk, on the same way
+        ended++;
+        if (a.rig.target === d.final) restored++; // back on the way it was going
+        else retargeted++; // the actions chose somewhere new meanwhile
+        // the side step really went round: the trunk it dodged is not between the waypoint and the animal now
+        if (a.rig.target === d.final && valley.trunksNear(a.rig.position.x, a.rig.position.z, 0).length) crossed++;
+      });
+    }
+    expect(res.stats.detours, 'detours').toBeGreaterThan(20);
+    expect(ended + chained).toBeGreaterThan(0.9 * res.stats.detours);
+    expect(restored, `restored ${restored} of ${ended} (retargeted ${retargeted})`).toBeGreaterThan(0.6 * ended);
+    expect(res.stats.restored).toBeGreaterThanOrEqual(restored);
+    expect(crossed).toBe(0);
+    expect(res.stats.pushedOut, 'pushed out of a trunk').toBeLessThan(0.05 * res.stats.detours);
+  }, 120_000);
+
+  it('never gets stuck on a one-off while flying', async () => {
+    const res = new Residents(valley, VALLEY, fakeBuilder, 'low', new Scene());
+    await res.spawn();
+    const duck = res.animals.find((a) => a.species === 'duck')!;
+    expect(duck.rig.canFly).toBe(true);
+    const camera = new PerspectiveCamera(55, 16 / 9, 0.1, 8000);
+    const p = duck.rig.position;
+    camera.position.set(p.x + 6, valley.waterLevelAt(p.x, p.z) + 2, p.z);
+    camera.lookAt(p.x, valley.waterLevelAt(p.x, p.z), p.z);
+    // up in the air, and wanting to eat at its next choice (a roll under 0.1 at noon)
+    Object.assign(duck.rig, { flying: true, wantFly: true, altitude: 3 });
+    duck.choose = 0;
+    duck.rng = () => 0.05;
+    res.update(1 / 30, camera, 12);
+    expect(duck.wanted).toBe('wander');
+    expect(duck.actions.current).not.toBe('eat');
+    for (let f = 0; f < 60; f++) res.update(1 / 30, camera, 12);
+    expect(duck.actions.current).not.toBe('eat');
+    // on the water it does eat, once, then goes back to wandering
+    Object.assign(duck.rig, { flying: false, wantFly: false, altitude: 0 });
+    duck.choose = 0;
+    res.update(1 / 30, camera, 12);
+    expect(duck.actions.current).toBe('eat');
+    expect(duck.wanted).toBe('wander');
+  });
+
   it('is deterministic', async () => {
     const run = async () => {
       const res = new Residents(valley, VALLEY, fakeBuilder, 'low', new Scene());

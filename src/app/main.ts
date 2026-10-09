@@ -113,7 +113,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // ---------- the resident animals ----------
   say('Waking the animals…');
   const residents = new Residents(valley, VALLEY, builder, tier, scene);
-  await residents.spawn();
+  // the animals are optional: if a body will not build, the valley opens without (some of) them
+  await residents.spawn().catch((e) => console.error('the animals could not be made', e));
   performance.mark('valley-animals');
   /**
    * The animals' shaders (about 8 s of compiling) build in the background once the valley is up, and the animals pop in

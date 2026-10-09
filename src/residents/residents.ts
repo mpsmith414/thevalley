@@ -98,6 +98,8 @@ export class Residents {
   readonly animals: Resident[] = [];
   /** Every animal's body hangs off this group. */
   readonly object = new Group();
+  /** Counts since spawn: side steps round trunks, those that ended back on course, and pushes out of a trunk (the safety net). */
+  readonly stats = { detours: 0, restored: 0, pushedOut: 0 };
   private frame = 0;
 
   constructor(
@@ -111,7 +113,10 @@ export class Residents {
     scene.add(this.object);
   }
 
-  /** Build each species' body once (all at once, in the builder's worker) and place every animal in its home. */
+  /**
+   * Build each species' body once (all at once, in the builder's worker) and place every animal in its home. A species
+   * whose body fails to build is left out (and logged); the rest still come.
+   */
   async spawn(): Promise<void> {
     const recipeOf = (id: string) => {
       const r = CAST.find((c) => c.recipe.id === id)?.recipe;
@@ -119,9 +124,15 @@ export class Residents {
       return r;
     };
     const species = [...new Set(this.layout.homes.map((h) => h.species))];
-    const bodies = new Map(await Promise.all(species.map(async (s) => [s, await this.builder.build(recipeOf(s))] as const)));
+    const built = await Promise.allSettled(species.map((s) => this.builder.build(recipeOf(s))));
+    const bodies = new Map<string, BodyData>();
+    built.forEach((b, i) => {
+      if (b.status === 'fulfilled') bodies.set(species[i], b.value);
+      else console.error(`the ${species[i]} could not be built`, b.reason);
+    });
     const counts = new Map<string, number>(), looks = new Map<string, CreatureLook>();
     for (const home of this.layout.homes) {
+      if (!bodies.has(home.species)) continue;
       for (let k = 0; k < home.count; k++) {
         const n = counts.get(home.species) ?? 0; // individual number within the species (0 is the species' own look)
         counts.set(home.species, n + 1);
@@ -245,8 +256,8 @@ export class Residents {
       a.choose = CHOOSE_MIN + a.rng() * CHOOSE_SPAN;
       let want = wantedAction(a.recipe, hour, a.rng);
       if (a.home.medium === 'air' && want !== 'sleep') want = 'wander'; // the hawk hunts on the wing
-      if ((want === 'eat' || want === 'call') && !rig.flying) {
-        actions.set(want, eye);
+      if (want === 'eat' || want === 'call') {
+        if (!rig.flying) actions.set(want, eye); // a one-off, skipped in the air (it would bring a flier down)
         want = 'wander';
       }
       a.wanted = want;
@@ -266,18 +277,21 @@ export class Residents {
         if (Math.hypot(dx, dz) < Math.max(0.5, a.radius) || dx * (final.x - rig.position.x) + dz * (final.z - rig.position.z) < 0) {
           rig.target = final;
           a.detour = null;
+          this.stats.restored++;
         }
       }
     }
     actions.update(dt, eye);
     const onFoot = !rig.flying && !rig.swimmer && !(rig.inWater && rig.floater);
-    if (!a.detour && rig.target && onFoot) {
+    // look ahead for trunks, on the way to the target or (mid side step) to the waypoint, which may be blocked too
+    if (rig.target && onFoot) {
       const trunks = valley.trunksNear(rig.position.x, rig.position.z, 7);
       const wp = trunks.length ? avoid(rig.position, rig.target, trunks, a.radius) : null;
       if (wp) {
-        const final = rig.target;
+        const final = a.detour?.final ?? rig.target;
         rig.moveTo({ x: wp.x, y: 0, z: wp.z });
         a.detour = { wp: rig.target!, final };
+        this.stats.detours++;
       }
     }
 
@@ -299,7 +313,9 @@ export class Residents {
     if (!rig.flying) {
       for (const t of valley.trunksNear(rig.position.x, rig.position.z, a.radius)) {
         const dx = rig.position.x - t.x, dz = rig.position.z - t.z, d = Math.hypot(dx, dz) || 1e-6, min = t.r + a.radius * 0.5;
-        if (d < min) rig.position.set(t.x + (dx / d) * min, rig.position.y, t.z + (dz / d) * min);
+        if (d >= min) continue;
+        rig.position.set(t.x + (dx / d) * min, rig.position.y, t.z + (dz / d) * min);
+        this.stats.pushedOut++;
       }
     }
   }
@@ -353,7 +369,7 @@ export class Residents {
   }
 
   dispose(): void {
-    [...this.animals].reverse().forEach((a) => a.obj.dispose()); // the first of each species, which owns the materials, last
+    this.animals.forEach((a) => a.obj.dispose()); // the first of each species owns (and disposes) the species' materials
     this.animals.length = 0;
     this.object.removeFromParent();
   }

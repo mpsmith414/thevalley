@@ -65,8 +65,8 @@ export const VALLEY: Layout = {
     { name: 'Valley Overview', pos: { x: 0, z: 700, h: 140 }, look: { x: 0, z: 0, h: 0 } },
   ],
   homes: [
-    { species: 'deer', count: 3, center: P(-200, 180), radius: 120, medium: 'land', prefer: ['meadow', 'forest'] },
-    { species: 'rabbit', count: 3, center: P(-120, 260), radius: 60, medium: 'land', prefer: ['meadow'] },
+    { species: 'deer', count: 3, center: P(-185, 175), radius: 65, medium: 'land', prefer: ['meadow', 'forest'] },
+    { species: 'rabbit', count: 3, center: P(-210, 190), radius: 30, medium: 'land', prefer: ['meadow'] },
     { species: 'fox', count: 2, center: P(-380, 300), radius: 120, medium: 'land', prefer: ['forest', 'meadow'] },
     { species: 'wolf', count: 2, center: P(-500, -250), radius: 160, medium: 'land', prefer: ['forest'] },
     { species: 'hawk', count: 1, center: P(-150, 150), radius: 200, medium: 'air', prefer: ['meadow'] },
