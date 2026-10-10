@@ -38,6 +38,12 @@ describe('createCreatureObject with a shared look', () => {
     expect(tint(a.meshes[0])).toBeDefined();
     expect(tint(b.meshes[0]).equals(tint(a.meshes[0]))).toBe(false);
     for (const s of shells(b)) expect(tint(s)).toBe(tint(b.meshes[0])); // fur takes the animal's tint too
+    // the eyelids: one material for the species, each animal's own tint
+    expect(a.look.lids).not.toBeNull();
+    for (const e of b.eyes) for (const l of e.lids) {
+      expect(l.material).toBe(a.look.lids);
+      expect(tint(l)).toBe(tint(b.meshes[0]));
+    }
   });
 
   it('draws every fur shell with one material, each at its own height', () => {
@@ -55,13 +61,15 @@ describe('createCreatureObject with a shared look', () => {
   it('leaves shared materials alive when a borrower goes, and frees them with their owner', () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));
     const b = createCreatureObject(body, quadruped, 'high', variation(2), a.look);
-    const skinGone = disposed(a.look.skin), furGone = disposed(a.look.fur!);
+    const skinGone = disposed(a.look.skin), furGone = disposed(a.look.fur!), lidsGone = disposed(a.look.lids!);
     b.dispose();
     expect(skinGone()).toBe(false);
     expect(furGone()).toBe(false);
+    expect(lidsGone()).toBe(false);
     a.dispose();
     expect(skinGone()).toBe(true);
     expect(furGone()).toBe(true);
+    expect(lidsGone()).toBe(true);
   });
 });
 

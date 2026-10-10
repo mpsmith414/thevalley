@@ -4,15 +4,18 @@ import {
 import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
-import { createEyes, type Eye } from '../skin/eyes';
+import { createEyes, lidMaterial, type Eye } from '../skin/eyes';
 import { createFurShells, furMaterial } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
 import { QUALITY, type Tier } from './quality';
 import './skinning-patch'; // equal creature materials share one shader (see there)
 
-/** The materials one species can share (its skin, and one for all its fur shells): more of a kind cost no new shaders. */
-export type CreatureLook = { skin: Material; fur: Material | null };
+/**
+ * The materials one species can share (its skin, one for all its fur shells, one for all its eyelids): more of a kind cost
+ * no new shaders.
+ */
+export type CreatureLook = { skin: Material; fur: Material | null; lids: Material | null };
 
 export type CreatureObject = {
   root: Group;
@@ -98,7 +101,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
   const pack = look ? null : packRegions(recipe, body.regions);
-  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!) };
+  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!), lids: recipe.face.lids ? lidMaterial(body, recipe) : null };
   const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
   const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
   const meshes = body.lods.map((l) => {
@@ -132,7 +135,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     jaw = { bone, axis, shut: bone.position.clone(), open: (theta) => void bone.quaternion.setFromAxisAngle(axis, theta) };
   }
   if (variation) root.scale.setScalar(variation.boneScale[0] ?? 1);
-  const eyes = createEyes(body, recipe, bones);
+  const eyes = createEyes(body, recipe, bones, tint, own.lids);
 
   const obj: CreatureObject = {
     root, look: own, meshes, bones, skeleton,
@@ -156,7 +159,10 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     },
     dispose() {
       meshes.forEach((m) => m.geometry.dispose());
-      if (!look) [own.skin, own.fur].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
+      // the eyes' sphere, their material and the lids' cap are this animal's own (the lid material is the species')
+      const e = eyes[0];
+      if (e) [e.geometry, e.material as Material, e.lids[0]?.geometry].forEach((x) => x?.dispose());
+      if (!look) [own.skin, own.fur, own.lids].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
       root.removeFromParent();
     },
   };
