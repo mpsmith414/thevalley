@@ -29,6 +29,21 @@ describe('the creature geometry', () => {
   });
 });
 
+describe('levels of detail', () => {
+  it('hides the eyelids far away (LOD2) and shows them nearer; the eyes stay', () => {
+    const o = createCreatureObject(body, quadruped, 'high');
+    expect(o.eyes.length).toBeGreaterThan(0);
+    for (const l of [2, 0, 1, 2, 1] as const) {
+      o.setLod(l);
+      for (const e of o.eyes) {
+        expect(e.visible).toBe(true);
+        expect(e.lids).toHaveLength(2);
+        for (const lid of e.lids) expect(lid.visible, `LOD${l}`).toBe(l < 2);
+      }
+    }
+  });
+});
+
 describe('createCreatureObject with a shared look', () => {
   it('shares the species materials, with each animal its own tint', () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));

@@ -29,7 +29,14 @@ export async function loadBody(key: string): Promise<BodyData | null> {
       const tx = db.transaction([BODIES, USED], 'readwrite');
       tx.done.catch(() => {});
       const hit = (await tx.objectStore(BODIES).get(key)) as { body: BodyData } | undefined;
-      if (hit) await Promise.all([tx.objectStore(USED).put({ key, usedAt: stamp() }), tx.done]);
+      // noting the use can fail (quota, a closing database) after the body was read: the body is still good
+      if (hit) {
+        try {
+          await Promise.all([tx.objectStore(USED).put({ key, usedAt: stamp() }), tx.done]);
+        } catch (e) {
+          console.warn('could not note a body cache use', e);
+        }
+      }
       return hit?.body ?? null;
     } finally { db.close(); }
   } catch (e) {

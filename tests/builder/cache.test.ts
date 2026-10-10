@@ -93,6 +93,24 @@ describe('body cache', () => {
     expect((await count()).length).toBe(MAX_BODIES);
   });
 
+  it('a hit whose use cannot be noted (the used store refuses the write) still returns the body', async () => {
+    const b = body(4);
+    await saveBody(key('noted'), b);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const put = IDBObjectStore.prototype.put;
+    const spy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['put']>) {
+      if (this.name === 'used') throw new DOMException('full', 'QuotaExceededError');
+      return put.apply(this, args);
+    });
+    try {
+      expect(await loadBody(key('noted'))).toEqual(b);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('never throws when IndexedDB is unavailable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubGlobal('indexedDB', { open() { throw new Error('no storage'); } });

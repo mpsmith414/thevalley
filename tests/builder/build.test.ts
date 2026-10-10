@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildBody, individualVariation, snapToSurface, type BuildTimes } from '../../src/builder/build';
+import { bareTriangles, buildBody, individualVariation, LOD0_CAP, snapToSurface, type BuildTimes } from '../../src/builder/build';
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { CHEEK_SPAN } from '../../src/builder/anatomy/face';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
 import { add, dot, lerp, norm, scale, sub } from '../../src/util/vec';
 import { deer } from '../../src/cast/deer';
+import { frog } from '../../src/cast/frog';
 import { fox } from '../../src/cast/fox';
 import { hawk } from '../../src/cast/hawk';
 import { trout } from '../../src/cast/trout';
@@ -196,6 +197,16 @@ describe('buildBody', () => {
       expect(Math.abs(lod.indices.length / 3 / target - 1)).toBeLessThan(0.25);
     });
   });
+
+  it('caps LOD0 at 1.3 times the bare bones at 110 cells: the frog (webbed feet) is held to it', () => {
+    // the bare-bones estimate is close to what the old builder gave (frog 65534 vs 65788)
+    const frogBare = bareTriangles(buildSkeleton(frog));
+    expect(frogBare / 65788).toBeGreaterThan(0.95);
+    expect(frogBare / 65788).toBeLessThan(1.05);
+    const tris = buildBody(frog, [0]).lods[0].indices.length / 3;
+    expect(tris).toBeLessThanOrEqual(LOD0_CAP * frogBare + 2);
+    expect(tris).toBeGreaterThan(1.2 * frogBare); // was 1.52 × the old count
+  }, 30_000);
 
   it("marks the deer's hooves", () => {
     // LOD1 is enough (and builds faster than LOD0): the marks come from the same anatomy at every level

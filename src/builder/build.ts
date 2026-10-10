@@ -17,8 +17,13 @@ import { skinWeights } from './weights';
 export const FINE_CELLS = 330;
 /** Bulky bodies sample more coarsely than FINE_CELLS so the raw mesh stays near this many vertices (build time). */
 export const MAX_RAW_VERTICES = 110_000;
-/** LOD0 budget relative to today's 110-cell mesh; LOD1 and LOD2 are ¼ and 1/16 of LOD0. */
-export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2;
+/**
+ * LOD0 budget relative to a 110-cell mesh of the same body (its surface area over the 110-cell size squared, two
+ * triangles a cell); LOD1 and LOD2 are ¼ and 1/16 of LOD0. The anatomy adds surface (a frog's webbed feet doubled it), so
+ * LOD0 is also capped at LOD0_CAP times what the old builder gave: the bones alone (no anatomy) meshed at the estimate's
+ * cells, scaled to 110 cells (within 5% of the old builder's counts, the hawk's 19% under).
+ */
+export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2, LOD0_CAP = 1.3;
 /** Cells along the longest dimension of the quick pass that estimates the surface before fine sampling. */
 const ESTIMATE_CELLS = 64;
 
@@ -43,6 +48,13 @@ function fineCell(sk: Skeleton, sdf: Sdf, anat: Anatomy, longest: number): numbe
   const c = longest / ESTIMATE_CELLS, { min, max } = anatomyBounds(sk, anat);
   const n = surfaceNetsSparse(sampleSparse(sdf, min, max, c, 4, coarseBodySdf(sk, anat, c))).positions.length / 3;
   return Math.max(longest / FINE_CELLS, c * Math.sqrt(n / MAX_RAW_VERTICES)); // vertices scale as 1 / cell²
+}
+
+/** Triangles a 110-cell mesh of the bones alone (no anatomy) would have: meshed at ESTIMATE_CELLS, scaled by cells². */
+export function bareTriangles(sk: Skeleton): number {
+  const longest = Math.max(sk.max.x - sk.min.x, sk.max.y - sk.min.y, sk.max.z - sk.min.z), c = longest / ESTIMATE_CELLS;
+  const n = surfaceNetsSparse(sampleSparse(bodySdf(sk), sk.min, sk.max, c, 4, coarseBodySdf(sk, undefined, c))).positions.length / 3;
+  return 2 * n * (LOD0_CELLS / ESTIMATE_CELLS) ** 2;
 }
 
 /**
@@ -179,7 +191,7 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
   const weight = importance(skeleton, raw.positions, featureMarks(anat.features, raw.positions, null, sdf, fine / 2));
   lap('weigh');
   const area = rawVertices * fine * fine;
-  const lod0 = Math.round((LOD0_BUDGET * 2 * area) / (longest / LOD0_CELLS) ** 2);
+  const lod0 = Math.round(Math.min((LOD0_BUDGET * 2 * area) / (longest / LOD0_CELLS) ** 2, LOD0_CAP * bareTriangles(skeleton)));
   const budget = [lod0, Math.round(lod0 / 4), Math.round(lod0 / 16)];
   const simplifier = createSimplifier({ ...raw, weight });
   const snaps = new Map<number, Snapshot>();

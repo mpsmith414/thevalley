@@ -178,6 +178,8 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
       const shown = Math.min(i, meshes.length - 1);
       meshes.forEach((m, k) => (m.visible = k === shown));
       shells.forEach((s, k) => s.forEach((x) => (x.visible = k === shown && obj.furOn)));
+      // far away the lids are too small to see blink (and cost two draw calls an eye): the eyes stay, the lids go
+      for (const e of eyes) for (const l of e.lids) l.visible = i < 2;
     },
     setMaterial(mat) {
       meshes.forEach((m) => (m.material = mat));
