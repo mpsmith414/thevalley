@@ -52,11 +52,14 @@ describe('skin weights', () => {
 });
 
 describe('buildBody', () => {
-  it('gives every vertex a groom: no hair direction yet, and an open (1) cavity', () => {
+  it('gives every vertex a groom: a unit hair direction (xyz) and an open (1) cavity until it is baked', () => {
     const l = buildBody(quadruped, [1]).lods[0], n = l.positions.length / 3;
     expect(l.groom).toBeInstanceOf(Float32Array);
     expect(l.groom).toHaveLength(4 * n);
-    for (let v = 0; v < n; v++) expect([l.groom[v * 4], l.groom[v * 4 + 1], l.groom[v * 4 + 2], l.groom[v * 4 + 3]]).toEqual([0, 0, 0, 1]);
+    for (let v = 0; v < n; v++) {
+      expect(Math.hypot(l.groom[v * 4], l.groom[v * 4 + 1], l.groom[v * 4 + 2])).toBeCloseTo(1, 3);
+      expect(l.groom[v * 4 + 3]).toBe(1);
+    }
   });
 
   it('makes three levels of detail, each closed', () => {

@@ -11,6 +11,7 @@ import { bodySdf, coarseBodySdf } from './sdf';
 import { createSimplifier, type Snapshot } from './simplify';
 import { buildSkeleton, type BoneDef, type Skeleton } from './skeleton';
 import { sampleSparse } from './sparse';
+import { groomField } from './groom';
 import { skinWeights } from './weights';
 
 /** Fine sampling: cells along the creature's longest dimension (only near the surface). */
@@ -216,9 +217,12 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
     lap('snap');
     const skin = skinWeights(positions, rig, regions, anat.mouth);
     lap('skin');
-    // no hair direction and no cavity yet (Tasks 3 and 4 fill them)
+    // the hair direction (xyz); the cavity (w) stays 1 until it is baked (Task 4)
+    const flow = groomField(positions, normals, indices, skin.skinIndex, skin.skinWeight, rig);
     const groom = new Float32Array(positions.length / 3 * 4);
-    for (let v = 3; v < groom.length; v += 4) groom[v] = 1;
+    for (let v = 0; v < groom.length / 4; v++) {
+      groom[v * 4] = flow[v * 3]; groom[v * 4 + 1] = flow[v * 3 + 1]; groom[v * 4 + 2] = flow[v * 3 + 2]; groom[v * 4 + 3] = 1;
+    }
     const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2), groom };
     made.set(l, mesh);
     return mesh;
