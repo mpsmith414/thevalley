@@ -7,6 +7,7 @@ import type { BuildRequest, BuildResponse } from './worker';
 export interface WorkerLike {
   onmessage: ((e: { data: BuildResponse }) => void) | null;
   onerror: ((e: { message: string }) => void) | null;
+  onmessageerror?: (() => void) | null;
   postMessage(m: BuildRequest): void;
   terminate(): void;
 }
@@ -23,6 +24,7 @@ const defaultWorkers = () => Math.max(1, Math.min(4, ((typeof navigator !== 'und
 export class BuilderClient {
   private workers: WorkerLike[];
   private busy: number[];
+  private dead: boolean[];
   private next = 1;
   private pending = new Map<number, { worker: number; resolve: (b: BodyData) => void; reject: (e: Error) => void }>();
   private cache = new Map<string, Promise<BodyData>>();
@@ -38,9 +40,11 @@ export class BuilderClient {
       const w = spawn();
       w.onmessage = ({ data }) => this.settle(i, data);
       w.onerror = (e) => this.failWorker(i, new Error(e.message || 'builder worker failed'));
+      w.onmessageerror = () => this.failWorker(i, new Error('a builder reply could not be read'));
       return w;
     });
     this.busy = this.workers.map(() => 0);
+    this.dead = this.workers.map(() => false);
   }
 
   private settle(worker: number, data: BuildResponse) {
@@ -55,8 +59,9 @@ export class BuilderClient {
     } else p.reject(new Error(data.error ?? 'build failed'));
   }
 
-  /** A worker died: its requests fail (the others carry on). */
+  /** A worker died: it gets no more requests and its pending ones fail (the others carry on). */
   private failWorker(worker: number, error: Error) {
+    this.dead[worker] = true;
     for (const [id, p] of this.pending) if (p.worker === worker) { this.pending.delete(id); this.busy[worker]--; p.reject(error); }
   }
 
@@ -68,8 +73,10 @@ export class BuilderClient {
       this.cache.set(key, hit); // most recently used last
       return hit;
     }
+    const worker = pickWorker(this.busy.map((n, i) => (this.dead[i] ? Infinity : n)));
+    if (worker < 0) return Promise.reject(new Error('no builder worker is running')); // not remembered
     const promise = new Promise<BodyData>((resolve, reject) => {
-      const id = this.next++, worker = pickWorker(this.busy);
+      const id = this.next++;
       this.pending.set(id, { worker, resolve, reject });
       this.busy[worker]++;
       this.workers[worker].postMessage({ id, recipe } satisfies BuildRequest);

@@ -1,9 +1,12 @@
 import type { BodyData } from './build';
 
-/** The worker to give the next request to: the one with the fewest pending, ties to the lowest index. */
+/**
+ * The worker to give the next request to: the one with the fewest pending, ties to the lowest index.
+ * A dead worker counts as Infinity; -1 when none is left.
+ */
 export function pickWorker(pending: readonly number[]): number {
-  let best = 0;
-  for (let i = 1; i < pending.length; i++) if (pending[i] < pending[best]) best = i;
+  let best = -1;
+  for (let i = 0; i < pending.length; i++) if (pending[i] < Infinity && (best < 0 || pending[i] < pending[best])) best = i;
   return best;
 }
 

@@ -7,6 +7,7 @@ import { biped, bird, hexapod, quadruped, snake } from '../fixtures/recipes';
 class FakeWorker implements WorkerLike {
   onmessage: ((e: { data: BuildResponse }) => void) | null = null;
   onerror: ((e: { message: string }) => void) | null = null;
+  onmessageerror: (() => void) | null = null;
   posted: BuildRequest[] = [];
   postMessage(m: BuildRequest) { this.posted.push(m); }
   terminate() {}
@@ -76,5 +77,23 @@ describe('BuilderClient pool', () => {
     await expect(a).rejects.toThrow('worker died');
     made[1].reply({ id: made[1].posted[0].id, body: body('ok'), ms: 1 });
     expect((await b).key).toBe('ok');
+  });
+
+  it('stops giving a dead worker requests (error or messageerror)', async () => {
+    const { client, made } = setup({ workers: 3 });
+    const a = client.build(quadruped);
+    made[0].onerror!({ message: 'died' });
+    await expect(a).rejects.toThrow('died');
+    made[1].onmessageerror!();
+    [snake, hexapod, biped].forEach((r) => void client.build(r));
+    expect(made.map((w) => w.posted.length)).toEqual([1, 0, 3]);
+  });
+
+  it('rejects at once when every worker is dead, without remembering the failure', async () => {
+    const { client, made } = setup({ workers: 2 });
+    made.forEach((w) => w.onerror!({ message: 'gone' }));
+    await expect(client.build(quadruped)).rejects.toThrow(/no builder worker/i);
+    await expect(client.build(quadruped)).rejects.toThrow(/no builder worker/i);
+    expect(made.flatMap((w) => w.posted).length).toBe(0);
   });
 });

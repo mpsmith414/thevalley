@@ -11,6 +11,11 @@ describe('pickWorker', () => {
     expect(pickWorker([0, 0, 0])).toBe(0);
     expect(pickWorker([2, 1, 1])).toBe(1);
   });
+  it('skips dead workers (Infinity) and gives -1 when none is alive', () => {
+    expect(pickWorker([Infinity, 5, 3])).toBe(2);
+    expect(pickWorker([Infinity, Infinity, 0])).toBe(2);
+    expect(pickWorker([Infinity, Infinity])).toBe(-1);
+  });
   it('spreads a burst evenly', () => {
     const pending = [0, 0, 0];
     const got = Array.from({ length: 7 }, () => { const i = pickWorker(pending); pending[i]++; return i; });

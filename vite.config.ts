@@ -43,9 +43,11 @@ function builderHashDefine(): Plugin {
       return { define: { __BUILDER_HASH__: JSON.stringify(hash) } };
     },
     configureServer(server) {
-      server.watcher.on('change', (f) => {
+      if (process.env.VITEST) return;
+      const check = (f: string) => {
         if (/\/src\/(builder|recipe|util)\//.test(f.replaceAll('\\', '/')) && builderHash() !== hash) void server.restart();
-      });
+      };
+      for (const ev of ['change', 'add', 'unlink'] as const) server.watcher.on(ev, check);
     },
   };
 }

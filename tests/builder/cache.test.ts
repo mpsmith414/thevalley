@@ -32,8 +32,9 @@ const putRaw = (value: unknown) =>
   new Promise<void>((res) => {
     const open = indexedDB.open('creature-bodies');
     open.onsuccess = () => {
-      const db = open.result, tx = db.transaction('bodies', 'readwrite');
-      tx.objectStore('bodies').put(value);
+      const db = open.result, tx = db.transaction(['bodies', 'used'], 'readwrite'), v = value as { key: string; body: unknown; savedAt: number };
+      tx.objectStore('bodies').put({ key: v.key, body: v.body });
+      tx.objectStore('used').put({ key: v.key, usedAt: v.savedAt });
       tx.oncomplete = () => (db.close(), res());
     };
   });
@@ -79,6 +80,17 @@ describe('body cache', () => {
     expect(await loadBody(key(`n${total - MAX_BODIES - 1}`))).toBeNull();
     expect(await loadBody(key(`n${total - MAX_BODIES}`))).not.toBeNull();
     expect(await loadBody(key(`n${total - 1}`))).not.toBeNull();
+  });
+
+  it('evicts by last use: a body read again survives', async () => {
+    await saveBody(key('keep'), body(0));
+    for (let i = 0; i < MAX_BODIES + 5; i++) {
+      await saveBody(key(`u${i}`), body(i));
+      if (i % 4 === 0) expect(await loadBody(key('keep'))).not.toBeNull(); // used now and then
+    }
+    expect(await loadBody(key('keep'))).not.toBeNull();
+    expect(await loadBody(key('u0'))).toBeNull();
+    expect((await count()).length).toBe(MAX_BODIES);
   });
 
   it('never throws when IndexedDB is unavailable', async () => {
