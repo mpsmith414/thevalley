@@ -1,5 +1,5 @@
 import { dot, sub, type Vec3 } from '../util/vec';
-import type { MouthFrame } from './anatomy/face';
+import { CHEEK_SPAN, type MouthFrame } from './anatomy/face';
 import { boneSdf, roundCone, thinAxis, tipRadius } from './sdf';
 import type { BoneDef, Skeleton } from './skeleton';
 
@@ -50,10 +50,12 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
     for (let p = b.parent; p >= 0; p = sk.bones[p].parent) if (p === mouth!.head) return true;
     return false;
   });
+  const L = mouth ? Math.hypot(mouth.tip.x - mouth.hinge.x, mouth.tip.y - mouth.hinge.y, mouth.tip.z - mouth.hinge.z) : 0;
   /**
    * The jaw takes `j` of the pull of the head and its muzzle bones (so it fades out with them where the head blends into
    * the neck or the chest), fading in across the slit (a linear ramp: with the jaw raised by at most the slit's width at
-   * rest, its lips close without folding the slit's side walls) and over 0.3 head radii behind the hinge. It goes in an
+   * rest, its lips close without folding the slit's side walls; CHEEK_SPAN times as far behind the lips' corner, where the
+   * cheeks' skin stretches into the open mouth's dark membrane) and over 0.3 head radii behind the hinge. It goes in an
    * empty slot, else in the lightest shared slot (whose pull joins another shared one), else (four bones, one shared) it
    * takes that one's pull whole or not at all: the other bones always keep their pull.
    */
@@ -68,8 +70,9 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
     }
     if (share === 0) return;
     const q = { x: P[v * 3] - mouth!.hinge.x, y: P[v * 3 + 1] - mouth!.hinge.y, z: P[v * 3 + 2] - mouth!.hinge.z }, h = mouth!.halfThick;
-    const below = Math.min(1, Math.max(0, (h - dot(q, mouth!.up)) / (2 * h)));
-    let jw = below * smoothstep(-0.3 * rH, 0.1 * rH, dot(q, mouth!.forward)) * pull(share);
+    const f = dot(q, mouth!.forward), span = 2 * h * (1 + (CHEEK_SPAN - 1) * (1 - smoothstep(mouth!.lips - 0.1 * L, mouth!.lips, f)));
+    const below = Math.min(1, Math.max(0, (h - dot(q, mouth!.up)) / span));
+    let jw = below * smoothstep(-0.3 * rH, 0.1 * rH, f) * pull(share);
     if (jw <= 0) return;
     let slot = free;
     if (slot < 0 && shared >= 2) {

@@ -31,9 +31,9 @@ export type BodyData = { key: string; skeleton: Skeleton; regions: string[]; lod
 /** Where a build's time went, in ms (filled in by `buildBody` when passed; for tools/perf.ts). */
 export type BuildTimes = { sample: number; mesh: number; weigh: number; simplify: number; snap: number; skin: number; rawVertices: number; maxSnap: number /* fine cells */ };
 
-/** The key that decides whether two recipes share a body (shape, build, face shape, eye size and region layout). */
+/** The key that decides whether two recipes share a body (shape, build, face shape, eye size, diet: the mouth's length, and region layout). */
 export const bodyKey = (recipe: Recipe) =>
-  hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id)) + hash([recipe.build, recipe.face.nose, recipe.face.brow, recipe.skin.eyes.size]);
+  hash(recipe.parts) + hash(recipe.skin.regions.map((r) => r.id)) + hash([recipe.build, recipe.face.nose, recipe.face.brow, recipe.skin.eyes.size, recipe.mind.preyMax > 0]);
 
 /**
  * Fine cell for a body: FINE_CELLS along its longest side, coarser when the surface would exceed MAX_RAW_VERTICES.

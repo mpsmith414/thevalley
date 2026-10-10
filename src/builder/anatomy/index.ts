@@ -12,11 +12,11 @@ export type Detail = { cell: number };
 /** The anatomy layer: extra shapes blended into the bones' SDF, and a radius scale per bone. */
 export type Anatomy = { features: Feature[]; slim: Float32Array /* per bone radius scale */; feet?: Build['feet'] /* how feet blend into the leg (hooves are tighter) */; mouth: MouthFrame | null /* where the mouth opens (the jaw hangs on it) */ };
 
-/** Anatomy for a skeleton from its recipe's build and face hints. Pure and deterministic. */
-export function anatomy(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin'>, detail: Detail): Anatomy {
+/** Anatomy for a skeleton from its recipe's build and face hints (and its diet: the mouth's length). Pure and deterministic. */
+export function anatomy(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin' | 'mind'>, detail: Detail): Anatomy {
   return {
     features: [...bodyFeatures(sk, recipe.build, detail), ...footFeatures(sk, recipe.build, detail), ...faceFeatures(sk, recipe, detail)],
-    slim: slimLowerLegs(sk, recipe.build), feet: recipe.build.feet, mouth: mouthFrame(sk, recipe.face, detail),
+    slim: slimLowerLegs(sk, recipe.build), feet: recipe.build.feet, mouth: mouthFrame(sk, recipe, detail),
   };
 }
 

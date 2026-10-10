@@ -61,7 +61,7 @@ describe('skeleton', () => {
     expect(recipe.parts).toHaveLength(MAX_PARTS); // nothing cut
     const sk = buildSkeleton(recipe);
     expect(sk.bones.length).toBeLessThanOrEqual(MAX_BONES - 1);
-    const withJaw = addJaw(sk, mouthFrame(sk, recipe.face, { cell: 0.005 })!);
+    const withJaw = addJaw(sk, mouthFrame(sk, recipe, { cell: 0.005 })!);
     expect(withJaw.bones.length).toBe(sk.bones.length + 1);
     expect(withJaw.bones.length).toBeLessThanOrEqual(MAX_BONES);
   });

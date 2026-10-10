@@ -254,7 +254,7 @@ describe('feet', () => {
   it("a deer's four hooves each get a split and a hoof mark around the foot bone", () => {
     const { a, feet } = feetOf(cast('deer'));
     expect(feet).toHaveLength(4);
-    const splits = named(a, 'split'), marks = a.features.filter((f) => f.op === 'mark');
+    const splits = named(a, 'split'), marks = a.features.filter((f) => f.op === 'mark' && f.mark === 'hoof');
     expect(splits.map((f) => f.bone)).toEqual(feet.map(([, i]) => i));
     expect(marks.map((f) => f.bone)).toEqual(feet.map(([, i]) => i));
     for (const [b, i] of feet) {
@@ -343,7 +343,7 @@ describe('feet', () => {
       });
       expect(named(a, 'groove').filter((g) => g.bone === i && g.op === 'carve')).toHaveLength(3);
     }
-    expect(a.features.some((f) => f.op === 'mark')).toBe(false);
+    expect(a.features.some((f) => f.op === 'mark' && f.mark === 'hoof')).toBe(false);
   });
 
   it('plain feet and legless bodies get nothing', () => {

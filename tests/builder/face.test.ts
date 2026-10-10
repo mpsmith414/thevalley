@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { anatomy, type Anatomy } from '../../src/builder/anatomy';
-import { faceFeatures, frameAlong, headFrame, mouthFrame } from '../../src/builder/anatomy/face';
+import { faceFeatures, frameAlong, headFrame, LIPS_PART, mouthFrame } from '../../src/builder/anatomy/face';
 import { buildBody } from '../../src/builder/build';
 import { feature, marksAt, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
 import { bodySdf, smin, thinAxis } from '../../src/builder/sdf';
@@ -64,6 +64,7 @@ describe('face features', () => {
     expect(count(f, 'nose')).toBe(1);
     expect(count(f, 'nostril')).toBe(2);
     expect(count(f, 'mouth')).toBe(1);
+    expect(count(f, 'lipLine')).toBe(1);
     expect(count(f, 'earCup')).toBe(2);
     expect(count(f, 'chin')).toBe(1); // the lower jaw under the slit
     const nose = f.find((g) => g.name === 'nose')!, mouth = f.find((g) => g.name === 'mouth')!;
@@ -74,7 +75,7 @@ describe('face features', () => {
   });
 
   it('the mouth frame: tip in front of the hinge, hinge below both eyes, a slit at least 1.1 cells thick', () => {
-    const sk = buildSkeleton(fox), d = detail(sk), m = mouthFrame(sk, fox.face, d)!;
+    const sk = buildSkeleton(fox), d = detail(sk), m = mouthFrame(sk, fox, d)!;
     expect(m).not.toBeNull();
     expect(m.tip.z).toBeGreaterThan(m.hinge.z);
     for (const e of sk.bones.filter((b) => b.role === 'eye')) expect(m.hinge.y).toBeLessThan(lerp(e.start, e.end, 0.5).y); // the eyeball centre
@@ -87,26 +88,75 @@ describe('face features', () => {
     expect(m.up.y).toBeGreaterThan(0);
   });
 
-  it('the slit plane holds the hinge and the tip (forward runs between them), and stops at the hinge', () => {
+  it('the slit plane holds the hinge and the tip (forward runs between them); the slit opens where the lips part', () => {
     for (const id of ['fox', 'deer', 'wolf', 'duck', 'frog']) {
-      const r = cast(id), sk = buildSkeleton(r), d = detail(sk), m = mouthFrame(sk, r.face, d)!;
+      const r = cast(id), sk = buildSkeleton(r), d = detail(sk), m = mouthFrame(sk, r, d)!;
       const f = norm(sub(m.tip, m.hinge));
       expect(dot(f, m.forward), id).toBeCloseTo(1, 9);
-      const slit = faceFeatures(sk, r, d).find((g) => g.name === 'mouth')!.shape;
+      const L = dist(m.tip, m.hinge);
+      expect(m.lips / L, id).toBeCloseTo(LIPS_PART, 9);
+      const face = faceFeatures(sk, r, d), slit = face.find((g) => g.name === 'mouth')!.shape;
       if (slit.type !== 'slab') throw new Error('slab');
-      // its back end is at the hinge (not behind it, where the jaw stays joined to the head)
-      const L = dist(m.tip, m.hinge), back = dot(sub(slit.c, m.hinge), m.forward) - slit.r.x;
-      expect(back, id).toBeGreaterThanOrEqual(0);
-      expect(back, id).toBeLessThan(0.05 * L);
+      // its back end is where the lips part (behind it the cheeks close the mouth's sides: no daylight through an open mouth)
+      expect(dot(sub(slit.c, m.hinge), m.forward) - slit.r.x, id).toBeCloseTo(m.lips, 9);
+      // and a lip line is painted on the cheeks from the corner into the parted lips
+      const line = face.find((g) => g.name === 'lipLine')!;
+      expect(line).toMatchObject({ op: 'mark', mark: 'mouth' });
+      if (line.shape.type !== 'slab') throw new Error('slab');
+      expect(dot(sub(line.shape.c, m.hinge), m.forward) - line.shape.r.x, id).toBeCloseTo(0, 9);
+      expect(dot(sub(line.shape.c, m.hinge), m.forward) + line.shape.r.x, id).toBeGreaterThan(m.lips);
     }
   });
 
-  it('nose shapes sit on the front of the tip, not inside the head (T is the tip surface)', () => {
-    const { sk, f } = faceOf(fox), M = sk.bones.find((b) => b.role === 'mouth')!;
+  it('nose shapes sit at the front of the tip, not inside the head (T is the tip surface): a pad sunk a little, to sit flush', () => {
+    const { sk, f } = faceOf(fox), M = sk.bones.find((b) => b.role === 'mouth')!, H = sk.bones.find((b) => b.role === 'head')!;
     const nose = f.find((g) => g.name === 'nose')!.shape;
     if (nose.type !== 'ellipsoid') throw new Error('ellipsoid');
-    const a = norm(sub(M.end, M.start));
-    expect(dot(sub(nose.c, M.end), a)).toBeCloseTo(M.r1, 9);
+    const a = norm(sub(M.end, M.start)), rp = Math.min(Math.max(M.r1, 0.35 * M.r0), 0.3 * Math.max(H.r0, H.r1));
+    expect(dot(sub(nose.c, M.end), a)).toBeCloseTo(M.r1 - 0.15 * rp, 9);
+    expect(dot(sub(nose.c, M.end), a) + nose.r.x).toBeGreaterThan(M.r1); // it stands a little proud of the tip
+  });
+
+  it('pad noses are in proportion to the head: a rabbit gets a small flush nose, not a ball; fox, wolf and deer keep a dark pad', () => {
+    for (const id of ['fox', 'wolf', 'deer', 'rabbit']) {
+      const { sk, f } = faceOf(cast(id)), H = sk.bones.find((b) => b.role === 'head')!, rH = Math.max(H.r0, H.r1);
+      const nose = f.find((g) => g.name === 'nose')!;
+      expect(nose, id).toMatchObject({ op: 'add', mark: 'nose' });
+      if (nose.shape.type !== 'ellipsoid') throw new Error('ellipsoid');
+      const r = nose.shape.r;
+      // at most a quarter of the head's radius wide either side, and at least a tenth
+      expect(Math.max(r.x, r.y, r.z) / rH, id).toBeLessThanOrEqual(0.25);
+      expect(Math.max(r.x, r.y, r.z) / rH, id).toBeGreaterThan(0.1);
+    }
+    // the rabbit's nostrils are dark (the mouth's colour) openings in it, not bumps
+    const rabbit = faceOf(cast('rabbit')).f;
+    expect(count(rabbit, 'nostril')).toBe(2);
+    for (const g of rabbit.filter((h) => h.name === 'nostril')) expect(g.op).toBe('carve');
+    expect(rabbit.filter((h) => h.name === 'nostrilDark').map((h) => [h.op, h.mark])).toEqual([['mark', 'mouth'], ['mark', 'mouth']]);
+  });
+
+  it("the mouth's length follows the diet: a hunter's corner below the front of its eye, a plant-eater's well ahead of it", () => {
+    const corner = (id: string) => {
+      const r = cast(id), sk = buildSkeleton(r), m = mouthFrame(sk, r, detail(sk))!, H = sk.bones[m.head], a = norm(sub(H.end, H.start));
+      const eyes = sk.bones.filter((b) => b.role === 'eye'), E = eyes[0], re = Math.max(E.r0, E.r1);
+      // along the head's axis: the hinge, and the eyeball's centre and front
+      const along = (p: Vec3) => dot(sub(p, H.start), a);
+      return { hinge: along(m.hinge), eye: along(lerp(E.start, E.end, 0.5)), front: along(lerp(E.start, E.end, 0.5)) + re, re, L: dist(m.tip, m.hinge) };
+    };
+    for (const id of ['fox', 'wolf']) {
+      const c = corner(id);
+      expect(c.hinge, id).toBeCloseTo(c.front, 9); // below the eye's front
+    }
+    for (const id of ['rabbit', 'deer']) {
+      const c = corner(id);
+      expect(c.hinge - c.front, id).toBeGreaterThan(2 * c.re); // well ahead of the eye
+    }
+    // a short mouth: the plant-eaters' hinge-to-tip is a smaller part of the head than the hunters'
+    const share = (id: string) => { const r = cast(id), sk = buildSkeleton(r), H = sk.bones.find((b) => b.role === 'head')!; return corner(id).L / Math.max(H.r0, H.r1); };
+    for (const plant of ['rabbit', 'deer']) for (const hunter of ['fox', 'wolf']) expect(share(plant), `${plant} < ${hunter}`).toBeLessThan(share(hunter));
+    // diet is what moves it: the same fox fed only plants gets the short mouth
+    const veg = { ...fox, mind: { ...fox.mind, preyMax: 0 } }, sk = buildSkeleton(fox);
+    expect(dist(mouthFrame(sk, veg, detail(sk))!.tip, mouthFrame(sk, veg, detail(sk))!.hinge)).toBeLessThan(dist(mouthFrame(sk, fox, detail(sk))!.tip, mouthFrame(sk, fox, detail(sk))!.hinge));
   });
 
   it("no brow over an eye that looks up (a frog's); the cranium is as thin as a squashed head", () => {
@@ -119,7 +169,7 @@ describe('face features', () => {
 
   it('anatomy carries the mouth frame', () => {
     const sk = buildSkeleton(fox), d = detail(sk);
-    expect(anatomy(sk, fox, d).mouth).toEqual(mouthFrame(sk, fox.face, d));
+    expect(anatomy(sk, fox, d).mouth).toEqual(mouthFrame(sk, fox, d));
     const bs = buildSkeleton(blob);
     expect(anatomy(bs, blob, detail(bs)).mouth).toBeNull();
   });
@@ -137,7 +187,7 @@ describe('face features', () => {
     expect(count(trout, 'chin')).toBe(0); // no muzzle bone: the head's own bulk is under the slit
     const b = faceOf(blob);
     expect(b.f).toHaveLength(0);
-    expect(mouthFrame(b.sk, blob.face, FINE)).toBeNull();
+    expect(mouthFrame(b.sk, blob, FINE)).toBeNull();
   });
 
   it('a pad nose gets its philtrum groove, and creases where they are wider than a cell', () => {

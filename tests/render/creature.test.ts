@@ -105,7 +105,7 @@ describe('the jaw', () => {
       if (jawWeight(lod, jaw, v) < 0.5 || u > -0.4 * h || u < -1.6 * h || f < 0.15 * L || f > 0.95 * L || nu < 0.5) continue;
       gaps.push(h - dot(rel(S, v), m.up)); // how far below the upper face (at +h) it still is
     }
-    expect(gaps.length).toBeGreaterThan(50);
+    expect(gaps.length).toBeGreaterThan(20); // the parted lips: the front of the mouth (the cheeks close the rest)
     gaps.sort((a, b) => a - b);
     expect(gaps[Math.floor(gaps.length / 2)]).toBeLessThan(0.25 * h); // was 2h: the bind pose's carved slot
     expect(gaps[Math.floor(gaps.length * 0.95)]).toBeLessThan(0.5 * h); // about half a fine cell: a lip line, not a slot
@@ -129,12 +129,18 @@ describe('the jaw', () => {
     }
     expect(chin).toBeGreaterThan(20);
     expect(brow).toBeGreaterThan(20);
-    // no stretched spikes: the mouth corners (where the slit thins to nothing) stretch a little, nothing pulls far
+    // no stretched spikes: nothing pulls far, but the mouth's own skin (the lips and the cheeks' lip line, marked at both
+    // ends), which stretches by design into the open mouth's dark inside, and only about as far as the mouth opens
     const I = lod.indices, d = (A: Float32Array, a: number, b: number) => Math.hypot(A[a * 3] - A[b * 3], A[a * 3 + 1] - A[b * 3 + 1], A[a * 3 + 2] - A[b * 3 + 2]);
-    let grow = 0;
+    const lip = (v: number) => lod.feature[v * 4 + 2] >= 0.2;
+    let grow = 0, lips = 0;
     for (let t = 0; t < I.length; t += 3)
-      for (const [a, b] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) grow = Math.max(grow, d(opened, a, b) - d(shut, a, b));
-    expect(grow).toBeLessThan(0.2 * rH); // measured 0.11 rH
+      for (const [a, b] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) {
+        const g = d(opened, a, b) - d(shut, a, b);
+        if (lip(a) && lip(b)) lips = Math.max(lips, g); else grow = Math.max(grow, g);
+      }
+    expect(grow).toBeLessThan(0.2 * rH);
+    expect(lips).toBeLessThan(0.4 * L); // the lips part by 0.4 L at the tip
   });
 });
 

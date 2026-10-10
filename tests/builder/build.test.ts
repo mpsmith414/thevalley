@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildBody, individualVariation, snapToSurface, type BuildTimes } from '../../src/builder/build';
 import { buildSkeleton } from '../../src/builder/skeleton';
+import { CHEEK_SPAN } from '../../src/builder/anatomy/face';
 import { skinWeights } from '../../src/builder/weights';
 import { hashNumbers } from '../../src/util/hash';
 import { add, dot, lerp, norm, scale, sub } from '../../src/util/vec';
@@ -176,8 +177,9 @@ describe('buildBody', () => {
     it('blends the cheek behind the hinge smoothly into the jaw (over 0.3 head radii, no jumps)', () => {
       const sk = body.skeleton, m = body.mouth!, H = sk.bones[m.head], rH = Math.max(H.r0, H.r1), P = lod.positions, I = lod.indices;
       const at = (v: number) => sub({ x: P[v * 3], y: P[v * 3 + 1], z: P[v * 3 + 2] }, m.hinge);
-      // well below the slit (where `below` is 1) only the hinge falloff varies: a smoothstep over 0.4 rH, steepest slope 1.5 / 0.4 rH
-      const low = (v: number) => dot(at(v), m.up) < -m.halfThick;
+      // well below the slit (where `below` is 1: behind the lips' corner the ramp spans CHEEK_SPAN slit widths) only the
+      // hinge falloff varies: a smoothstep over 0.4 rH, steepest slope 1.5 / 0.4 rH
+      const low = (v: number) => dot(at(v), m.up) < m.halfThick - 2 * CHEEK_SPAN * m.halfThick;
       let checked = 0;
       for (let t = 0; t < I.length; t += 3)
         for (const [a, b] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) {

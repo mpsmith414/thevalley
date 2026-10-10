@@ -54,3 +54,23 @@ export function flippedTriangles(indices: Uint32Array, a: Float32Array, b: Float
   }
   return n;
 }
+
+/** Whether the ray from `o` along `d` hits any triangle of the mesh (Möller–Trumbore, both facings). */
+export function rayHits(indices: Uint32Array, P: Float32Array, o: { x: number; y: number; z: number }, d: { x: number; y: number; z: number }): boolean {
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+    const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2];
+    const e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
+    const px = d.y * e2z - d.z * e2y, py = d.z * e2x - d.x * e2z, pz = d.x * e2y - d.y * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-18) continue;
+    const tx = o.x - P[a], ty = o.y - P[a + 1], tz = o.z - P[a + 2];
+    const u = (tx * px + ty * py + tz * pz) / det;
+    if (u < -1e-9 || u > 1 + 1e-9) continue; // (a hair of slack: a ray through a shared edge hits one of its triangles)
+    const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    const v = (d.x * qx + d.y * qy + d.z * qz) / det;
+    if (v < -1e-9 || u + v > 1 + 1e-9) continue;
+    if ((e2x * qx + e2y * qy + e2z * qz) / det > 0) return true;
+  }
+  return false;
+}

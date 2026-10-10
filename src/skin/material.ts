@@ -105,6 +105,8 @@ export function regionNodes(pack: RegionPack) {
 }
 
 const LIPS = color(new Color('#3a2220')), GUMS = color(new Color('#9a4a48')), GUM_TONE = 0.2;
+/** The nose's finish: roughness, and a thin, soft clear coat (moist, not glassy). */
+const NOSE_ROUGHNESS = 0.45, NOSE_COAT = 0.2, NOSE_COAT_ROUGHNESS = 0.4;
 
 /**
  * The region colour with the face marks painted on: the nose, the inner ears, dark lips with a gum tone deep in the
@@ -114,8 +116,9 @@ export function markedColor(r: ReturnType<typeof regionNodes>): C {
   const f = r.feature;
   const c1 = mix(r.colorNode, r.nose, f.x);
   const c2 = mix(c1, r.earInner, f.y.mul(0.85));
-  // (only a hint of the gum tone: the closed slit shows its walls, and at full strength it read as a gaping pink mouth)
-  const c3 = mix(mix(c2, LIPS, smoothstep(0, 0.5, f.z)), GUMS, smoothstep(0.75, 1, f.z).mul(GUM_TONE));
+  // (only a hint of the gum tone: the closed slit shows its walls, and at full strength it read as a gaping pink mouth;
+  // none in the nostrils, dark openings in the nose)
+  const c3 = mix(mix(c2, LIPS, smoothstep(0, 0.5, f.z)), GUMS, smoothstep(0.75, 1, f.z).mul(float(1).sub(f.x)).mul(GUM_TONE));
   return mix(c3, r.colorNode.mul(0.3), f.w) as unknown as C;
 }
 
@@ -129,13 +132,13 @@ export function createSkinMaterial(pack: RegionPack) {
   const m = new MeshPhysicalNodeMaterial();
   m.colorNode = col;
   // a damp nose (at 0.25 the sky's reflection turned a big round nose to grey glass), matte hooves
-  m.roughnessNode = mix(mix(r.roughness, 0.4, f.x), 0.5, f.w);
+  m.roughnessNode = mix(mix(r.roughness, NOSE_ROUGHNESS, f.x), 0.5, f.w);
   m.metalnessNode = float(0);
   m.sheenNode = col.mul(r.sheen).add(vec3(0.15).mul(r.sheen)).mul(float(1).sub(max(f.x, f.z)));
   m.sheenRoughnessNode = float(0.55);
-  // a wet sheen (at 0.8, the same grey glass)
-  m.clearcoatNode = max(r.clearcoat, f.x.mul(0.35));
-  m.clearcoatRoughnessNode = float(0.15);
+  // a moist sheen, soft-edged (a sharp coat at 0.35 still read as glass on a rabbit's nose)
+  m.clearcoatNode = max(r.clearcoat, f.x.mul(NOSE_COAT));
+  m.clearcoatRoughnessNode = mix(float(0.15), NOSE_COAT_ROUGHNESS, f.x);
   m.normalNode = bumpMap(r.height, float(0.6));
   return m;
 }
