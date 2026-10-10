@@ -37,7 +37,8 @@ export async function loadBody(key: string): Promise<BodyData | null> {
           console.warn('could not note a body cache use', e);
         }
       }
-      return hit?.body ?? null;
+      // a body saved before the groom existed is stale whatever its key says
+      return hit && hit.body.lods.every((l) => l.groom) ? hit.body : null;
     } finally { db.close(); }
   } catch (e) {
     console.warn('body cache unavailable; building instead', e);

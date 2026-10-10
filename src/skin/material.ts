@@ -59,7 +59,7 @@ export function regionNodes(pack: RegionPack) {
   const pt = info.y;
   const ps = info.z;
   const bp = bp4.xyz;
-  const rn = attribute('restNormal', 'vec3');
+  const rn = attribute('normal', 'vec3'); // the rest normal: the vertex stage skins `normal`, so read it here as the raw attribute
 
   const kind = colB.w;
   const scale = colC.w;
@@ -95,10 +95,12 @@ export function regionNodes(pack: RegionPack) {
 
   // the colour marks (nose, inner ear, mouth, hoof) and the face colours
   const feature = attribute('feature', 'vec4');
+  const groom4 = attribute('groom', 'vec4'); // the hair's rest direction (xyz) and the cavity (w)
   const nose = (U.parC.element(0) as unknown as { yzw: C }).yzw, earInner = (U.parC.element(1) as unknown as { yzw: C }).yzw;
 
   return {
     tint, i, bp, pt, colorNode, height, mask, feature, nose, earInner,
+    groom: groom4.xyz as unknown as C, cavity: groom4.w as unknown as F,
     furLength: parA.z as unknown as F, fluff: parA.w as unknown as F,
     roughness: parB.y as unknown as F, sheen: parB.z as unknown as F, clearcoat: parB.w as unknown as F,
   };

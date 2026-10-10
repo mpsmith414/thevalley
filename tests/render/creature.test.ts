@@ -23,7 +23,10 @@ const disposed = (m: Material) => {
 describe('the creature geometry', () => {
   it('has exactly 8 vertex attributes (the WebGPU limit), the last the feature marks', () => {
     const g = createCreatureObject(body, quadruped, 'high').meshes[0].geometry;
-    expect(Object.keys(g.attributes).sort()).toEqual(['bodyPos', 'feature', 'normal', 'partInfo', 'position', 'restNormal', 'skinIndex', 'skinWeight']);
+    expect(Object.keys(g.attributes).sort()).toEqual(['bodyPos', 'feature', 'groom', 'normal', 'partInfo', 'position', 'skinIndex', 'skinWeight']);
+    expect(g.attributes.restNormal).toBeUndefined(); // the shader reads the rest normal from `normal`
+    expect(g.attributes.groom.itemSize).toBe(4);
+    expect(g.attributes.groom.array).toBe(body.lods[0].groom);
     expect(g.attributes.feature.itemSize).toBe(4);
     expect(g.attributes.feature.array).toBe(body.lods[0].feature);
   });

@@ -27,7 +27,9 @@ export const LOD0_CELLS = 110, LOD0_BUDGET = 1.2, LOD0_CAP = 1.3;
 /** Cells along the longest dimension of the quick pass that estimates the surface before fine sampling. */
 const ESTIMATE_CELLS = 64;
 
-export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array; feature: Float32Array /* 4 per vertex: nose, earInner, mouth, hoof (0…1) */ };
+export type LodMesh = MeshData & { skinIndex: Uint16Array; skinWeight: Float32Array; region: Float32Array; partT: Float32Array; partS: Float32Array; boneOf: Uint16Array; feature: Float32Array /* 4 per vertex: nose, earInner, mouth, hoof (0…1) */;
+  /** 4 per vertex: the hair's rest direction (unit tangent, xyz; zero where there is none) and the cavity (w: 1 open … 0.25 deep). */
+  groom: Float32Array };
 /**
  * `mouth`: where the mouth opens (null without a head); `jawLift`: how far the jaw rises along the mouth's up at rest
  * to shut the carved slit (metres, 0 without a jaw).
@@ -214,7 +216,10 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
     lap('snap');
     const skin = skinWeights(positions, rig, regions, anat.mouth);
     lap('skin');
-    const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2) };
+    // no hair direction and no cavity yet (Tasks 3 and 4 fill them)
+    const groom = new Float32Array(positions.length / 3 * 4);
+    for (let v = 3; v < groom.length; v += 4) groom[v] = 1;
+    const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2), groom };
     made.set(l, mesh);
     return mesh;
   });

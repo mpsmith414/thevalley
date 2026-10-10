@@ -9,6 +9,7 @@ const lod = (n: number): LodMesh => ({
   positions: new Float32Array([n, 1, 2, 3, 4, 5, 6, 7, 8]), normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]),
   skinIndex: new Uint16Array([0, 1, 0, 0, 1, 1, 0, 0, 2, 0, 0, 0]), skinWeight: new Float32Array(12).fill(0.25), region: new Float32Array([0, 1, 0]),
   partT: new Float32Array([0, 0.5, 1]), partS: new Float32Array([0.1, 0.2, 0.3]), boneOf: new Uint16Array([0, 1, 2]), feature: new Float32Array(12).fill(0.5),
+  groom: new Float32Array(12).fill(0.5),
 } as LodMesh);
 const body = (n = 0): BodyData => ({
   key: `k${n}`,
@@ -61,6 +62,13 @@ describe('body cache', () => {
     expect(back!.lods[0].boneOf).toBeInstanceOf(Uint16Array);
     expect(back!.lods[0].indices).toBeInstanceOf(Uint32Array);
     expect(back!.lods[0].positions.buffer).not.toBe(b.lods[0].positions.buffer);
+  });
+
+  it('treats a saved body whose levels of detail lack a groom as a miss', async () => {
+    const old = body(5);
+    delete (old.lods[1] as Partial<LodMesh>).groom;
+    await saveBody(key('old'), old);
+    expect(await loadBody(key('old'))).toBeNull();
   });
 
   it('drops entries saved under another builder hash when it saves', async () => {

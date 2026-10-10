@@ -87,7 +87,7 @@ export function lodGeometry(l: LodMesh, body: BodyData, eyes: EyePlace[] = []): 
     bodyPos[v * 4 + 3] = l.region[v] * l.region[v];
   }
   g.setAttribute('bodyPos', new BufferAttribute(bodyPos, 4));
-  g.setAttribute('restNormal', new BufferAttribute(l.normals.slice(), 3));
+  g.setAttribute('groom', new BufferAttribute(l.groom, 4)); // hair direction + cavity; the rest normal is `normal` (the shader reads it unskinned)
   g.setAttribute('feature', new BufferAttribute(l.feature, 4)); // the 8th and last vertex buffer WebGPU allows
   g.setIndex(new BufferAttribute(l.indices, 1));
   g.computeBoundingSphere();
