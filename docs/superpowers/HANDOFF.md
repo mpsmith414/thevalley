@@ -22,12 +22,12 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
   `/lab.html`.
 - **Sub-projects 1 and 2 are on `main`**, pushed to the public GitHub repo `https://github.com/mpsmith414/thevalley`
   (merged with the owner's OK on 2026-10-09). Work new sub-projects on a feature branch and merge only on the owner's OK.
-- **Sub-project 3a, Lifeform Polish: shapes and faces, is built on `feat/lifeform-polish` and NOT merged.** It waits
-  for the owner's OK on the before/after sheets (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`,
+- **Sub-project 3a, Lifeform Polish: shapes and faces, is built and merged to `main`** (owner's OK on 2026-10-10,
+  pushed to GitHub). The owner reviewed the before/after sheets (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`,
   each row before | after for the 8 natives then the 6 test bodies; `valley-animals.png`; `after-drawings.png` and the drawings'
   `after-drawing-<n>-*.png`; after the final review also `final-ears-*`, `final-biped-*`). 14 tasks plus 10b (body cache,
   worker pool) and 10c (face tuning), then three final-review fix commits (ears, upright heads, LOD0 cap and small items);
-  the final whole-branch review's verdict is **ready to merge** once the owner OKs the sheets.
+  the final whole-branch review found it ready to merge.
   The three measured "done when" items hold: every body builds in under 3 s (worst: the frog, 2.4 s), River Bend 14.9 ms
   median (15.0 before), tests, `tsc` and `npm run build` pass. What it added: schema v2 hints (`build`, `face`), an
   anatomy layer (muscles, joints, ribcage, feet, a sculpted face), sparse fine meshing with importance-weighted
@@ -107,12 +107,12 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
     The eyelids (`src/skin/eyes.ts`) use only public API (a `DoubleSide` material, a per-object `onObjectUpdate`
     tint) and share the skinning patch (item 1) with the body.
 
-## Lifeform Polish 3a: what the owner should check, and known issues
+## Lifeform Polish 3a: what the owner checked, and known issues
 
 - **The sheets** (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`: each row is before | after; rows
   deer, rabbit, fox, wolf, duck, hawk, trout, frog, then the test bodies quadruped, snake, hexapod, blob, biped, bird;
   `valley-animals.png`: deer, fox and duck up close in the valley at noon; the four drawings' `after-drawing-<n>-face/34/side`).
-  The spec's first "done when" is the owner's OK on them; merge only then.
+  The owner OKed them on 2026-10-10 and 3a was merged.
 - **Fur looks spiky at close range** (face portraits): unchanged by 3a, it is the fur shells; 3b's fur rework.
 - **LOD0 is capped at 1.3× the old triangle count** (the frog was 1.5×; the cap also trims the hawk −16 %, bird −9 %,
   duck −3 %). Eyelids are hidden at LOD2, so a distant sleeping animal shows open eyes (barely visible at that range).
@@ -267,7 +267,7 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 
 1. Creature Lab: built
 2. The Valley: built and merged
-3. **Lifeform Polish:** 3a (shapes and faces) built on `feat/lifeform-polish`, waiting for the owner's OK to merge;
+3. **Lifeform Polish:** 3a (shapes and faces) built and merged (2026-10-10);
    **3b (fur, motion, post-processing): next**, a brainstorm of its own on top of the new bodies.
 4. The Living Ecosystem
 5. Views and Eyes
@@ -278,8 +278,7 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 Follow the usual flow: brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only
 on the owner's OK.
 
-**Next: Lifeform Polish 3b brainstorm (fur, motion, post-processing).** First get the owner's OK on the 3a sheets and
-merge `feat/lifeform-polish` into `main` (then push). Then start a new chat with: "Read docs/superpowers/HANDOFF.md,
+**Next: Lifeform Polish 3b brainstorm (fur, motion, post-processing).** 3a is merged. Start a new chat with: "Read docs/superpowers/HANDOFF.md,
 then start the Lifeform Polish 3b brainstorm (fur, motion, post-processing)." Begin on a new branch from `main` (for
 example `feat/lifeform-polish-3b`). Starting points: the "For 3b" group in the 3a backlog (spiky close-up fur, the
 hawk's wing fold and flight pitch, spine flex and weight shift), the fur shells in `src/skin/fur.ts`, the rig and
