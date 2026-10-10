@@ -32,6 +32,8 @@ import './lab.css';
 
 // ---------- settings (remembered per browser) ----------
 const settings = { tier: stored<Tier>('lab.tier', 'high'), passes: stored('lab.passes', 3) };
+/** Fur shells on High in the lab: the stage shows one animal up close, so it can afford more than the valley's. */
+const LAB_FUR_SHELLS = 24;
 
 // ---------- the 3D stage ----------
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
@@ -62,7 +64,7 @@ async function show(recipe: Recipe) {
   shownBody = body;
   creature?.dispose();
   skeletonHelper?.removeFromParent();
-  creature = createCreatureObject(body, recipe, settings.tier);
+  creature = createCreatureObject(body, recipe, settings.tier, undefined, undefined, settings.tier === 'high' ? LAB_FUR_SHELLS : undefined);
   scene.add(creature.root);
   rig = new CreatureRig(creature, body, recipe, stage);
   if (rig.swimmer) rig.position.set(stage.pond.x, 0, stage.pond.z);

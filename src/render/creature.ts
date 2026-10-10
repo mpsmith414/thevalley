@@ -87,7 +87,9 @@ export function lodGeometry(l: LodMesh, body: BodyData, eyes: EyePlace[] = []): 
     bodyPos[v * 4 + 3] = l.region[v] * l.region[v];
   }
   g.setAttribute('bodyPos', new BufferAttribute(bodyPos, 4));
-  g.setAttribute('groom', new BufferAttribute(l.groom, 4)); // hair direction + cavity; the rest normal is `normal` (the shader reads it unskinned)
+  // the groom (hair direction xyz, cavity w), bound as `tangent` so three's skinning poses it with the normal (the fur
+  // shells read the posed groom as `tangentLocal`; `skinsTangent` probes it); the rest normal is `normal`, read unskinned
+  g.setAttribute('tangent', new BufferAttribute(l.groom, 4));
   g.setAttribute('feature', new BufferAttribute(l.feature, 4)); // the 8th and last vertex buffer WebGPU allows
   g.setIndex(new BufferAttribute(l.indices, 1));
   g.computeBoundingSphere();
@@ -96,9 +98,10 @@ export function lodGeometry(l: LodMesh, body: BodyData, eyes: EyePlace[] = []): 
 
 /**
  * A body ready for the scene: bones at their rest positions, skin bound, shadows on. Pass `look` (from another animal of
- * the same recipe) to share its materials; the individual's tint is then set per object.
+ * the same recipe) to share its materials; the individual's tint is then set per object. `furShells` overrides the tier's
+ * shell count on the nearest level of detail (the lab's close stage uses more); the middle one gets half.
  */
-export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier, variation?: Variation, look?: CreatureLook): CreatureObject {
+export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier, variation?: Variation, look?: CreatureLook, furShells?: number): CreatureObject {
   const defs = body.skeleton.bones;
   const bones = defs.map((d) => {
     const b = new Bone();
@@ -119,10 +122,10 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
   const pack = look ? null : packRegions(recipe, body.regions);
-  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!), lids: recipe.face.lids ? lidMaterial(body, recipe) : null };
+  const places = eyePlaces(body, recipe.skin.eyes.size);
+  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!, places), lids: recipe.face.lids ? lidMaterial(body, recipe) : null };
   const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
   const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
-  const places = eyePlaces(body, recipe.skin.eyes.size);
   const meshes = body.lods.map((l) => {
     const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body, places), own.skin);
     m.userData.tint = tint;
@@ -135,7 +138,8 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   });
   // fur on the two closer levels of detail (fewer shells on the middle one); none far away
   const shells = meshes.map((m, k) => {
-    const count = k === 0 ? QUALITY[tier].furShells : k === 1 ? Math.floor(QUALITY[tier].furShells / 2) : 0;
+    const near = furShells ?? QUALITY[tier].furShells;
+    const count = k === 0 ? near : k === 1 ? Math.floor(near / 2) : 0;
     const s = createFurShells(m, own.fur, count);
     s.forEach((x) => {
       x.userData.tint = tint;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { furShellOffsets } from '../../src/skin/fur';
+import { COATS } from '../../src/recipe/schema';
+import { furMaterial, furShellOffsets, packCoat, shellTop } from '../../src/skin/fur';
+import { COAT_LOOK, strandCell } from '../../src/skin/coat';
+import { packRegions } from '../../src/skin/patterns';
+import { blob, quadruped } from '../fixtures/recipes';
 
 describe('furShellOffsets', () => {
   it('rises to the fur length, packed closer near the skin', () => {
@@ -8,5 +12,46 @@ describe('furShellOffsets', () => {
     for (let i = 1; i < o.length; i++) expect(o[i]).toBeGreaterThan(o[i - 1]);
     expect(o[15]).toBeCloseTo(0.04, 10);
     expect(o[1] - o[0]).toBeLessThan(o[15] - o[14]);
+  });
+});
+
+describe('furMaterial', () => {
+  it('is null when no region has fur', () => {
+    const bare = { ...blob, skin: { ...blob.skin, regions: blob.skin.regions.map((r) => ({ ...r, covering: 'skin' as const, furLength: 0, coat: null })) } };
+    expect(furMaterial(packRegions(bare, bare.skin.regions.map((r) => r.id)))).toBeNull();
+  });
+
+  it('draws strands with alpha to coverage (smooth edges under MSAA)', () => {
+    const m = furMaterial(packRegions(quadruped, ['body', 'tail']));
+    expect(m).not.toBeNull();
+    expect(m!.alphaToCoverage).toBe(true);
+  });
+});
+
+describe('packRegions coat', () => {
+  it('puts each region coat index in the pack (-1 for scales)', () => {
+    const p = packRegions(quadruped, ['body', 'tail']);
+    expect(p.coat).toHaveLength(8);
+    expect(p.coat[0]).toBe(COATS.indexOf('soft')); // 2 cm fur, fluff 0.3
+    expect(p.coat[1]).toBe(-1);
+  });
+});
+
+describe('packCoat', () => {
+  it('packs each region coat in two vec4s (cell from strandCell), then the eyes', () => {
+    const p = packRegions(quadruped, ['body', 'tail']);
+    const v = packCoat(p, [{ bone: 0, centre: { x: 0.1, y: 0.2, z: 0.3 }, dir: { x: 0, y: 0, z: 1 }, r: 0.01 }]);
+    expect(v).toHaveLength(8 * 2 + 4);
+    const soft = COAT_LOOK.soft;
+    expect(v[0].toArray()).toEqual([soft.lean, soft.radius, soft.guard, soft.guardLen]);
+    expect(v[1].w).toBeCloseTo(strandCell(0.02, soft.density), 10);
+    expect(v[16].toArray()).toEqual([0.1, 0.2, 0.3, 0.01]);
+    expect(v[17].w).toBe(0); // no second eye
+  });
+
+  it('the shells reach the longest guard hairs (1 fur length without any)', () => {
+    expect(shellTop(packRegions(quadruped, ['body', 'tail']))).toBe(COAT_LOOK.soft.guardLen);
+    const woolly = { ...quadruped, skin: { ...quadruped.skin, regions: quadruped.skin.regions.map((r) => ({ ...r, coat: r.covering === 'fur' ? ('woolly' as const) : null })) } };
+    expect(shellTop(packRegions(woolly, ['body', 'tail']))).toBe(1);
   });
 });

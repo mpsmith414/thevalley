@@ -1,5 +1,6 @@
 import { Color } from 'three/webgpu';
-import { COVERINGS, MAX_REGIONS, PATTERNS, type Covering, type PatternKind, type Recipe } from '../recipe/schema';
+import { COATS, COVERINGS, MAX_REGIONS, PATTERNS, type Covering, type PatternKind, type Recipe } from '../recipe/schema';
+import { regionCoat } from './coat';
 import type { Vec3 } from '../util/vec';
 
 /** All regions' skin settings as fixed-size arrays (8 slots), ready to become shader uniforms. */
@@ -15,6 +16,7 @@ export type RegionPack = {
   patAlong: number[];
   furLength: number[];
   fluff: number[];
+  coat: number[]; // index into COATS, -1 for none (no hair or feathers)
   nose: string; // one nose and one inner-ear colour per creature (hex)
   earInner: string;
 };
@@ -38,7 +40,7 @@ export function packRegions(recipe: Recipe, regions: string[]): RegionPack {
   };
   const head = colorOf('head') ?? recipe.skin.regions[0].color;
   const pack: RegionPack = {
-    base: [], belly: [], hasBelly: [], covering: [], patKind: [], patColor: [], patScale: [], patAmount: [], patAlong: [], furLength: [], fluff: [],
+    base: [], belly: [], hasBelly: [], covering: [], patKind: [], patColor: [], patScale: [], patAmount: [], patAlong: [], furLength: [], fluff: [], coat: [],
     nose: recipe.face.noseColor ?? darken(head, NOSE_DARKEN), earInner: recipe.face.earInner ?? mixHex(colorOf('ear') ?? head, '#f0c8b8', 0.5),
   };
   for (let i = 0; i < MAX_REGIONS; i++) {
@@ -54,6 +56,8 @@ export function packRegions(recipe: Recipe, regions: string[]): RegionPack {
     pack.patAlong.push(r.pattern?.along ? 1 : 0);
     pack.furLength.push(r.covering === 'fur' || r.covering === 'feathers' ? r.furLength : 0);
     pack.fluff.push(r.fluff);
+    const coat = regionCoat(r);
+    pack.coat.push(coat ? COATS.indexOf(coat) : -1);
   }
   return pack;
 }

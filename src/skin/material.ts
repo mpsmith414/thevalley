@@ -95,7 +95,9 @@ export function regionNodes(pack: RegionPack) {
 
   // the colour marks (nose, inner ear, mouth, hoof) and the face colours
   const feature = attribute('feature', 'vec4');
-  const groom4 = attribute('groom', 'vec4'); // the hair's rest direction (xyz) and the cavity (w)
+  // the hair's rest direction (xyz) and the cavity (w), bound as `tangent` (see lodGeometry): the raw attribute is the rest
+  // groom; three's skinning poses it as `tangentLocal`
+  const groom4 = attribute('tangent', 'vec4');
   const nose = (U.parC.element(0) as unknown as { yzw: C }).yzw, earInner = (U.parC.element(1) as unknown as { yzw: C }).yzw;
 
   return {

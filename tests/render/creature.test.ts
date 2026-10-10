@@ -8,7 +8,7 @@ import { cross, dot, norm, sub, type Vec3 } from '../../src/util/vec';
 import { jawWeight } from '../fixtures/jaw';
 import { blob, quadruped } from '../fixtures/recipes';
 
-// two coarse levels of detail are enough: the first gets 12 fur shells on High, the second 6
+// two coarse levels of detail are enough: the first gets 16 fur shells on High, the second 8
 const body = buildBody(quadruped, [2, 2]);
 const bones = body.skeleton.bones;
 const foxBody = buildBody(fox, [0]); // the fox at full detail: its face, jaw and eyes
@@ -23,10 +23,11 @@ const disposed = (m: Material) => {
 describe('the creature geometry', () => {
   it('has exactly 8 vertex attributes (the WebGPU limit), the last the feature marks', () => {
     const g = createCreatureObject(body, quadruped, 'high').meshes[0].geometry;
-    expect(Object.keys(g.attributes).sort()).toEqual(['bodyPos', 'feature', 'groom', 'normal', 'partInfo', 'position', 'skinIndex', 'skinWeight']);
+    expect(Object.keys(g.attributes).sort()).toEqual(['bodyPos', 'feature', 'normal', 'partInfo', 'position', 'skinIndex', 'skinWeight', 'tangent']);
     expect(g.attributes.restNormal).toBeUndefined(); // the shader reads the rest normal from `normal`
-    expect(g.attributes.groom.itemSize).toBe(4);
-    expect(g.attributes.groom.array).toBe(body.lods[0].groom);
+    expect(g.attributes.groom).toBeUndefined(); // the groom rides as `tangent`, so three's skinning poses it
+    expect(g.attributes.tangent.itemSize).toBe(4);
+    expect(g.attributes.tangent.array).toBe(body.lods[0].groom);
     expect(g.attributes.feature.itemSize).toBe(4);
     expect(g.attributes.feature.array).toBe(body.lods[0].feature);
   });
@@ -69,13 +70,20 @@ describe('createCreatureObject with a shared look', () => {
   it('draws every fur shell with one material, each at its own height', () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));
     const s = shells(a);
-    expect(s).toHaveLength(12 + 6);
+    expect(s).toHaveLength(16 + 8);
     expect(new Set(s.map((x) => x.material)).size).toBe(1);
     expect(s[0].material).toBe(a.look.fur);
-    const near = s.slice(0, 12).map((x) => x.userData.shellT as number);
-    expect(new Set(near).size).toBe(12);
+    const near = s.slice(0, 16).map((x) => x.userData.shellT as number);
+    expect(new Set(near).size).toBe(16);
     near.forEach((t, i) => i && expect(t).toBeGreaterThan(near[i - 1]));
-    expect(near[11]).toBeCloseTo(1, 10);
+    near.forEach((t, i) => expect(s[i].userData.shellPrev).toBe(i ? near[i - 1] : 0));
+    // the shells reach the guard hairs' length: the quadruped's soft coat has them at 1.2 fur lengths
+    expect(near[15]).toBeCloseTo(1.2, 10);
+  });
+
+  it('takes a shell count override for the nearest level of detail (the lab uses 24), half on the next', () => {
+    expect(shells(createCreatureObject(body, quadruped, 'high', undefined, undefined, 24))).toHaveLength(24 + 12);
+    expect(shells(createCreatureObject(body, quadruped, 'medium'))).toHaveLength(8 + 4);
   });
 
   it('leaves shared materials alive when a borrower goes, and frees them with their owner', () => {
