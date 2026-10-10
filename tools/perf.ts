@@ -1,9 +1,9 @@
 /** Body build times and triangle counts for every native animal and fixture recipe: npx tsx tools/perf.ts */
 import { buildBody, type BuildTimes } from '../src/builder/build';
 import { CAST } from '../src/cast';
-import { biped, bird, blob, hexapod, quadruped, snake } from '../tests/fixtures/recipes';
+import { biped, bird, blob, hexapod, quadruped, snake, upright } from '../tests/fixtures/recipes';
 
-const fixtures = [quadruped, snake, hexapod, blob, biped, bird];
+const fixtures = [quadruped, snake, hexapod, blob, biped, bird, upright];
 const all = [...CAST.map((c) => c.recipe), ...fixtures];
 const ms = (n: number) => n.toFixed(0).padStart(5);
 

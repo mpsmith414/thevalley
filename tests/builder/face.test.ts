@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { anatomy, type Anatomy } from '../../src/builder/anatomy';
-import { faceFeatures, frameAlong, headFrame, LIPS_PART, mouthFrame, noseRadius, PAD } from '../../src/builder/anatomy/face';
+import { faceFeatures, frameAlong, LIPS_PART, mouthFrame, noseRadius, PAD } from '../../src/builder/anatomy/face';
 import { buildBody } from '../../src/builder/build';
-import { feature, marksAt, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
+import { boneFrame, feature, marksAt, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
 import { bodySdf, smin, thinAxis } from '../../src/builder/sdf';
 import { buildSkeleton, type Skeleton } from '../../src/builder/skeleton';
 import { CAST } from '../../src/cast';
 import type { Recipe } from '../../src/recipe/schema';
 import { add, cross, dist, dot, lerp, norm, scale, sub, v3, type Vec3 } from '../../src/util/vec';
+import { jawPose, jawWeight } from '../fixtures/jaw';
 import { badEdges, productionMesh } from '../fixtures/mesh';
-import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
+import { biped, bird, blob, hexapod, P, quadruped, snake, upright } from '../fixtures/recipes';
 
 const cast = (id: string) => CAST.find((c) => c.recipe.id === id)!.recipe;
 const fox = cast('fox');
@@ -221,15 +222,22 @@ describe('face features', () => {
     }
   });
 
-  it("a head pointing slightly backward keeps its frame's up on the dorsal side (the back of the skull)", () => {
+  it("a head, neck or torso leaning backward from upright keeps its frame's up on the dorsal side (the back)", () => {
     const sk = buildSkeleton(fox), h = sk.bones.find((b) => b.role === 'head')!;
-    const back = { ...h, end: add(h.start, v3(0, 0.09, -0.02)) };
-    const f = headFrame(back);
-    expect(f.up.z).toBeLessThan(0);
-    expect(dot(f.up, f.a)).toBeCloseTo(0, 9);
-    expect(dot(f.side, f.side)).toBeCloseTo(1, 9);
-    // a forward-leaning head is unchanged: up is world up made perpendicular
-    expect(headFrame(h).up.y).toBeGreaterThan(0.9);
+    for (const role of ['head', 'neck', 'torso'] as const) {
+      const back = { ...h, role, end: add(h.start, v3(0, 0.09, -0.02)) };
+      const f = boneFrame(back);
+      expect(f.up.z, role).toBeLessThan(0);
+      expect(dot(f.up, f.a)).toBeCloseTo(0, 9);
+      expect(dot(f.side, f.side)).toBeCloseTo(1, 9);
+      expect(dot(cross(f.up, f.a), f.side)).toBeCloseTo(1, 9); // still right-handed
+      // leaning forward from upright: up is world up made perpendicular, already on the back
+      expect(boneFrame({ ...back, end: add(h.start, v3(0, 0.09, 0.02)) }).up.z, role).toBeLessThan(0);
+    }
+    // a tail rising behind keeps world up (its dorsal side faces forward as it curls up); a head lying level keeps the top
+    expect(boneFrame({ ...h, role: 'tail', end: add(h.start, v3(0, 0.09, -0.02)) }).up.z).toBeGreaterThan(0);
+    expect(boneFrame({ ...h, end: add(h.start, v3(0, 0.02, -0.09)) }).up.y).toBeGreaterThan(0.9);
+    expect(boneFrame(h).up.y).toBeGreaterThan(0.9);
   });
 
   it('ear cups sit on the ear front; thin ears get only a front mark', () => {
@@ -247,7 +255,7 @@ describe('face features', () => {
   });
 
   it('every mark has a band (Task 9 shades by distance / markBand)', () => {
-    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, biped, bird])
+    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, biped, bird, upright])
       for (const d of [FINE, { cell: 0.01 }])
         for (const g of anatomy(buildSkeleton(r), r, d).features.filter((h) => h.mark)) expect(g.markBand, `${r.id} ${g.name}`).toBeGreaterThan(0);
   });
@@ -283,6 +291,12 @@ describe('face features', () => {
     expect(out.slice(0, 4)).toEqual(new Float32Array(4).fill(7)); // writes only its own four lanes
     marksAt([], v3(), up, out, 4);
     expect(out.slice(4)).toEqual(new Float32Array(4));
+    // cuts trim a mark-only shape (keep x < 0.05: the plane through x = 0.05 facing −x) and nothing else
+    const cut = { cuts: [{ p: v3(0.05, 0, 0), n: v3(-1, 0, 0) }] };
+    const cutW = (op: 'mark' | 'add', p: Vec3) => (marksAt([feature(op, ball, 0, { mark: 'hoof', markBand: 0.02, ...cut })], p, up, out, 0), out[3]);
+    expect(cutW('mark', v3())).toBe(1);
+    expect(cutW('mark', v3(0.09, 0, 0))).toBe(0); // inside the ball, past the cut
+    expect(cutW('add', v3(0.1, 0, 0))).toBeCloseTo(1, 6); // an add's surface mark is not cut
   });
 
   // thin, long ears (a hare's, a fennec's from the designer) take the mark-only path too
@@ -346,9 +360,101 @@ describe('face features', () => {
   });
 });
 
+describe('upright faces (a head within 35° of vertical)', () => {
+  /** The head bone's axis point at the height of `p` (the bone is near vertical), and the head's radius there. */
+  const axisAt = (H: Skeleton['bones'][number], p: Vec3) => {
+    const t = (p.y - H.start.y) / (H.end.y - H.start.y);
+    return { c: lerp(H.start, H.end, t), r: H.r0 + (H.r1 - H.r0) * t };
+  };
+  const eyes = (sk: Skeleton) => sk.bones.filter((b) => b.role === 'eye').map((e) => lerp(e.start, e.end, 0.5));
+
+  it('the mouth runs level across the front of the face, below the eyes, on the front half of the head', () => {
+    for (const r of [biped, upright]) {
+      const sk = buildSkeleton(r), m = mouthFrame(sk, r, detail(sk))!, H = sk.bones[m.head];
+      expect(m, r.id).not.toBeNull();
+      expect(Math.abs(m.forward.y), r.id).toBeLessThan(0.5); // was (0, 0.998, 0.07) for the biped: a cut up the face
+      expect(m.forward.z, r.id).toBeGreaterThan(0.85);
+      expect(m.up.y, r.id).toBeGreaterThan(0.85);
+      for (const p of [m.hinge, m.tip]) {
+        const { c, r: rr } = axisAt(H, p);
+        expect(p.z - c.z, `${r.id} front half`).toBeGreaterThan(0);
+        expect(p.z - c.z, `${r.id} inside the head's front`).toBeLessThanOrEqual(1.3 * rr);
+        expect(p.y, `${r.id} below the crown`).toBeLessThan(H.end.y);
+        for (const e of eyes(sk)) expect(p.y, `${r.id} below the eyes`).toBeLessThan(e.y);
+      }
+      // the slit is a level slab across the face, and there is a nose on the face (not on the crown)
+      const face = faceFeatures(sk, r, detail(sk)), slit = face.find((g) => g.name === 'mouth')!.shape;
+      if (slit.type !== 'slab') throw new Error('slab');
+      expect(Math.abs(slit.ax[2].y), r.id).toBeGreaterThan(0.85);
+      const nose = face.find((g) => g.name === 'nose' || g.name === 'slit');
+      if (nose) expect(nose.min.y, r.id).toBeLessThan(H.end.y);
+    }
+    expect(eyes(buildSkeleton(upright))).toHaveLength(2);
+  });
+
+  it('the jaw takes only the face below the slit; opening 0.3 rad drops the chin and leaves the forehead and eyes be', () => {
+    for (const r of [biped, upright]) {
+      const b = buildBody(r, [0]), m = b.mouth!, sk = b.skeleton, lod = b.lods[0], P_ = lod.positions, n = P_.length / 3;
+      const H = sk.bones[m.head], rH = Math.max(H.r0, H.r1), h = m.halfThick;
+      expect(sk.jaw, r.id).toBeGreaterThanOrEqual(0);
+      const shut = jawPose(lod, sk.jaw, m, b.jawLift, 0), open = jawPose(lod, sk.jaw, m, b.jawLift, 0.3);
+      let carried = 0, chinDown = 0, chinN = 0, forehead = 0;
+      for (let v = 0; v < n; v++) {
+        const q = sub(v3(P_[v * 3], P_[v * 3 + 1], P_[v * 3 + 2]), m.hinge), w = jawWeight(lod, sk.jaw, v);
+        const d = v3(open[v * 3] - shut[v * 3], open[v * 3 + 1] - shut[v * 3 + 1], open[v * 3 + 2] - shut[v * 3 + 2]);
+        if (w > 0.5) {
+          carried++;
+          expect(dot(q, m.up), r.id).toBeLessThan(h); // below the slit
+        }
+        if (w > 0.9) { chinDown += dot(d, m.up); chinN++; }
+        if (dot(q, m.up) > 2 * h) forehead = Math.max(forehead, Math.hypot(d.x, d.y, d.z));
+      }
+      expect(carried, r.id).toBeGreaterThan(100);
+      expect(chinDown / chinN / rH, `${r.id} chin goes down`).toBeLessThan(-0.05);
+      expect(forehead / rH, `${r.id} forehead`).toBeLessThan(0.1);
+      // the eyes ride on the head bone, not the jaw
+      for (const e of sk.bones.filter((x) => x.role === 'eye')) expect(e.parent).toBe(m.head);
+    }
+  }, 30_000);
+
+  it('an upright head with a muzzle opens along the muzzle; a muzzle pointing up gets no mouth', () => {
+    const snout = (dir: [number, number, number]): Recipe => ({ ...upright, parts: [...upright.parts, P('snout', 'head', 'mouth', 0.3, dir, 0.08, 0.05, 0.03, { offset: [0, 0, 0.07] })] });
+    const r = snout([0, -0.15, 1]), sk = buildSkeleton(r), m = mouthFrame(sk, r, detail(sk))!;
+    expect(m).not.toBeNull();
+    expect(sk.bones[m.mouth].role).toBe('mouth');
+    expect(Math.abs(m.forward.y)).toBeLessThan(0.5);
+    expect(m.up.y).toBeGreaterThan(0.85);
+    const M = sk.bones[m.mouth];
+    expect(m.tip.z).toBeGreaterThan(M.end.z); // at the muzzle's front
+    expect(count(faceFeatures(sk, r, detail(sk)), 'chin')).toBe(1);
+    const up = snout([0, 1, 0.3]), su = buildSkeleton(up);
+    expect(mouthFrame(su, up, detail(su))).toBeNull();
+  });
+
+  it('no mouth beats a wrong one: a head hanging straight down, or a face with no room under its eyes, gets no slit, chin or jaw', () => {
+    const hanging: Recipe = { ...quadruped, parts: quadruped.parts.map((p) => (p.role === 'head' ? { ...p, dir: norm(v3(0, -1, 0.15)) } : p)) };
+    // eyes set low on a head sunk into its torso: the face clears the torso only above them
+    const sunk: Recipe = { ...upright, parts: upright.parts.map((p) => (p.role === 'eye' ? { ...p, attach: 0.35 } : p)) };
+    for (const r of [hanging, sunk]) {
+      const sk = buildSkeleton(r), d = detail(sk);
+      expect(mouthFrame(sk, r, d), r.id).toBeNull();
+      const face = faceFeatures(sk, r, d);
+      for (const name of ['mouth', 'chin', 'lipLine']) expect(count(face, name), `${r.id} ${name}`).toBe(0);
+      expect(count(face, 'cranium'), r.id).toBe(1); // the rest of the face is still there
+      expect(anatomy(sk, r, d).mouth).toBeNull();
+    }
+    const b = buildBody(hanging, [2]);
+    expect(b.mouth).toBeNull();
+    expect(b.skeleton.jaw).toBe(-1);
+    expect(b.jawLift).toBe(0);
+    expect(b.skeleton.bones.some((x) => x.jaw)).toBe(false);
+    expect(badEdges(b.lods[0])).toBe(0);
+  }, 30_000);
+});
+
 describe('faces mesh cleanly', () => {
   it('every native and fixture meshes closed at the production cell', () => {
-    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird]) expect(badEdges(productionMesh(r)), r.id).toBe(0);
+    for (const r of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird, upright]) expect(badEdges(productionMesh(r)), r.id).toBe(0);
   }, 120_000);
 
   it('the fox builds closed meshes at all three LODs (the slit does not tear)', () => {

@@ -4,7 +4,7 @@ import { skinWeights } from '../../src/builder/weights';
 import { CAST } from '../../src/cast';
 import { add, dot, scale, sub } from '../../src/util/vec';
 import { flippedTriangles, jawPose, jawWeight, rayHits } from '../fixtures/jaw';
-import { biped, bird, blob, hexapod, quadruped, snake } from '../fixtures/recipes';
+import { biped, bird, blob, hexapod, quadruped, snake, upright } from '../fixtures/recipes';
 
 /** Number of connected components of a triangle mesh (vertices joined by shared triangles). */
 function components(indices: Uint32Array, vertexCount: number): number {
@@ -15,7 +15,7 @@ function components(indices: Uint32Array, vertexCount: number): number {
 }
 
 describe('connected bodies, and a jaw that opens without tearing', () => {
-  for (const recipe of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird]) {
+  for (const recipe of [...CAST.map((c) => c.recipe), quadruped, snake, hexapod, blob, biped, bird, upright]) {
     let built: BodyData | null = null;
     const body = () => (built ??= buildBody(recipe)); // every LOD: LOD0 is exactly what buildBody(recipe, [0]) gives
 

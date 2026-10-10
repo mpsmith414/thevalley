@@ -85,3 +85,14 @@ export const bird = makeRecipe('bird', [
   P('foot', 'shin', 'foot', 1, [0, -0.1, 1], 0.04, 0.008, 0.006),
   P('tail', 'torso', 'tail', 0, [0, 0.1, -1], 0.12, 0.04, 0.03, { squash: 0.2 }),
 ], { motion: { gait: 'fly', bounce: 0.2, sway: 0.3, stance: 'normal' } });
+
+/** A kid's standing creature: upright body and head (its face looks along +z, its crown is the head bone's end), eyes, ears. */
+export const upright = makeRecipe('upright', [
+  P('torso', null, 'torso', 0, [0, 1, 0.05], 0.34, 0.15, 0.09),
+  P('head', 'torso', 'head', 1, [0, 1, 0.05], 0.16, 0.105, 0.1),
+  P('eye', 'head', 'eye', 0.9, [0.45, 0.1, 1], 0.02, 0.022, 0.022, { mirror: true, offset: [0.035, 0, 0.07] }),
+  P('ear', 'head', 'ear', 0.9, [0.45, 1, -0.15], 0.09, 0.035, 0.015, { squash: 0.25, mirror: true, offset: [0.05, 0.02, -0.01] }),
+  P('leg', 'torso', 'leg', 0, [0, -1, 0], 0.22, 0.06, 0.045, { mirror: true, offset: [0.08, 0, 0] }),
+  P('shin', 'leg', 'leg', 1, [0, -1, 0], 0.2, 0.04, 0.03),
+  P('foot', 'shin', 'foot', 1, [0, -0.1, 1], 0.09, 0.03, 0.025),
+], { skin: { regions: furRegions.slice(0, 1), eyes: { color: '#5a3a20', pupil: 'round', size: 1 } } });

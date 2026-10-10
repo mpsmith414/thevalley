@@ -1,6 +1,6 @@
 import type { Recipe } from '../../recipe/schema';
 import { add, cross, dot, lerp, norm, scale, sub, v3, type Vec3 } from '../../util/vec';
-import { thinAxis, tipRadius } from '../sdf';
+import { boneSdf, thinAxis, tipRadius } from '../sdf';
 import type { BoneDef, Skeleton } from '../skeleton';
 import { boneFrame, feature, shapeSize, type Feature, type Frame, type Shape } from './shapes';
 import type { Detail } from '.';
@@ -8,9 +8,11 @@ import type { Detail } from '.';
 /**
  * Where the mouth opens: the hinge (mouth corners' midpoint), the tip, and the slit's plane. `lips`: how far ahead of the
  * hinge (metres along forward) the slit reaches the sides of the muzzle; behind it the cheeks close the mouth's sides, and
- * the jaw stretches them as it opens (src/builder/weights.ts).
+ * the jaw stretches them as it opens (src/builder/weights.ts). `chin`: how far below the slit the jaw carries all of the
+ * skin, fading out by twice that (Infinity: all the way down; an upright face's chin, which would otherwise take the
+ * throat down to the chest).
  */
-export type MouthFrame = { hinge: Vec3; tip: Vec3; forward: Vec3; up: Vec3; side: Vec3; halfThick: number; lips: number; head: number /* head bone */; mouth: number /* front mouth bone or -1 */ };
+export type MouthFrame = { hinge: Vec3; tip: Vec3; forward: Vec3; up: Vec3; side: Vec3; halfThick: number; lips: number; chin: number; head: number /* head bone */; mouth: number /* front mouth bone or -1 */ };
 
 /** The lips part over the front of the mouth, ahead of this fraction of the hinge-to-tip length (the cheeks close the rest). */
 export const LIPS_PART = 0.75;
@@ -26,13 +28,12 @@ const R = (b: BoneDef) => Math.max(b.r0, b.r1);
 const length = (b: BoneDef) => Math.hypot(b.end.x - b.start.x, b.end.y - b.start.y, b.end.z - b.start.z);
 
 /**
- * A head's frame: the bone frame, its up kept on the dorsal side (the top, or the back of the skull). The bone
- * frame's up is world up made perpendicular, which turns to the face for a head leaning backward from upright.
+ * A head within this angle of vertical (cos 35°) is upright, a kid's standing creature's: its face looks along the
+ * body's +z, not along the bone (whose end is the crown), and its mouth is a level slit across the front.
  */
-export function headFrame(h: BoneDef): Frame {
-  const f = boneFrame(h);
-  return f.a.z < 0 ? { a: f.a, up: scale(f.up, -1), side: scale(f.side, -1) } : f;
-}
+export const UPRIGHT = Math.cos((35 * Math.PI) / 180);
+/** An upright head's face frame: forward the body's +z (level), up world up. */
+const LEVEL: Frame = { a: v3(0, 0, 1), up: v3(0, 1, 0), side: v3(1, 0, 0) };
 
 /**
  * A frame along `a` with `up` made perpendicular to it (side = up × a). When `a` is parallel to `up`, up falls back to
@@ -53,21 +54,65 @@ const descends = (sk: Skeleton, i: number, from: number) => { for (let p = sk.bo
 /** The radius at the front of the muzzle (the mouth bone's tip, else a third of the head's). */
 export const noseRadius = (H: BoneDef, M: BoneDef | null) => (M ? Math.max(M.r1, 0.35 * M.r0) : 0.35 * R(H));
 
+/** The point `s` metres along a bone from its start (clamped to the bone), and its radius there. */
+function alongBone(B: BoneDef, s: number): { p: Vec3; r: number } {
+  const t = Math.min(Math.max(s / length(B), 0), 1);
+  return { p: lerp(B.start, B.end, t), r: B.r0 + (B.r1 - B.r0) * t };
+}
+
+/** The head bone's surface straight ahead (+z) of the point `s` metres up its axis; null if not within 3 radii. */
+function ahead(H: BoneDef, s: number): Vec3 | null {
+  const c = alongBone(H, s).p, thin = thinAxis(H), d = (t: number) => boneSdf(v3(c.x, c.y, c.z + t), H, thin);
+  let lo = 0, hi = 3 * R(H);
+  if (d(lo) >= 0 || d(hi) <= 0) return null;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (d(mid) < 0) lo = mid; else hi = mid; }
+  return v3(c.x, c.y, c.z + hi);
+}
+
 /**
- * The head bone H, its frame, the front mouth bone M (−1), the muzzle frame (along M), the tip T and its radius rn.
- * T is the front of the tip's surface: the bone's end is its round cap's centre, where nose shapes would sit inside
- * the head (and carves there would leave sealed pockets).
+ * An upright head's face levels, metres up its axis from its start: the eyes (their centres' mean; without eyes, 65% of
+ * the way to the crown), the mouth and the nose halfway between. The mouth sits below the eyes by 0.6 head radii or 1.5
+ * eye radii, whichever is more, but no lower than where the face clears the head's parent by 0.45 head radii (a head set
+ * on a torso is half buried in it; nearer, the torso takes enough of the lips' skin that the jaw cannot shut them) nor
+ * below 15% of the bone. `fits`: the mouth stays clear of the eyes (an eye radius, or 0.3 head radii, below them); else
+ * the face has no room for one.
+ */
+function faceLevels(sk: Skeleton, h: number, H: BoneDef, axis: Vec3) {
+  let sum = 0, n = 0, re = 0;
+  sk.bones.forEach((E, i) => {
+    if (E.role !== 'eye' || !descends(sk, i, h)) return;
+    sum += dot(sub(lerp(E.start, E.end, 0.5), H.start), axis);
+    n++;
+    re = Math.max(re, R(E));
+  });
+  const lH = length(H), rH = R(H), eye = n ? sum / n : 0.65 * (lH + tipRadius(H));
+  const P = H.parent >= 0 ? sk.bones[H.parent] : null, thin = P ? thinAxis(P) : null;
+  let clear = 0;
+  for (; P && thin && clear < lH; clear += lH / 16) {
+    const p = ahead(H, clear);
+    if (p && boneSdf(p, P, thin) >= 0.45 * rH) break;
+  }
+  const mouth = Math.max(eye - Math.max(0.6 * rH, 1.5 * re), clear, 0.15 * lH);
+  return { eye, mouth, nose: (eye + mouth) / 2, fits: mouth <= eye - Math.max(re, 0.3 * rH) };
+}
+
+/**
+ * The head bone H, its bone frame `hf` (the cranium follows it), the face frame `f` (the bone frame; an upright head's
+ * is LEVEL), the front mouth bone M (−1), the muzzle frame (along M), the tip T and its radius rn. T is the front of the
+ * tip's surface: the bone's end is its round cap's centre, where nose shapes would sit inside the head (and carves there
+ * would leave sealed pockets). An upright head without a muzzle has its tip on its face, at the nose's level.
  */
 function head(sk: Skeleton) {
   const h = sk.bones.findIndex((b) => b.role === 'head');
   if (h < 0) return null;
-  const H = sk.bones[h], f = headFrame(H), rH = R(H);
+  const H = sk.bones[h], hf = boneFrame(H), rH = R(H), upright = hf.a.y >= UPRIGHT, f = upright ? LEVEL : hf;
   let m = -1;
   sk.bones.forEach((b, i) => { if (b.role === 'mouth' && !b.jaw && descends(sk, i, h) && (m < 0 || b.end.z > sk.bones[m].end.z)) m = i; });
   const M = m >= 0 ? sk.bones[m] : null;
   const muzzle = M ? frameAlong(norm(sub(M.end, M.start)), f.up) : f;
-  const T = M ? add(M.end, scale(muzzle.a, tipRadius(M))) : add(H.end, scale(f.a, tipRadius(H)));
-  return { h, H, f, rH, m, M, muzzle, T, rn: noseRadius(H, M) };
+  const levels = upright ? faceLevels(sk, h, H, hf.a) : null;
+  const T = M ? add(M.end, scale(muzzle.a, tipRadius(M))) : (levels && ahead(H, levels.nose)) || add(H.end, scale(f.a, tipRadius(H)));
+  return { h, H, hf, f, upright, levels, rH, m, M, muzzle, T, rn: noseRadius(H, M) };
 }
 
 /**
@@ -103,23 +148,44 @@ function alongHead(hd: NonNullable<ReturnType<typeof head>>, s: number): { p: Ve
 }
 
 /**
- * The mouth's frame (Task 10 hangs the jaw on it); null without a head bone. The hinge is the mouth's corner (see
- * `corner`: long for hunters, short for plant-eaters), on the head's centre plane, below the head's line by 0.3 of its
- * radius there. Forward runs from the hinge to the tip, so the slit's plane holds both (along the mouth bone instead, a
- * down-turned muzzle's slit cuts under the eye and shaves the chin to a blade); up is the head's, made perpendicular.
+ * The mouth's frame (Task 10 hangs the jaw on it); null without a head bone, and null where no sound frame is found (no
+ * mouth beats a wrong one): a head hanging within 35° of straight down, an upright head whose muzzle points up or down
+ * (more than 60° off level), an upright face with no room for a mouth below its eyes (see faceLevels), or a slit that
+ * would not run within 30° of level across an upright face.
+ *
+ * The hinge is the mouth's corner (see `corner`: long for hunters, short for plant-eaters), on the head's centre plane,
+ * below the head's line by 0.3 of its radius there. Forward runs from the hinge to the tip, so the slit's plane holds both
+ * (along the mouth bone instead, a down-turned muzzle's slit cuts under the eye and shaves the chin to a blade); up is the
+ * face's, made perpendicular. An upright head's face looks along +z with world up (its bone's frame would turn the slit
+ * into a vertical cut up the face): with a muzzle the mouth runs along the muzzle alone (its corner by diet as before,
+ * from the muzzle's root); without one the slit runs level across the face at the mouth's level (below the eyes), the tip
+ * on the face's surface and the hinge 0.15 of the head's radius there ahead of its axis (the front half of the head), and
+ * the jaw carries the face down to a chin half that radius below the slit.
  */
 export function mouthFrame(sk: Skeleton, recipe: Pick<Recipe, 'face' | 'mind'>, detail: Detail): MouthFrame | null {
   const hd = head(sk);
-  if (!hd) return null;
-  const { h, M, m, f, muzzle, T, rn, rH } = hd, nose = recipe.face.nose;
-  const tip = nose === 'beak' || nose === 'bill' ? T : sub(T, scale(muzzle.up, 0.35 * rn)); // mandibles meet on the axis
-  const at = alongHead(hd, corner(sk, hd, recipe.mind.preyMax > 0, nose === 'beak' || nose === 'bill'));
-  const hinge = sub(at.p, scale(f.up, 0.3 * at.r));
-  hinge.x = at.p.x;
+  if (!hd || hd.hf.a.y <= -UPRIGHT) return null;
+  const { h, H, M, m, f, muzzle, T, rn, rH, levels } = hd, nose = recipe.face.nose, bird = nose === 'beak' || nose === 'bill';
+  let tip = bird ? T : sub(T, scale(muzzle.up, 0.35 * rn)); // mandibles meet on the axis
+  let hinge: Vec3, chin = Infinity;
+  if (levels && !M) {
+    const at = alongBone(H, levels.mouth), front = ahead(H, levels.mouth);
+    if (!front || !levels.fits) return null;
+    tip = front;
+    hinge = v3(at.p.x, at.p.y, at.p.z + 0.15 * at.r);
+    chin = 0.5 * at.r;
+  } else {
+    if (levels && dot(muzzle.a, f.a) < 0.5) return null;
+    const c = M && recipe.mind.preyMax <= 0 ? 0.2 * length(M) : 0; // along an upright head's muzzle
+    const at = levels && M ? alongBone(M, bird ? Math.max(c, R(M)) : c) : alongHead(hd, corner(sk, hd, recipe.mind.preyMax > 0, bird));
+    hinge = sub(at.p, scale(f.up, 0.3 * at.r));
+    hinge.x = at.p.x;
+  }
   const { a: forward, up, side } = frameAlong(norm(sub(tip, hinge), f.a), f.up);
+  if (levels && Math.abs(forward.y) > 0.5) return null;
   const halfThick = Math.max(0.035 * (M ? R(M) : rH), 1.1 * detail.cell);
   const L = Math.hypot(tip.x - hinge.x, tip.y - hinge.y, tip.z - hinge.z);
-  return { hinge, tip, forward, up, side, halfThick, lips: LIPS_PART * L, head: h, mouth: m };
+  return { hinge, tip, forward, up, side, halfThick, lips: LIPS_PART * L, chin, head: h, mouth: m };
 }
 
 /**
@@ -138,19 +204,23 @@ const cone = (a: Vec3, b: Vec3, r0: number, r1: number): Shape => ({ type: 'cone
 /** p + Σ dᵢ·sᵢ */
 const at = (p: Vec3, ...terms: [Vec3, number][]) => terms.reduce((q, [d, s]) => add(q, scale(d, s)), p);
 
-/** The shapes that sculpt a face: skull, sockets, brows, cheeks, muzzle creases, nose, mouth slit and ear cups. */
-export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin' | 'mind'>, detail: Detail): Feature[] {
+/**
+ * The shapes that sculpt a face: skull, sockets, brows, cheeks, muzzle creases, nose, mouth slit and ear cups. `mf` is the
+ * mouth's frame (`mouthFrame`, worked out here when not passed); without one there is no slit, chin or lip line.
+ */
+export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin' | 'mind'>, detail: Detail, mf = mouthFrame(sk, recipe, detail)): Feature[] {
   const hd = head(sk);
   if (!hd) return [];
   const out: Feature[] = [];
   const push = (f: Feature) => { if (shapeSize(f.shape) >= 2 * detail.cell) out.push(f); };
-  const { h, H, f, rH, M, m, muzzle, T, rn } = hd, { a, up, side } = f, cell = detail.cell;
+  const { h, H, hf, f, rH, M, m, muzzle, T, rn } = hd, { a, up, side } = f, cell = detail.cell;
   const nose = recipe.face.nose, brow = recipe.face.brow, muscle = recipe.build.muscle;
 
-  // 1. cranium: the braincase, over the back of the head (as thin as the head across its squashed axis: a trout's, a frog's)
-  const thin = thinAxis(H), sideThin = Math.abs(dot(thin, side)) >= Math.abs(dot(thin, up));
+  // 1. cranium: the braincase, over the back of the head (as thin as the head across its squashed axis: a trout's, a
+  // frog's), along the head bone (an upright head's runs up to the crown, over the back of the skull)
+  const thin = thinAxis(H), sideThin = Math.abs(dot(thin, hf.side)) >= Math.abs(dot(thin, hf.up));
   const [sq, uq] = H.squash < 0.999 ? (sideThin ? [H.squash, 1] : [1, H.squash]) : [1, 1];
-  push(feature('add', ellipsoid(at(lerp(H.start, H.end, 0.3), [up, 0.25 * rH * uq]), [a, side, up], v3(0.45 * length(H), 0.85 * rH * sq, 0.75 * rH * uq)), 0.5 * rH, { name: 'cranium', bone: h }));
+  push(feature('add', ellipsoid(at(lerp(H.start, H.end, 0.3), [hf.up, 0.25 * rH * uq]), [hf.a, hf.side, hf.up], v3(0.45 * length(H), 0.85 * rH * sq, 0.75 * rH * uq)), 0.5 * rH, { name: 'cranium', bone: h }));
 
   // per eye: socket, brow, cheek (eyeballs placed as src/skin/eyes.ts places them)
   sk.bones.forEach((E, i) => {
@@ -218,27 +288,28 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
   // 7. mouth slit: a thin slab from where the lips part to past the tip (Task 10's jaw opens along it). Behind it the
   // cheeks close the mouth's sides (an open mouth shows no daylight through the head), so the lower jaw stays joined to
   // the head there; a lip line is painted on them back to the corner
-  const mf = mouthFrame(sk, recipe, detail)!, L = Math.hypot(mf.tip.x - mf.hinge.x, mf.tip.y - mf.hinge.y, mf.tip.z - mf.hinge.z);
-  const rM = M ? R(M) : rH;
-  // the lower jaw under a muzzle: a round cone up to the slit's plane, so a thin muzzle's chin is not shaved to a blade
-  // whose tip crumbles off, and behind the parted lips it joins the muzzle above solidly (a thin beak's met it only at a
-  // pinch: daylight through the closed cheeks); the slit, carved after it, still opens the lips (a head without a muzzle
-  // bone has its own bulk under the slit)
-  if (M) {
-    const cf = Math.max(0.3 * rn, 1.2 * cell), cb = Math.max(0.35 * rH, cf), below = (r: number) => -r;
-    out.push(feature('add', cone(at(mf.hinge, [mf.up, below(cb)]), at(mf.tip, [mf.up, below(cf)], [mf.forward, -cf]), cb, cf), 0.5 * cf, { name: 'chin', bone: m }));
+  if (mf) {
+    const L = Math.hypot(mf.tip.x - mf.hinge.x, mf.tip.y - mf.hinge.y, mf.tip.z - mf.hinge.z), rM = M ? R(M) : rH;
+    // the lower jaw under a muzzle: a round cone up to the slit's plane, so a thin muzzle's chin is not shaved to a blade
+    // whose tip crumbles off, and behind the parted lips it joins the muzzle above solidly (a thin beak's met it only at a
+    // pinch: daylight through the closed cheeks); the slit, carved after it, still opens the lips (a head without a muzzle
+    // bone has its own bulk under the slit)
+    if (M) {
+      const cf = Math.max(0.3 * rn, 1.2 * cell), cb = Math.max(0.35 * rH, cf), below = (r: number) => -r;
+      out.push(feature('add', cone(at(mf.hinge, [mf.up, below(cb)]), at(mf.tip, [mf.up, below(cf)], [mf.forward, -cf]), cb, cf), 0.5 * cf, { name: 'chin', bone: m }));
+    }
+    // (a slab of even thickness: an ellipsoid thins to nothing towards its rim, and a slit thinner than a cell breaks into
+    // sealed pockets and loose shards)
+    const front = 1.27 * L, wide = 1.4 * Math.max(rM, 0.8 * rH), ax: [Vec3, Vec3, Vec3] = [mf.forward, mf.side, mf.up];
+    out.push(feature('carve', { type: 'slab', c: at(mf.hinge, [mf.forward, (mf.lips + front) / 2]), ax, r: v3((front - mf.lips) / 2, wide, mf.halfThick) },
+      0.5 * mf.halfThick, { mark: 'mouth', markBand: LIP_BAND * mf.halfThick, name: 'mouth', bone: m >= 0 ? m : h }));
+    // the lip line on the cheeks, from the corner (the ellipse's round back end tapers it there) into the parted lips: it
+    // covers the skin the jaw stretches there (from the slit's upper face down CHEEK_SPAN slit widths), so at rest it is a
+    // dark line (the rest lift squeezes it) and open, the cheeks' stretched skin is the mouth's dark inside
+    const back = mf.lips + 0.05 * L, ramp = 2 * CHEEK_SPAN * mf.halfThick;
+    out.push(feature('mark', { type: 'slab', c: at(mf.hinge, [mf.forward, back / 2], [mf.up, mf.halfThick - ramp / 2]), ax, r: v3(back / 2, 1.5 * wide, ramp / 2 - 0.5 * mf.halfThick) },
+      0, { mark: 'mouth', markBand: LIP_BAND * mf.halfThick, name: 'lipLine', bone: m >= 0 ? m : h }));
   }
-  // (a slab of even thickness: an ellipsoid thins to nothing towards its rim, and a slit thinner than a cell breaks into
-  // sealed pockets and loose shards)
-  const front = 1.27 * L, wide = 1.4 * Math.max(rM, 0.8 * rH), ax: [Vec3, Vec3, Vec3] = [mf.forward, mf.side, mf.up];
-  out.push(feature('carve', { type: 'slab', c: at(mf.hinge, [mf.forward, (mf.lips + front) / 2]), ax, r: v3((front - mf.lips) / 2, wide, mf.halfThick) },
-    0.5 * mf.halfThick, { mark: 'mouth', markBand: LIP_BAND * mf.halfThick, name: 'mouth', bone: m >= 0 ? m : h }));
-  // the lip line on the cheeks, from the corner (the ellipse's round back end tapers it there) into the parted lips: it
-  // covers the skin the jaw stretches there (from the slit's upper face down CHEEK_SPAN slit widths), so at rest it is a
-  // dark line (the rest lift squeezes it) and open, the cheeks' stretched skin is the mouth's dark inside
-  const back = mf.lips + 0.05 * L, ramp = 2 * CHEEK_SPAN * mf.halfThick;
-  out.push(feature('mark', { type: 'slab', c: at(mf.hinge, [mf.forward, back / 2], [mf.up, mf.halfThick - ramp / 2]), ax, r: v3(back / 2, 1.5 * wide, ramp / 2 - 0.5 * mf.halfThick) },
-    0, { mark: 'mouth', markBand: LIP_BAND * mf.halfThick, name: 'lipLine', bone: m >= 0 ? m : h }));
 
   // 8. ear cups: a hollow in each flat ear's front, or only a front mark where the ear is too thin to hollow
   sk.bones.forEach((E, i) => {

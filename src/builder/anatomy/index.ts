@@ -14,9 +14,10 @@ export type Anatomy = { features: Feature[]; slim: Float32Array /* per bone radi
 
 /** Anatomy for a skeleton from its recipe's build and face hints (and its diet: the mouth's length). Pure and deterministic. */
 export function anatomy(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face' | 'skin' | 'mind'>, detail: Detail): Anatomy {
+  const mouth = mouthFrame(sk, recipe, detail);
   return {
-    features: [...bodyFeatures(sk, recipe.build, detail), ...footFeatures(sk, recipe.build, detail), ...faceFeatures(sk, recipe, detail)],
-    slim: slimLowerLegs(sk, recipe.build), feet: recipe.build.feet, mouth: mouthFrame(sk, recipe, detail),
+    features: [...bodyFeatures(sk, recipe.build, detail), ...footFeatures(sk, recipe.build, detail), ...faceFeatures(sk, recipe, detail, mouth)],
+    slim: slimLowerLegs(sk, recipe.build), feet: recipe.build.feet, mouth,
   };
 }
 
