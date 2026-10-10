@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bareTriangles, buildBody, individualVariation, LOD0_CAP, snapToSurface, type BuildTimes } from '../../src/builder/build';
+import { bareTriangles, bodyKey, buildBody, individualVariation, LOD0_CAP, snapToSurface, type BuildTimes } from '../../src/builder/build';
 import { buildSkeleton } from '../../src/builder/skeleton';
 import { CHEEK_SPAN } from '../../src/builder/anatomy/face';
 import { skinWeights } from '../../src/builder/weights';
@@ -48,6 +48,14 @@ describe('skin weights', () => {
       for (let k = 1; k < 4; k++)
         if (lod.skinWeight[v * 4 + k] > 0) expect(side(lod.skinIndex[v * 4 + k])).not.toBe(-side(main));
     }
+  });
+});
+
+describe('bodyKey', () => {
+  it('ignores the coat, which changes no geometry', () => {
+    const shaggy = { ...quadruped, skin: { ...quadruped.skin, regions: quadruped.skin.regions.map((r) => ({ ...r, coat: 'shaggy' as const })) } };
+    expect(shaggy.skin.regions[0].coat).not.toBe(quadruped.skin.regions[0].coat);
+    expect(bodyKey(shaggy)).toBe(bodyKey(quadruped));
   });
 });
 

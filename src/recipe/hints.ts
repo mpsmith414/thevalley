@@ -1,4 +1,4 @@
-import type { Build, Covering, Face, Recipe } from './schema';
+import type { Build, Coat, Covering, Face, Recipe, Region } from './schema';
 
 /** What the hint rules read: the body, skin and character, not the hints themselves. */
 export type HintInput = Pick<Recipe, 'parts' | 'skin' | 'motion' | 'mind' | 'life'>;
@@ -38,4 +38,13 @@ export function inferFace(r: HintInput): Face {
     : 'slits';
   const fish = r.motion.gait === 'swim' && r.mind.habitat.length === 1 && r.mind.habitat[0] === 'water';
   return { nose, noseColor: null, lids: !fish, earInner: null, brow: nose === 'beak' ? 0.5 : 0.3 };
+}
+
+/** Guess a region's coat word from its covering, fur length and fluff, for regions that came without one. */
+export function inferCoat(r: Pick<Region, 'covering' | 'furLength' | 'fluff'>): Coat | null {
+  if (r.covering === 'feathers') return r.fluff >= 0.5 ? 'downy' : 'smooth';
+  if (r.covering !== 'fur') return null;
+  if (r.fluff >= 0.75 && r.furLength < 0.05) return 'woolly';
+  if (r.furLength >= 0.05 || r.fluff >= 0.75) return 'shaggy';
+  return r.furLength < 0.008 && r.fluff < 0.3 ? 'sleek' : 'soft';
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferBuild, inferFace } from '../../src/recipe/hints';
+import { inferBuild, inferCoat, inferFace } from '../../src/recipe/hints';
 import { CAST } from '../../src/cast';
 import { normalizeRecipe } from '../../src/recipe/normalize';
 import { MAX_BONES, MAX_PARTS } from '../../src/recipe/schema';
@@ -40,15 +40,64 @@ describe('hint inference', () => {
   });
 });
 
-describe('v1 → v2 upgrade', () => {
+describe('inferCoat', () => {
+  const fur = (furLength: number, fluff: number) => inferCoat({ covering: 'fur', furLength, fluff });
+  it('reads fur from its length and fluff', () => {
+    expect(fur(0.006, 0.1)).toBe('sleek');
+    expect(fur(0.012, 0.15)).toBe('soft');
+    expect(fur(0.06, 0.2)).toBe('shaggy');
+    expect(fur(0.03, 0.8)).toBe('woolly');
+    expect(fur(0.08, 0.9)).toBe('shaggy');
+  });
+  it('makes feathers downy when fluffy, else smooth', () => {
+    expect(inferCoat({ covering: 'feathers', furLength: 0.02, fluff: 0.6 })).toBe('downy');
+    expect(inferCoat({ covering: 'feathers', furLength: 0.02, fluff: 0.2 })).toBe('smooth');
+  });
+  it('gives other coverings no coat', () => {
+    for (const covering of ['scales', 'skin', 'shell', 'slime'] as const) expect(inferCoat({ covering, furLength: 0, fluff: 0 })).toBeNull();
+  });
+});
+
+describe('v1 → v2 → v3 upgrade', () => {
   it('fills build and face from the body and reports it', () => {
     const v1 = structuredClone(byId('fox')) as Record<string, unknown>;
     delete v1.build; delete v1.face; v1.schemaVersion = 1;
     const { recipe, fixes } = normalizeRecipe(v1);
-    expect(recipe.schemaVersion).toBe(2);
+    expect(recipe.schemaVersion).toBe(3);
     expect(recipe.build.feet).toBe('paws');
     expect(fixes).toContain('build missing → inferred');
     expect(fixes).toContain('face missing → inferred');
+  });
+  it('upgrades a v2 recipe: infers each region coat and reports it', () => {
+    const v2 = structuredClone(byId('fox')) as Record<string, unknown>;
+    v2.schemaVersion = 2;
+    for (const r of (v2.skin as { regions: Record<string, unknown>[] }).regions) delete r.coat;
+    const { recipe, fixes } = normalizeRecipe(v2);
+    expect(recipe.schemaVersion).toBe(3);
+    expect(recipe.skin.regions).toEqual(byId('fox').skin.regions);
+    expect(fixes).toContain(`skin.regions[0].coat → ${recipe.skin.regions[0].coat}`);
+    expect(recipe.skin.regions[0].coat).toBe(inferCoat(recipe.skin.regions[0]));
+  });
+  it('repairs a coat that does not fit its covering', () => {
+    const raw = structuredClone(quadruped) as unknown as { skin: { regions: Record<string, unknown>[] } };
+    raw.skin.regions = [
+      { ...raw.skin.regions[0], covering: 'feathers', furLength: 0.02, fluff: 0.2, coat: 'woolly' },
+      { ...raw.skin.regions[1], covering: 'scales', coat: 'soft' },
+      { ...raw.skin.regions[0], id: 'mane', covering: 'fur', coat: 'downy' },
+      { ...raw.skin.regions[0], id: 'odd', covering: 'fur', coat: 'fluffy' },
+    ];
+    const { recipe, fixes } = normalizeRecipe(raw);
+    expect(recipe.skin.regions.map((r) => r.coat)).toEqual(['smooth', null, 'soft', 'soft']);
+    expect(fixes).toContain('skin.regions[0].coat → smooth');
+    expect(fixes).toContain('skin.regions[1].coat → null');
+    expect(fixes).toContain('skin.regions[2].coat → soft');
+  });
+  it('keeps a coat that fits', () => {
+    const raw = structuredClone(quadruped) as unknown as { skin: { regions: Record<string, unknown>[] } };
+    raw.skin.regions[0].coat = 'shaggy';
+    const { recipe, fixes } = normalizeRecipe(raw);
+    expect(recipe.skin.regions[0].coat).toBe('shaggy');
+    expect(fixes.filter((f) => f.includes('coat'))).toEqual([]);
   });
   it('keeps given hints and clamps numbers', () => {
     const raw = { ...structuredClone(quadruped), build: { muscle: 3, feet: 'hooves' }, face: { ...inferFace(quadruped), brow: -1 } };

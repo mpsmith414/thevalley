@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../../server/app';
 import { Declined, type DesignerModel } from '../../server/model';
 import { SYSTEM_PROMPT } from '../../server/prompts';
+import { COATS } from '../../src/recipe/schema';
 import { quadruped } from '../fixtures/recipes';
 
 const cards = { name: 'Bob', eats: 'flowers 🌸', speed: 'slow 🐌', mood: 'shy 🙈', special: 'six legs' };
@@ -107,6 +108,9 @@ describe('the system prompt', () => {
   it('is stable (no dates) and insists on faithfulness', () => {
     expect(SYSTEM_PROMPT).not.toMatch(/20\d\d-\d\d/);
     expect(SYSTEM_PROMPT).toMatch(/Never turn a drawing into a known animal/);
+  });
+  it('teaches every coat word', () => {
+    for (const w of COATS) expect(SYSTEM_PROMPT).toContain(`"${w}"`);
   });
 });
 

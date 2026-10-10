@@ -8,7 +8,7 @@ import { z } from 'zod';
  * ranges live in `LIMITS` and `normalizeRecipe` clamps to them.
  */
 
-export const SCHEMA_VERSION = 2 as const;
+export const SCHEMA_VERSION = 3 as const;
 
 export const ROLES = [
   'head', 'neck', 'torso', 'leg', 'foot', 'wing', 'tail', 'fin',
@@ -23,6 +23,11 @@ export const ACTIVITY = ['day', 'night', 'twilight'] as const;
 export const HABITATS = ['ground', 'water', 'air', 'trees', 'burrow'] as const;
 export const FEET = ['paws', 'hooves', 'talons', 'webbed', 'plain'] as const;
 export const NOSES = ['pad', 'beak', 'bill', 'slits', 'none'] as const;
+export const COATS = ['sleek', 'soft', 'shaggy', 'woolly', 'bristly', 'smooth', 'downy'] as const;
+export type Coat = (typeof COATS)[number];
+/** The coat words that fit each covering: fur takes the first five, feathers the last two, the rest take none. */
+export const FUR_COATS: readonly Coat[] = ['sleek', 'soft', 'shaggy', 'woolly', 'bristly'];
+export const FEATHER_COATS: readonly Coat[] = ['smooth', 'downy'];
 
 const Vec3Schema = z.object({ x: z.number(), y: z.number(), z: z.number() });
 
@@ -58,6 +63,7 @@ export const RegionSchema = z.object({
   belly: z.string().nullable().describe('#rrggbb lighter underside colour, or null'),
   furLength: z.number().describe('Fur/feather length in metres (0 when not furry)'),
   fluff: z.number().describe('0..1 how fluffy and unruly'),
+  coat: z.enum(COATS).nullable().describe('Hair or feather kind: fur sleek|soft|shaggy|woolly|bristly, feathers smooth|downy; null otherwise'),
   pattern: PatternSchema.nullable(),
 });
 

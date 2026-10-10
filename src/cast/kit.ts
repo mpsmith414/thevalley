@@ -1,5 +1,5 @@
 import { DEFAULT_RECIPE, defaultFlatFacing } from '../recipe/normalize';
-import { inferBuild, inferFace } from '../recipe/hints';
+import { inferBuild, inferCoat, inferFace } from '../recipe/hints';
 import { SCHEMA_VERSION, type Build, type Face, type Part, type Recipe, type Region, type Role } from '../recipe/schema';
 
 type V = [number, number, number];
@@ -23,8 +23,10 @@ export function part(id: string, parent: string | null, role: Role, dir: V, leng
   };
 }
 
+/** A skin region; the coat is inferred from the covering, length and fluff unless given. */
 export function region(id: string, covering: Region['covering'], color: string, o: Partial<Omit<Region, 'id' | 'covering' | 'color'>> = {}): Region {
-  return { id, covering, color, belly: o.belly ?? null, furLength: o.furLength ?? 0, fluff: o.fluff ?? 0, pattern: o.pattern ?? null };
+  const furLength = o.furLength ?? 0, fluff = o.fluff ?? 0;
+  return { id, covering, color, belly: o.belly ?? null, furLength, fluff, coat: o.coat === undefined ? inferCoat({ covering, furLength, fluff }) : o.coat, pattern: o.pattern ?? null };
 }
 
 type RecipeParts = Pick<Recipe, 'id' | 'name' | 'parts' | 'skin'> & {

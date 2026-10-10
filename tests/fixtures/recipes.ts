@@ -1,4 +1,4 @@
-import { inferBuild, inferFace } from '../../src/recipe/hints';
+import { inferBuild, inferCoat, inferFace } from '../../src/recipe/hints';
 import { DEFAULT_RECIPE, defaultFlatFacing } from '../../src/recipe/normalize';
 import type { Part, Recipe, Region, Role } from '../../src/recipe/schema';
 
@@ -27,9 +27,11 @@ export function makeRecipe(id: string, parts: Part[], extra: Partial<Recipe> = {
   return { build: inferBuild(r), face: inferFace(r), ...r } as Recipe;
 }
 
+const coated = (r: Omit<Region, 'coat'>): Region => ({ ...r, coat: inferCoat(r) });
+
 const furRegions: Region[] = [
-  { id: 'body', covering: 'fur', color: '#9a6b3f', belly: '#e8d8b8', furLength: 0.02, fluff: 0.3, pattern: null },
-  { id: 'tail', covering: 'scales', color: '#4a6a3a', belly: null, furLength: 0, fluff: 0, pattern: { kind: 'spots', color: '#223322', scale: 0.04, amount: 0.5, along: false } },
+  coated({ id: 'body', covering: 'fur', color: '#9a6b3f', belly: '#e8d8b8', furLength: 0.02, fluff: 0.3, pattern: null }),
+  coated({ id: 'tail', covering: 'scales', color: '#4a6a3a', belly: null, furLength: 0, fluff: 0, pattern: { kind: 'spots', color: '#223322', scale: 0.04, amount: 0.5, along: false } }),
 ];
 
 export const quadruped = makeRecipe('quadruped', [

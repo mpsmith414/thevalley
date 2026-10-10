@@ -89,7 +89,7 @@ describe('Gallery', () => {
     delete v1.build; delete v1.face; v1.schemaVersion = 1;
     await g.save({ ...item('old', 5), recipe: v1 as unknown as GalleryItem['recipe'] });
     const got = await g.get('old');
-    expect(got?.recipe.schemaVersion).toBe(2);
+    expect(got?.recipe.schemaVersion).toBe(3);
     expect(got?.recipe.build.feet).toBe('paws');
     expect((await g.list()).find((i) => i.id === 'old')?.recipe.face.nose).toBe('pad');
   });

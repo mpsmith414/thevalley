@@ -1,7 +1,7 @@
 import { norm, type Vec3 } from '../util/vec';
-import { inferBuild, inferFace } from './hints';
+import { inferBuild, inferCoat, inferFace } from './hints';
 import {
-  ACTIVITY, COVERINGS, DEFAULT_COLOR, FEET, FLAT_FACINGS, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
+  ACTIVITY, COVERINGS, FEATHER_COATS, FUR_COATS, DEFAULT_COLOR, FEET, FLAT_FACINGS, GAITS, HABITATS, LIMITS, MAX_BONES, MAX_PARTS, MAX_REGIONS,
   NOSES, PATTERNS, ROLES, SCHEMA_VERSION, SOCIAL,
   type FlatFacing, type Part, type Pattern, type Recipe, type Region, type Role,
 } from './schema';
@@ -22,7 +22,7 @@ export const DEFAULT_RECIPE: Omit<Recipe, 'parts' | 'build' | 'face'> = {
   seed: 1,
   source: { kind: 'words', description: '' },
   skin: {
-    regions: [{ id: 'body', covering: 'skin', color: DEFAULT_COLOR, belly: null, furLength: 0, fluff: 0, pattern: null }],
+    regions: [{ id: 'body', covering: 'skin', color: DEFAULT_COLOR, belly: null, furLength: 0, fluff: 0, coat: null, pattern: null }],
     eyes: { color: '#3a2a1a', pupil: 'round', size: 0.8 },
   },
   motion: { gait: 'walk', bounce: 0.3, sway: 0.5, stance: 'normal' },
@@ -123,13 +123,21 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
       amount: num(p.amount, LIMITS.unit, `region ${id} pattern amount`, 0.5),
       along: bool(p.along, false),
     };
+    const covering = pick(r.covering, COVERINGS, `region ${id} covering`, 'skin');
+    const furLength = num(r.furLength, LIMITS.furLength, `region ${id} furLength`, 0);
+    const fluff = num(r.fluff, LIMITS.unit, `region ${id} fluff`, 0);
+    // a missing, unknown or mismatched coat word (fur's on feathers, any on scales) is inferred from the rest
+    const fits = covering === 'fur' ? FUR_COATS : covering === 'feathers' ? FEATHER_COATS : [];
+    const coat = fits.includes(r.coat as never) ? (r.coat as Region['coat']) : inferCoat({ covering, furLength, fluff });
+    if (coat !== (r.coat ?? null)) fixes.push(`skin.regions[${i}].coat → ${coat}`);
     return {
       id,
-      covering: pick(r.covering, COVERINGS, `region ${id} covering`, 'skin'),
+      covering,
       color: color(r.color, `region ${id} colour`),
       belly: r.belly === null || r.belly === undefined ? null : color(r.belly, `region ${id} belly`),
-      furLength: num(r.furLength, LIMITS.furLength, `region ${id} furLength`, 0),
-      fluff: num(r.fluff, LIMITS.unit, `region ${id} fluff`, 0),
+      furLength,
+      fluff,
+      coat,
       pattern,
     };
   });
