@@ -85,6 +85,13 @@ describe('normalizeRecipe', () => {
     expect(recipe.parts.reduce((n, p) => n + (p.mirror ? 2 : 1), 0)).toBeLessThanOrEqual(MAX_BONES);
   });
 
+  it('keeps a bone free for the jaw the builder adds (the root counts once, however it is marked)', () => {
+    const parts = [P('root', null, 'torso', 0, [0, 0, 1], 0.3, 0.1, 0.1, { mirror: true }),
+      ...Array.from({ length: MAX_PARTS - 1 }, (_, i) => P(`p${i}`, 'root', 'leg', 0.5, [1, -1, 0], 0.05, 0.01, 0.01, { mirror: true }))];
+    const { recipe } = normalizeRecipe(makeRecipe('t', parts));
+    expect(recipe.parts).toHaveLength(MAX_PARTS); // 1 + 2 × 47 = 95 bones: nothing cut
+  });
+
   it('fixes region references and bad colours', () => {
     const r = clone(quadruped);
     r.parts[0].region = 'missing';

@@ -152,8 +152,8 @@ describe('buildBody', () => {
       expect(J.start).toEqual(m.hinge);
       expect(J.end).toEqual(sub(m.tip, scale(m.up, m.halfThick)));
       expect(J.partId).toBe(sk.bones[m.head].partId);
-      // rising by the slit's width shuts it all along
-      expect(body.jawLift).toBeCloseTo(2 * m.halfThick, 12);
+      // rising by (nearly) the slit's width shuts it all along
+      expect(body.jawLift).toBeCloseTo(0.95 * 2 * m.halfThick, 12);
     });
 
     it('lets the jaw carry only what lies below the slit and ahead of the hinge', () => {

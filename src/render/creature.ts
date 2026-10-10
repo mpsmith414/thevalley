@@ -22,7 +22,7 @@ export type CreatureObject = {
   meshes: SkinnedMesh<BufferGeometry, Material>[];
   bones: Bone[];
   skeleton: Skeleton;
-  /** Rest-pose start of each bone, creature space. */
+  /** Rest-pose start of each bone, creature space (the jaw's raised to shut the mouth). */
   restStart: Vec3[];
   eyes: Eye[];
   /**
@@ -136,7 +136,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
 
   const obj: CreatureObject = {
     root, look: own, meshes, bones, skeleton,
-    restStart: defs.map((d) => ({ ...d.start })),
+    restStart: defs.map((d, i) => (i === jd && m ? { x: d.start.x + m.up.x * body.jawLift, y: d.start.y + m.up.y * body.jawLift, z: d.start.z + m.up.z * body.jawLift } : { ...d.start })),
     eyes,
     jaw,
     lod: QUALITY[tier].lod,

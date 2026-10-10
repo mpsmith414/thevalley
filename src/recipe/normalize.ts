@@ -217,10 +217,11 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
   parts.forEach(place);
   parts = ordered;
 
-  // bone budget after mirroring (a part is doubled when it or an ancestor mirrors)
-  const doubled = (p: Part): boolean => p.mirror || (p.parent !== null && doubled(byId.get(p.parent)!));
+  // bone budget after mirroring (a part below the root is doubled when it or an ancestor mirrors; the root is always one
+  // bone), leaving one for the jaw the builder adds
+  const doubled = (p: Part): boolean => p.parent !== null && (p.mirror || doubled(byId.get(p.parent)!));
   let bones = parts.reduce((n, p) => n + (doubled(p) ? 2 : 1), 0);
-  while (bones > MAX_BONES && parts.length > 1) {
+  while (bones > MAX_BONES - 1 && parts.length > 1) {
     // drop the last leaf (topological order makes the last part a leaf)
     const leaf = parts.pop()!;
     bones -= doubled(leaf) ? 2 : 1;

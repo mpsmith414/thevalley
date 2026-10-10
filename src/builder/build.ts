@@ -75,11 +75,12 @@ export function addJaw(sk: Skeleton, mouth: MouthFrame): Skeleton {
 }
 
 /**
- * How far the jaw rises at rest to shut the mouth: the slit is an even 2·halfThick across, so lifting the jaw by that
- * much (rather than turning it, which shuts only the tip and leaves a wedge open at the corners) brings the lips together
- * all along it, and the slit reads as a dark line.
+ * How far the jaw rises at rest to shut the mouth: the slit is an even 2·halfThick across, so lifting the jaw by nearly
+ * that much (rather than turning it, which shuts only the tip and leaves a wedge open at the corners) brings the lips
+ * together all along it, and the slit reads as a dark line. Not all of it: the jaw's pull ramps in across the slit, so
+ * the slit's side walls squeeze to a twentieth of their height (the full width would flatten them, more would fold them).
  */
-export const jawLift = (m: MouthFrame) => 2 * m.halfThick;
+export const jawLift = (m: MouthFrame) => 0.95 * 2 * m.halfThick;
 
 /** Below this gradient length the SDF is unreliable (inside a part thinner than the difference step). */
 const WEAK_GRADIENT = 0.5;
