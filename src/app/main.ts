@@ -70,7 +70,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const ground = loadGroundSets(tier); // photo textures download and decode while the valley is made
   // the animals' bodies build in the builder's worker while the valley is made (the residents pick them up from its cache)
   const builder = new BuilderClient();
-  CAST.forEach((c) => void builder.build(c.recipe).catch(() => {}));
+  void Promise.allSettled(CAST.map((c) => builder.build(c.recipe))).then(() => {
+    performance.mark('valley-bodies');
+    console.info(`valley: bodies ready ${seconds('valley-bodies')} s after the page opened (${builder.stats.cached} of ${CAST.length} from the cache)`);
+  });
   const plantTex = Promise.all([ground.then(() => loadBarkSets()), loadCards(tier === 'high' ? 512 : 256), loadFlowerCards(tier === 'high' ? 256 : 128)]); // bark after the ground: one decode at a time
   const [{ renderer, backend }, { data, cached }] = await Promise.all([
     createRenderer(canvas, tier).then((r) => (watchDeviceLoss(r.renderer), performance.mark('valley-renderer'), r)),

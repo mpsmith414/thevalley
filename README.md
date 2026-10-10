@@ -106,7 +106,8 @@ resolution (down to 70 % on High) holds the frame rate in between. You can pick 
   skinning patch.
 - `src/recipe`: the creature recipe (zod schema), normalising (clamps and repairs any input) and small edits.
 - `src/builder`: recipe → skeleton → smooth "clay" distance field → surface-nets mesh (3 levels of detail) → skin
-  weights. It runs in a Web Worker and is deterministic.
+  weights. It runs in a pool of up to 4 Web Workers and is deterministic, so built bodies are cached in IndexedDB
+  (`creature-bodies`, newest 64) under the recipe's body key plus a hash of the builder's source (a changed builder never reads old bodies).
 - `src/skin`: one shared TSL material (patterns, belly colour, coverings), fur shells and eyes.
 - `src/motion`: limbs and gaits, FABRIK IK with planted feet, the rig (walk, fly, swim, lie down), secondary motion
   (head, tail, ears, wings, fins, breathing, blinking) and actions.
