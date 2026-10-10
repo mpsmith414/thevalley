@@ -1,4 +1,4 @@
-# Handoff: where Creature Ecosystem stands (2026-10-10)
+# Handoff: where Creature Ecosystem stands (2026-10-10, 3b paused after Task 6)
 
 Read this first in a new session, then the specs it points to.
 
@@ -268,7 +268,7 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 1. Creature Lab: built
 2. The Valley: built and merged
 3. **Lifeform Polish:** 3a (shapes and faces) built and merged (2026-10-10);
-   **3b (fur, motion, post-processing): next**, a brainstorm of its own on top of the new bodies.
+   **3b (fur, motion, post-processing): in progress** on `feat/lifeform-polish-3b` (paused after Task 6 of 20).
 4. The Living Ecosystem
 5. Views and Eyes
 6. Bring It to Life (phone)
@@ -278,13 +278,25 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 Follow the usual flow: brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only
 on the owner's OK.
 
-**Next: Lifeform Polish 3b brainstorm (fur, motion, post-processing).** 3a is merged. Start a new chat with: "Read docs/superpowers/HANDOFF.md,
-then start the Lifeform Polish 3b brainstorm (fur, motion, post-processing)." Begin on a new branch from `main` (for
-example `feat/lifeform-polish-3b`). Starting points: the "For 3b" group in the 3a backlog (spiky close-up fur, the
-hawk's wing fold and flight pitch, spine flex and weight shift), the fur shells in `src/skin/fur.ts`, the rig and
-secondary motion in `src/motion`, and the valley's render path for post-processing (`src/render`, `src/world`), with
-River Bend (`__valley.perf()`, 14.9 ms median now) as the frame budget to hold. Use `__lab.portrait(recipe, prefix)`
-for before shots on `main` first, as 3a did.
+**Next: resume the Lifeform Polish 3b build at Task 7.** The brainstorm is done (the owner chose: fur and motion first,
+light post-processing; whole-animal fur views; a feather mode; a `coat` word per region; gait mechanics, starts/stops/turns,
+fliers and swimmers; grade + bloom + creature contact shading). The owner asked for the build to run autonomously
+("go with your recommendations… I am expecting high quality") and paused it on 2026-10-10 after Task 6.
+
+- Spec: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md`
+- Plan (20 tasks): `docs/superpowers/plans/2026-10-10-lifeform-polish-fur-motion-post.md`
+- Build ledger, briefs, reports and rulings (gitignored, local only):
+  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md` — read it first; it lists every completed
+  task with commits, the controller's rulings (R1–R6) and deferred minors.
+- Done (all reviewed): 1 clip/GIF tools and the before record (`.shots/b3-*`; River Bend baseline 15.0 ms median, frog
+  build 2.48 s), 2 the `groom` vec4 replaces `restNormal`, 3 groom (hair direction) bake, 4 cavity (SDF AO) bake,
+  5 recipe schema v3 with `coat`, 6 the fur shell rewrite (`.shots/t6-compare.png`: the studs and spikes are gone).
+  Key ruling R6: the groom array is bound on the geometry as the attribute `tangent`, so three r186's skinning bends it
+  (`tangentLocal` in the fur shader; probed in `src/render/probe.ts`). The renderer is now `alpha: false`.
+- To resume, start a new chat with: "Read docs/superpowers/HANDOFF.md, then resume the Lifeform Polish 3b build at
+  Task 7 (subagent-driven, from the ledger)." Next up: Task 7 strand lighting and cavity shading, 8 feathers, 9 the
+  cast's coats and the fur frame budget (≤ 0.5 ms of the 1 ms), then motion (10–15), post-processing (16–18), the
+  designer run (19) and the sheets and docs (20). Merge only on the owner's OK.
 
 ## Dev tips that save time
 
