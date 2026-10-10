@@ -8,6 +8,7 @@ import { designCreature, tweakCreature } from '../designer/loop';
 import type { View } from '../designer/types';
 import { ActionController, type Action } from '../motion/actions';
 import { CreatureRig } from '../motion/rig';
+import type { FaceCmd } from '../motion/secondary';
 import type { Recipe } from '../recipe/schema';
 import { createCreatureObject, type CreatureObject } from '../render/creature';
 import { autoQuality, type Tier } from '../render/quality';
@@ -119,6 +120,10 @@ const workshop = createWorkshop(ui, {
   setTier: (t) => {
     remember('lab.tier', t);
     location.reload();
+  },
+  face: (cmd) => {
+    if (cmd === 'chew') setAction('idle'); // standing still, head down
+    rig?.secondary.trigger(cmd);
   },
   setPasses: (n) => {
     settings.passes = n;
@@ -403,6 +408,7 @@ if (import.meta.env.DEV) {
     __lab: {
       scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait,
       resume: () => (paused = false),
+      face: (cmd: FaceCmd) => rig?.secondary.trigger(cmd),
       act: setAction,
       get creature() { return creature; },
       get rig() { return rig; },

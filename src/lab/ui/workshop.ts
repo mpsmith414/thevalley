@@ -1,5 +1,6 @@
 import type { GalleryItem } from '../gallery';
 import { clear, h } from '../../shared/dom';
+import type { FaceCmd } from '../../motion/secondary';
 
 export type WorkshopInfo = {
   item: GalleryItem | null;
@@ -20,7 +21,10 @@ export type WorkshopHandlers = {
   setSkeleton(on: boolean): void;
   setTier(t: 'low' | 'medium' | 'high'): void;
   setPasses(n: number): void;
+  face(cmd: FaceCmd): void;
 };
+
+const FACE: [FaceCmd, string][] = [['blink', 'Blink'], ['yawn', 'Yawn'], ['chew', 'Chew'], ['alert', 'Alert'], ['back', 'Ears back']];
 
 /** The hidden grown-up drawer: skeleton, raw recipe, detail levels, quality, look-again history. */
 export function createWorkshop(root: HTMLElement, on: WorkshopHandlers) {
@@ -42,6 +46,7 @@ export function createWorkshop(root: HTMLElement, on: WorkshopHandlers) {
       choice('Detail', [0, 1, 2] as (0 | 1 | 2)[], i.lod as 0 | 1 | 2, on.setLod),
       choice('Fur', ['on', 'off'], i.fur ? 'on' : 'off', (v) => on.setFur(v === 'on')),
       choice('Skeleton', ['on', 'off'], i.skeleton ? 'on' : 'off', (v) => on.setSkeleton(v === 'on')),
+      h('div', { class: 'opt' }, h('span', {}, 'Face'), ...FACE.map(([cmd, label]) => h('button', { 'data-focus': true, onclick: () => on.face(cmd) }, label))),
       choice('Quality', ['low', 'medium', 'high'] as ('low' | 'medium' | 'high')[], i.tier as 'low' | 'medium' | 'high', on.setTier),
       choice('Look-again passes', [1, 2, 3, 4, 5], i.passes, on.setPasses),
       i.item?.history.length

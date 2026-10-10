@@ -32,7 +32,7 @@ function fakeRig(kind: { swimmer?: boolean; canFly?: boolean } = {}) {
     arrived() {
       return !this.target || Math.hypot(this.target.x - this.position.x, this.target.z - this.position.z) < 0.3;
     },
-    look: null, headDown: 0, sleep: 0, calling: 0, wantFly: false,
+    look: null, headDown: 0, sleep: 0, calling: 0, wantFly: false, mouth: 'shut', ears: 'rest',
     canFly: !!kind.canFly, swimmer: !!kind.swimmer, floater: false,
   };
   const tick = (ctl: ActionController, seconds: number) => {
@@ -116,6 +116,44 @@ describe('ActionController', () => {
     expect(rig.headDown).toBe(1);
     tick(ctl, 6);
     expect(ctl.current).toBe('idle');
+  });
+
+  it('chews while it grazes and laps while it drinks, then shuts its mouth', () => {
+    const { rig, tick } = fakeRig();
+    const ctl = make(rig, 5);
+    ctl.set('eat');
+    tick(ctl, 1);
+    expect(rig.mouth).toBe('chew');
+    tick(ctl, 6);
+    expect(rig.mouth).toBe('shut');
+    rig.position = { x: 2, z: 0 };
+    ctl.set('drink');
+    expect(rig.mouth).toBe('shut'); // still walking to the bank
+    tick(ctl, 4);
+    expect(rig.mouth).toBe('lap');
+    tick(ctl, 6);
+    expect(rig.mouth).toBe('shut');
+  });
+
+  it('lays its ears back to flee, pricks them for the camera, and resets them on a new action', () => {
+    const { rig, tick } = fakeRig();
+    const ctl = make(rig, 9);
+    ctl.set('flee', { x: 1, y: 0, z: 1 });
+    expect(rig.ears).toBe('back');
+    tick(ctl, 0.5);
+    expect(rig.ears).toBe('back'); // glances don't undo it
+    ctl.set('idle');
+    expect(rig.ears).toBe('rest');
+    expect(rig.mouth).toBe('shut');
+    // idle, with someone watching: it sometimes looks at them, and then its ears go up until it looks away
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      ctl.update(0.1, { x: 3, y: 1, z: 3 });
+      seen.add(`${rig.ears}:${rig.look ? rig.look.x === 3 : 'none'}`);
+    }
+    expect(seen.has('alert:true')).toBe(true);
+    expect(seen.has('rest:true')).toBe(false);
+    expect(seen.has('alert:false')).toBe(false);
   });
 
   it('wanders along the pond edge when it is a shore animal', () => {

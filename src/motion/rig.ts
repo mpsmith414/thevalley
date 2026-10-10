@@ -43,7 +43,7 @@ const approach = (cur: number, target: number, rate: number, dt: number) => cur 
 /**
  * Drives a creature's bones every frame: moves and turns its body (on land, in the air or in water),
  * cycles its legs through a gait, plants feet on the real ground and bends each leg to reach them.
- * Actions steer it through the intent fields (look, headDown, sleep, calling, wantFly).
+ * Actions steer it through the intent fields (look, headDown, sleep, calling, wantFly, mouth, ears).
  */
 export class CreatureRig {
   readonly legs: Leg[];
@@ -74,6 +74,8 @@ export class CreatureRig {
   sleep = 0;
   calling = 0;
   wantFly = false;
+  mouth: 'shut' | 'chew' | 'lap' = 'shut';
+  ears: 'rest' | 'alert' | 'back' = 'rest';
 
   // smoothed state
   headDownNow = 0;

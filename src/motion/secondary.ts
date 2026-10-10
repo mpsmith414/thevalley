@@ -8,7 +8,53 @@ import { fromV, toV, type CreatureRig } from './rig';
 
 const Z = new Vector3(0, 0, 1);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const approach = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * Math.min(1, rate * dt);
 const euler = (pitch: number, yaw: number, roll = 0) => new Quaternion().setFromEuler(new Euler(pitch, yaw, roll, 'YXZ'));
+
+/** What a face command does: `blink` and `yawn` happen once; `chew`, `alert` and `back` hold for a few seconds. */
+export type FaceCmd = 'blink' | 'yawn' | 'chew' | 'alert' | 'back';
+/** The face's own clock: time, the blink countdown, seconds left of a yawn, whether it was asleep a moment ago, and its randomness. */
+export type FaceState = { t: number; blinkAt: number; yawn: number; wasAsleep: boolean; rng: () => number };
+type FaceRig = { callNow: number; sleepNow: number; headDownNow: number; mouth: 'shut' | 'chew' | 'lap'; ears: 'rest' | 'alert' | 'back' };
+export type FacePose = { jaw: number; lids: number; earPitch: number; earRoll: number };
+
+/** The widest the jaw opens (radians): the cheeks and mouth are tuned for openings up to this. */
+export const JAW_MAX = 0.3;
+const YAWN_SECONDS = 2.5;
+
+/**
+ * The face's pose for this moment: how far the jaw is open (radians; calls, chewing, lapping and yawns, the largest wins),
+ * how shut the lids are (0..1: blinks, a floor while chewing, and sleep), and the ears' pitch and roll (alert, back, sleep droop).
+ * Advances the state by dt; a yawn starts once as sleep passes 0.5 and not again until the animal has woken.
+ */
+export function facePose(s: FaceState, dt: number, rig: FaceRig, out: FacePose = { jaw: 0, lids: 0, earPitch: 0, earRoll: 0 }): FacePose {
+  s.t += dt;
+  s.yawn = Math.max(0, s.yawn - dt);
+  if (rig.sleepNow > 0.5 && !s.wasAsleep) {
+    s.wasAsleep = true;
+    s.yawn = YAWN_SECONDS;
+  } else if (rig.sleepNow < 0.3) s.wasAsleep = false;
+  const down = rig.headDownNow > 0.8;
+  const tau = 2 * Math.PI * s.t;
+  let jaw = 0.28 * rig.callNow;
+  if (down && rig.mouth === 'chew') jaw = Math.max(jaw, 0.05 + 0.04 * Math.sin(tau * 2.5));
+  if (down && rig.mouth === 'lap') jaw = Math.max(jaw, 0.03 + 0.03 * Math.sin(tau * 5));
+  if (s.yawn > 0) jaw = Math.max(jaw, JAW_MAX * Math.sin(Math.PI * (1 - s.yawn / YAWN_SECONDS)));
+  out.jaw = clamp(jaw, 0, JAW_MAX);
+
+  s.blinkAt -= dt;
+  let shut = 0;
+  if (s.blinkAt < 0) {
+    shut = Math.sin(Math.PI * clamp(-s.blinkAt / 0.15, 0, 1));
+    if (s.blinkAt < -0.15) s.blinkAt = 2 + s.rng() * 4;
+  }
+  const chewing = rig.mouth === 'chew' ? 0.45 * clamp((rig.headDownNow - 0.8) / 0.1, 0, 1) : 0; // eases in as the head goes down
+  out.lids = Math.max(shut, chewing, rig.sleepNow);
+
+  out.earPitch = (rig.ears === 'alert' ? -0.3 : rig.ears === 'back' ? 0.8 : 0) + 0.4 * rig.sleepNow;
+  out.earRoll = rig.ears === 'back' ? 0.3 : 0;
+  return out;
+}
 
 /**
  * Everything that isn't legs: the head looking about and grazing, tails swaying, ears twitching,
@@ -23,10 +69,16 @@ export class SecondaryMotion {
   private lookYaw: Spring = { pos: 0, vel: 0 };
   private lookPitch: Spring = { pos: 0, vel: 0 };
   private tailTurn: Spring = { pos: 0, vel: 0 };
-  private ears: { chain: number[]; spring: Spring; target: number; next: number; hold: number }[];
+  private ears: { chain: number[]; spring: Spring; target: number; next: number; hold: number; side: number }[];
+  private earPitch = 0;
+  private earRoll = 0;
   private wingOpen = 0;
-  private blinkAt = 2;
   private rng: () => number;
+  private face: FaceState;
+  private pose: FacePose = { jaw: 0, lids: 0, earPitch: 0, earRoll: 0 };
+  private jawNow = 0;
+  /** A face command held for a while (chew, alert, back): what it sets on the rig, and for how much longer. */
+  private held: { cmd: FaceCmd; left: number } | null = null;
 
   constructor(private rig: CreatureRig, limbs: Limb[]) {
     const sk = rig.body.skeleton;
@@ -37,7 +89,8 @@ export class SecondaryMotion {
     // the mouth bones pitch to call
     this.mouths = sk.jaw >= 0 ? [] : sk.bones.flatMap((b, i) => (b.role === 'mouth' ? [i] : []));
     this.rng = mulberry32(rig.recipe.seed + 99);
-    this.ears = this.chains.filter((c) => c.kind === 'ear').map((c) => ({ chain: c.chain, spring: { pos: 0, vel: 0 }, target: 0, next: 1 + this.rng() * 4, hold: 0 }));
+    this.ears = this.chains.filter((c) => c.kind === 'ear').map((c) => ({ chain: c.chain, spring: { pos: 0, vel: 0 }, target: 0, next: 1 + this.rng() * 4, hold: 0, side: sk.bones[c.chain[0]].start.x >= 0 ? 1 : -1 }));
+    this.face = { t: 0, blinkAt: 2, yawn: 0, wasAsleep: false, rng: this.rng };
     const size = rig.recipe.life.sizeM;
     this.flapHz = clamp(3 / Math.sqrt(size), 1.5, 12) * (rig.recipe.motion.gait === 'hover' ? 1.8 : 1);
   }
@@ -51,7 +104,8 @@ export class SecondaryMotion {
     const t = r.time;
     const sway = r.recipe.motion.sway;
     this.breathe(t);
-    this.blink(dt);
+    this.holdCommand(dt);
+    this.faceMotion(dt);
     for (const c of this.chains) {
       const n = c.chain.length;
       if (c.kind === 'neck') this.neck(c.chain, dt);
@@ -95,15 +149,37 @@ export class SecondaryMotion {
     for (const c of torso.children) if ((c as Bone).isBone) c.scale.set(1 / s, 1 / s, 1);
   }
 
-  private blink(dt: number) {
-    const r = this.rig;
-    this.blinkAt -= dt;
-    let shut = 0;
-    if (this.blinkAt < 0) {
-      shut = Math.sin(Math.PI * clamp(-this.blinkAt / 0.15, 0, 1));
-      if (this.blinkAt < -0.15) this.blinkAt = 2 + this.rng() * 4;
+  /** Make the face do something now: blink, yawn, or (for a few seconds) chew, prick the ears up or lay them back. */
+  trigger(cmd: FaceCmd) {
+    if (cmd === 'blink') this.face.blinkAt = 0;
+    else if (cmd === 'yawn') this.face.yawn = YAWN_SECONDS;
+    else {
+      if (this.held) this.holdCommand(Infinity); // let go of the last one first
+      this.held = { cmd, left: cmd === 'chew' ? 4 : 3 };
     }
-    for (const e of r.obj.eyes) e.blink(Math.max(shut, r.sleepNow));
+  }
+
+  /** While a held command lasts it keeps the rig's mouth, ears and head where it wants them; at the end it lets go. */
+  private holdCommand(dt: number) {
+    const h = this.held, r = this.rig;
+    if (!h) return;
+    h.left -= dt;
+    const on = h.left > 0;
+    if (h.cmd === 'chew') {
+      r.mouth = on ? 'chew' : 'shut';
+      r.headDown = on ? 1 : 0;
+    } else r.ears = on ? (h.cmd === 'alert' ? 'alert' : 'back') : 'rest';
+    if (!on) this.held = null;
+  }
+
+  /** Blink, open the jaw and move the lids: all from the face's pose this frame. */
+  private faceMotion(dt: number) {
+    const r = this.rig, p = facePose(this.face, dt, r, this.pose);
+    for (const e of r.obj.eyes) e.blink(p.lids);
+    this.jawNow = approach(this.jawNow, p.jaw, 30, dt); // eased, so a call or a yawn never snaps the mouth open
+    r.obj.jaw?.open(clamp(this.jawNow, 0, JAW_MAX));
+    this.earPitch = approach(this.earPitch, p.earPitch, 10, dt);
+    this.earRoll = approach(this.earRoll, p.earRoll, 10, dt);
   }
 
   /** Look at things (and up when calling); lower the head to the ground to graze or drink. */
@@ -160,8 +236,10 @@ export class SecondaryMotion {
         e.next = 1.5 + this.rng() * 4;
         e.hold = this.rng() < 0.5 ? 0.3 : 2;
       }
-      e.spring = springStep(e.spring, e.target - this.rig.sleepNow * 0.4, 120, 14, dt);
-      e.chain.forEach((k, i) => this.bones[k].quaternion.copy(euler(i === 0 ? e.spring.pos : 0, 0, i === 0 ? e.spring.pos * 0.5 : 0)));
+      e.spring = springStep(e.spring, e.target, 120, 14, dt);
+      // the pose (alert, back, droop) adds to the twitch; flattened ears roll outwards, one way for each side
+      const pitch = e.spring.pos + this.earPitch, roll = e.spring.pos * 0.5 - e.side * this.earRoll;
+      e.chain.forEach((k, i) => this.bones[k].quaternion.copy(euler(i === 0 ? pitch : 0, 0, i === 0 ? roll : 0)));
     }
   }
 

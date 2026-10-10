@@ -14,6 +14,9 @@ export interface RigIntents {
   sleep: number;
   calling: number;
   wantFly: boolean;
+  /** What the mouth is doing (it chews while grazing, laps while drinking) and what the ears are doing. */
+  mouth: 'shut' | 'chew' | 'lap';
+  ears: 'rest' | 'alert' | 'back';
   readonly canFly: boolean;
   readonly swimmer: boolean;
   readonly floater: boolean;
@@ -31,7 +34,7 @@ export interface Habitat {
   clamp(p: Vec3): Vec3;
 }
 
-type Step = { kind: 'go'; speed: number; fly?: boolean } | { kind: 'wait'; time: number } | { kind: 'graze'; time: number };
+type Step = { kind: 'go'; speed: number; fly?: boolean } | { kind: 'wait'; time: number } | { kind: 'graze'; time: number; lap?: boolean };
 
 /** How `wander` uses the air: the chance a wander is a flight, and how many laps (min, max) a flight takes. */
 export type Flight = { chance: number; laps: [number, number] };
@@ -58,6 +61,8 @@ export class ActionController {
     r.headDown = 0;
     r.sleep = 0;
     r.calling = 0;
+    r.mouth = 'shut';
+    r.ears = 'rest';
     if (action !== 'run' && action !== 'wander') r.wantFly = false;
     switch (action) {
       case 'idle':
@@ -74,7 +79,7 @@ export class ActionController {
         break;
       case 'drink': {
         if (r.swimmer) {
-          this.plan = [{ kind: 'graze', time: 4 }];
+          this.plan = [{ kind: 'graze', time: 4, lap: true }];
           break;
         }
         // to the nearest bank, facing the water
@@ -85,7 +90,7 @@ export class ActionController {
         }
         r.moveTo(bank);
         r.setSpeed(0.25);
-        this.plan = [{ kind: 'go', speed: 0.25 }, { kind: 'graze', time: 5 }];
+        this.plan = [{ kind: 'go', speed: 0.25 }, { kind: 'graze', time: 5, lap: true }];
         break;
       }
       case 'sleep':
@@ -106,6 +111,7 @@ export class ActionController {
         az /= d;
         r.moveTo(this.clampInside({ x: r.position.x + ax * 3, y: 0, z: r.position.z + az * 3 }));
         r.setSpeed(1);
+        r.ears = 'back';
         this.plan = [{ kind: 'go', speed: 1 }];
         break;
       }
@@ -122,7 +128,9 @@ export class ActionController {
     this.lookTimer -= dt;
     if (this.lookTimer < 0 && this.current !== 'sleep') {
       this.lookTimer = 2 + this.rng() * 3;
-      r.look = camera && this.rng() < 0.4 ? { ...camera } : this.rng() < 0.5 ? null : this.randomLand(2);
+      const atCamera = camera && this.rng() < 0.4;
+      r.look = atCamera ? { ...camera! } : this.rng() < 0.5 ? null : this.randomLand(2);
+      if (r.ears !== 'back') r.ears = atCamera ? 'alert' : 'rest'; // ears prick up for whoever is watching, until the next glance
     }
     if (this.current === 'walk' || this.current === 'run') {
       if (r.arrived()) this.go(this.current === 'run' ? 0.9 : 0.25);
@@ -141,8 +149,10 @@ export class ActionController {
     } else {
       r.moveTo(null);
       r.headDown = 1;
+      r.mouth = step.lap ? 'lap' : 'chew';
       if (this.timer > step.time) {
         r.headDown = 0;
+        r.mouth = 'shut';
         this.advance();
       }
     }
@@ -195,6 +205,7 @@ export class ActionController {
     this.timer = 0;
     const r = this.rig;
     r.headDown = 0;
+    r.mouth = 'shut';
     if (first.kind === 'go') {
       r.wantFly = !!first.fly;
       this.go(first.speed, first.fly);
