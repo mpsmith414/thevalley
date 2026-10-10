@@ -51,7 +51,8 @@ export function facePose(s: FaceState, dt: number, rig: FaceRig, out: FacePose =
   const chewing = rig.mouth === 'chew' ? 0.45 * clamp((rig.headDownNow - 0.8) / 0.1, 0, 1) : 0; // eases in as the head goes down
   out.lids = Math.max(shut, chewing, rig.sleepNow);
 
-  out.earPitch = (rig.ears === 'alert' ? -0.3 : rig.ears === 'back' ? 0.8 : 0) + 0.4 * rig.sleepNow;
+  // a positive pitch (about +x) tips an upright ear forward: alert pricks them forward, back lays them back, sleep droops them back
+  out.earPitch = (rig.ears === 'alert' ? 0.3 : rig.ears === 'back' ? -0.8 : 0) - 0.4 * rig.sleepNow;
   out.earRoll = rig.ears === 'back' ? 0.3 : 0;
   return out;
 }

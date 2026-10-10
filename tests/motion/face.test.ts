@@ -89,10 +89,11 @@ describe('facePose', () => {
     const back = facePose(state(), 1 / 60, { ...awake, ears: 'back' });
     const alert = facePose(state(), 1 / 60, { ...awake, ears: 'alert' });
     const asleep = facePose(state(), 1 / 60, { ...awake, sleepNow: 1 });
+    // a positive pitch about +x tips an upright ear forward (tests/motion/secondary.test.ts checks it on real ears)
     expect(rest.earPitch).toBe(0);
-    expect(back.earPitch).toBeGreaterThan(0.7);
+    expect(back.earPitch).toBeLessThan(-0.7);
     expect(back.earRoll).toBeGreaterThan(0.2);
-    expect(alert.earPitch).toBeLessThan(0);
-    expect(asleep.earPitch).toBeCloseTo(0.4, 5);
+    expect(alert.earPitch).toBeGreaterThan(0.2);
+    expect(asleep.earPitch).toBeCloseTo(-0.4, 5);
   });
 });

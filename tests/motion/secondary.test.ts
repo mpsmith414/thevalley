@@ -1,6 +1,8 @@
-import { Quaternion } from 'three/webgpu';
+import { Quaternion, Vector3 } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import { buildBody } from '../../src/builder/build';
+import { CAST } from '../../src/cast';
+import { findChains } from '../../src/motion/limbs';
 import { CreatureRig } from '../../src/motion/rig';
 import { createCreatureObject } from '../../src/render/creature';
 import { quadruped } from '../fixtures/recipes';
@@ -37,7 +39,7 @@ describe('secondary motion and the jaw', () => {
     rig.calling = 0;
     run(rig, 40);
     expect(angle()).toBeLessThan(0.01);
-  });
+  }, 30_000);
 
   it('chews, yawns and blinks on command', () => {
     const { obj, rig } = setup();
@@ -69,5 +71,41 @@ describe('secondary motion and the jaw', () => {
     expect(rig.mouth).toBe('shut');
     expect(rig.headDown).toBe(0);
     expect(rig.ears).toBe('alert');
-  });
+  }, 30_000);
+});
+
+describe('ear poses on real ears', () => {
+  /**
+   * Each ear's tip (the end of its chain's last bone) in the head bone's frame (+z forward, +y up) after two seconds with
+   * the ears held in a pose (asleep or not). Fresh rigs, same frames: the random twitches match, only the pose differs.
+   */
+  const tips = (id: string) => {
+    const recipe = CAST.find((c) => c.recipe.id === id)!.recipe, body = buildBody(recipe, [2]);
+    const head = body.skeleton.bones.findIndex((b) => b.role === 'head');
+    const ears = findChains(body.skeleton).filter((c) => c.kind === 'ear').map((c) => c.chain[c.chain.length - 1]);
+    return (pose: 'rest' | 'alert' | 'back', sleep = 0) => {
+      const obj = createCreatureObject(body, recipe, 'low'), rig = new CreatureRig(obj, body, recipe, flat);
+      rig.ears = pose;
+      rig.sleep = rig.sleepNow = sleep; // already asleep: the pose, not the easing into it, is measured
+      for (let i = 0; i < 60; i++) rig.update(1 / 30);
+      return ears.map((k) => {
+        const d = body.skeleton.bones[k], tip = new Vector3(d.end.x - d.start.x, d.end.y - d.start.y, d.end.z - d.start.z);
+        return obj.bones[head].worldToLocal(obj.bones[k].localToWorld(tip));
+      });
+    };
+  };
+
+  // measured (head frame, metres; rest → back → alert → asleep) fox z 0.018 → −0.031 → 0.044 → −0.014, rabbit −0.013 →
+  // −0.067 → 0.018 → −0.050, wolf 0.032 → −0.036 → 0.066 → −0.012 (before the fix: back +0.073, alert −0.006 for the fox)
+  for (const id of ['fox', 'rabbit', 'wolf'])
+    it(`${id}: laid back, the ear tips go back; pricked up, forward; asleep, they droop back and down`, () => {
+      const at = tips(id), rest = at('rest'), back = at('back'), alert = at('alert'), asleep = at('rest', 1);
+      expect(rest).toHaveLength(2);
+      rest.forEach((r, e) => {
+        expect(back[e].z - r.z, `back, ear ${e}`).toBeLessThan(-0.02);
+        expect(alert[e].z - r.z, `alert, ear ${e}`).toBeGreaterThan(0.01);
+        expect(asleep[e].z - r.z, `asleep, ear ${e}`).toBeLessThan(-0.01);
+        expect(asleep[e].y, `asleep, ear ${e}`).toBeLessThan(r.y);
+      });
+    }, 30_000);
 });
