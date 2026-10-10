@@ -52,8 +52,12 @@ describe('groom', () => {
   });
   it('is finite and deterministic on odd bodies', () => {
     for (const r of [blob, snake]) {
-      const a = buildBody(r, [2]).lods[0].groom, b = buildBody(r, [2]).lods[0].groom;
+      const body = buildBody(r, [2]), a = body.lods[0].groom, b = buildBody(r, [2]).lods[0].groom;
       expect(a.every(Number.isFinite)).toBe(true);
+      // every non-eye vertex has a unit direction (an all-zero array fails here)
+      for (let v = 0; v < a.length / 4; v++) {
+        if (body.skeleton.bones[body.lods[0].boneOf[v]].role !== 'eye') expect(Math.hypot(a[v * 4], a[v * 4 + 1], a[v * 4 + 2])).toBeCloseTo(1, 3);
+      }
       expect(Array.from(a)).toEqual(Array.from(b));
     }
   });

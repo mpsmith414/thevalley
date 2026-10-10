@@ -52,13 +52,15 @@ describe('skin weights', () => {
 });
 
 describe('buildBody', () => {
-  it('gives every vertex a groom: a unit hair direction (xyz) and an open (1) cavity until it is baked', () => {
-    const l = buildBody(quadruped, [1]).lods[0], n = l.positions.length / 3;
+  it('gives every vertex a groom: a unit hair direction (xyz, zero only on eyes) and a cavity (w) in [0.25, 1]', () => {
+    const body = buildBody(quadruped, [1]), l = body.lods[0], n = l.positions.length / 3;
     expect(l.groom).toBeInstanceOf(Float32Array);
     expect(l.groom).toHaveLength(4 * n);
+    const bones = body.skeleton.bones;
     for (let v = 0; v < n; v++) {
-      expect(Math.hypot(l.groom[v * 4], l.groom[v * 4 + 1], l.groom[v * 4 + 2])).toBeCloseTo(1, 3);
-      expect(l.groom[v * 4 + 3]).toBe(1);
+      if (bones[l.boneOf[v]].role !== 'eye') expect(Math.hypot(l.groom[v * 4], l.groom[v * 4 + 1], l.groom[v * 4 + 2])).toBeCloseTo(1, 3);
+      expect(l.groom[v * 4 + 3]).toBeGreaterThanOrEqual(0.25);
+      expect(l.groom[v * 4 + 3]).toBeLessThanOrEqual(1);
     }
   });
 

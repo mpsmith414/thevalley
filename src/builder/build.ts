@@ -11,6 +11,7 @@ import { bodySdf, coarseBodySdf } from './sdf';
 import { createSimplifier, type Snapshot } from './simplify';
 import { buildSkeleton, type BoneDef, type Skeleton } from './skeleton';
 import { sampleSparse } from './sparse';
+import { cavityField } from './cavity';
 import { groomField } from './groom';
 import { skinWeights } from './weights';
 
@@ -206,26 +207,39 @@ export function buildBody(recipe: Recipe, lods: readonly number[] = [0, 1, 2], t
 
   // the jaw joins after meshing (bones shape the body; the jaw only carries skin)
   const rig = anat.mouth ? addJaw(skeleton, anat.mouth) : skeleton;
-  const made = new Map<number, LodMesh>();
-  const meshes = lods.map((l): LodMesh => {
-    const done = made.get(l);
-    // a repeated LOD gets its own arrays (the worker transfers each buffer once)
-    if (done) return Object.fromEntries(Object.entries(done).map(([k, a]) => [k, a.slice()])) as LodMesh;
-    const { positions, indices } = snaps.get(l)!;
+  // The cavity is measured once, on the finest requested LOD, with the exact body SDF (the frog's full build stays
+  // under the 3 s limit with it; `coarseBodySdf` and `steps = 3` were not needed), then inherited: a coarser vertex
+  // takes the value of the input (raw) vertex it kept. So LODs are built finest first, whatever order they are asked in.
+  const made = new Map<number, LodMesh>(), cavityOf = new Map<number, number>();
+  for (const l of [...new Set(lods)].sort((a, b) => a - b)) {
+    const { positions, indices, source } = snaps.get(l)!;
     const { normals, longest: step } = snapToSurface(sdf, positions, indices, fine / 2, fine);
     if (times) times.maxSnap = Math.max(times.maxSnap, step / fine);
     lap('snap');
     const skin = skinWeights(positions, rig, regions, anat.mouth);
     lap('skin');
-    // the hair direction (xyz); the cavity (w) stays 1 until it is baked (Task 4)
+    // the hair direction (xyz) and the cavity (w)
     const flow = groomField(positions, normals, indices, skin.skinIndex, skin.skinWeight, rig);
-    const groom = new Float32Array(positions.length / 3 * 4);
-    for (let v = 0; v < groom.length / 4; v++) {
-      groom[v * 4] = flow[v * 3]; groom[v * 4 + 1] = flow[v * 3 + 1]; groom[v * 4 + 2] = flow[v * 3 + 2]; groom[v * 4 + 3] = 1;
+    const n = positions.length / 3, groom = new Float32Array(n * 4);
+    const own = cavityOf.size ? null : cavityField(positions, normals, skin.boneOf, skin.partT, rig, sdf);
+    for (let v = 0; v < n; v++) {
+      let c = own ? own[v] : cavityOf.get(source[v]);
+      if (c === undefined) { // not alive in the finest LOD (should not happen): measure it here
+        const one = (a: Float32Array, k: number) => a.subarray(v * k, v * k + k);
+        c = cavityField(one(positions, 3), one(normals, 3), skin.boneOf.subarray(v, v + 1), skin.partT.subarray(v, v + 1), rig, sdf)[0];
+      }
+      groom[v * 4] = flow[v * 3]; groom[v * 4 + 1] = flow[v * 3 + 1]; groom[v * 4 + 2] = flow[v * 3 + 2]; groom[v * 4 + 3] = c;
+      if (own) cavityOf.set(source[v], c);
     }
-    const mesh = { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2), groom };
-    made.set(l, mesh);
-    return mesh;
+    lap('skin'); // groom and cavity count with the skin
+    made.set(l, { positions, normals, indices, ...skin, feature: featureMarks(anat.features, positions, normals, sdf, fine / 2), groom });
+  }
+  const given = new Set<number>();
+  const meshes = lods.map((l): LodMesh => {
+    const mesh = made.get(l)!;
+    if (!given.has(l)) { given.add(l); return mesh; }
+    // a repeated LOD gets its own arrays (the worker transfers each buffer once)
+    return Object.fromEntries(Object.entries(mesh).map(([k, a]) => [k, a.slice()])) as LodMesh;
   });
   return { key: bodyKey(recipe), skeleton: rig, regions, lods: meshes, mouth: anat.mouth, jawLift: anat.mouth ? jawLift(anat.mouth) : 0 };
 }
