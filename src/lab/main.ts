@@ -1,5 +1,6 @@
 import { PerspectiveCamera, Scene, SkeletonHelper, Spherical, Vector3 } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import type { BodyData } from '../builder/build';
 import { BuilderClient } from '../builder/client';
 import { CAST } from '../cast';
 import { api, designerModel, DesignerInvalid, DesignerResting } from '../designer/api';
@@ -17,6 +18,7 @@ import { renderView } from '../render/snapshot';
 import { createStage, stageHabitat } from '../render/stage';
 import { mulberry32 } from '../util/rng';
 import { FocusRing } from '../shared/focus';
+import { clipGround, driveClip, type ClipName } from './clips';
 import { Gallery, newId, type GalleryItem } from './gallery';
 import { Input, type Button } from '../shared/input';
 import { remember, stored } from '../shared/settings';
@@ -49,6 +51,7 @@ const snapshotCtx = { renderer, scene, camera };
 
 let creature: CreatureObject | null = null;
 let rig: CreatureRig | null = null;
+let shownBody: BodyData | null = null; // the body of the creature on stage (clips build their own rig on it)
 let actions: ActionController | null = null;
 let skeletonHelper: SkeletonHelper | null = null;
 let current: GalleryItem | null = null;
@@ -56,6 +59,7 @@ let current: GalleryItem | null = null;
 /** Put a recipe on the stage, framed to its size, wandering about. */
 async function show(recipe: Recipe) {
   const body = await builder.build(recipe);
+  shownBody = body;
   creature?.dispose();
   skeletonHelper?.removeFromParent();
   creature = createCreatureObject(body, recipe, settings.tier);
@@ -402,11 +406,51 @@ async function portrait(recipe: Recipe, prefix: string) {
   controls.update();
 }
 
+/**
+ * Dev: a motion clip of a recipe (see clips.ts) as a strip of shots `<prefix>-<name>-NN`: `frames` shots, `every` 60 Hz steps
+ * apart, after `warm` frames of lead-in. A fresh rig runs it on its own ground (so water clips have water); the camera follows
+ * from the creature's left. The lab's own rig and camera are put back afterwards and the loop stays paused.
+ */
+async function clip(recipe: Recipe, name: ClipName, prefix: string, frames = 16, every = 4, warm = 90) {
+  await show(recipe);
+  paused = true;
+  if (!creature || !shownBody) return [];
+  const saved = { pos: camera.position.clone(), target: controls.target.clone(), min: controls.minDistance };
+  const cr = new CreatureRig(creature, shownBody, recipe, clipGround(name));
+  const total = frames * every;
+  const dist = Math.max(0.6, 2.4 * recipe.life.sizeM);
+  const lift = cr.canFly ? 0 : cr.restHeight; // fliers: aim at the root, the body is carried up there
+  const elev = (8 * Math.PI) / 180;
+  const root = creature.root.position;
+  controls.minDistance = 0.01;
+  const names: string[] = [];
+  try {
+    for (let f = -warm; f < total; f++) {
+      driveClip(name, cr, f, total);
+      cr.update(1 / 60);
+      if (f < 0 || (f + 1) % every !== 0) continue;
+      // the creature's left is +x of its heading: (cos yaw, 0, -sin yaw)
+      controls.target.set(root.x, root.y + lift, root.z);
+      camera.position.set(
+        root.x + Math.cos(cr.yaw) * Math.cos(elev) * dist, root.y + lift + Math.sin(elev) * dist, root.z - Math.sin(cr.yaw) * Math.cos(elev) * dist,
+      );
+      camera.lookAt(controls.target);
+      names.push(await shot(`${prefix}-${name}-${String((f + 1) / every - 1).padStart(2, '0')}`));
+    }
+  } finally {
+    camera.position.copy(saved.pos);
+    controls.target.copy(saved.target);
+    controls.minDistance = saved.min;
+    controls.update();
+  }
+  return names;
+}
+
 if (import.meta.env.DEV) {
   const fixtures = await import('../../tests/fixtures/recipes');
   Object.assign(window, {
     __lab: {
-      scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait,
+      scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait, clip,
       resume: () => (paused = false),
       face: (cmd: FaceCmd) => rig?.secondary.trigger(cmd),
       act: setAction,
