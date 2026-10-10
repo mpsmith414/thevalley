@@ -70,8 +70,8 @@ gait, the habitat and the parts:
 
 - `muscle`: 0.6 for fur, 0.5 for feathers, 0.3 for skin/scales, 0.15 for slime/shell; −0.2 for `hop` gait with a big
   torso radius (round bodies), clamped.
-- `feet`: no foot parts → `plain`; feathers + `water` habitat → `webbed`; feathers → `talons`; fur and
-  `massKg > 30` with legs → `hooves`; fur → `paws`; slime/skin + `water` → `webbed`; otherwise `plain`.
+- `feet`: no foot parts → `plain`; feathers + `water` habitat → `webbed`; feathers → `talons`; fur,
+  `massKg > 30`, legs and no prey (`preyMax` 0: a big plant-eater) → `hooves`; fur → `paws`; slime/skin + `water` → `webbed`; otherwise `plain`.
 - `nose`: feathers + water → `bill`; feathers → `beak`; fur → `pad`; skin/scales/slime → `slits`; shell → `none`.
 - `lids`: false when `gait` is `swim` and the habitat is only `water`; otherwise true.
 - `brow`: 0.5 for `talons`/`beak` birds, 0.3 otherwise.

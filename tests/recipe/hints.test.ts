@@ -8,10 +8,23 @@ import { quadruped, snake } from '../fixtures/recipes';
 const byId = (id: string) => CAST.find((c) => c.recipe.id === id)!.recipe;
 
 describe('hint inference', () => {
-  it('gives fur animals paws and a pad nose, heavy fur animals hooves', () => {
+  it('gives fur animals paws and a pad nose, heavy fur plant-eaters hooves', () => {
     expect(inferBuild(byId('fox')).feet).toBe('paws');
     expect(inferFace(byId('fox')).nose).toBe('pad');
     expect(inferBuild(byId('deer')).feet).toBe('hooves');
+  });
+  it('gives a heavy fur hunter paws, not hooves', () => {
+    const wolf = byId('wolf');
+    expect(wolf.life.massKg).toBeGreaterThan(30);
+    expect(inferBuild(wolf).feet).toBe('paws');
+    // a designer-made big cat: heavy, furred, eats meat
+    expect(inferBuild({ ...wolf, life: { ...wolf.life, massKg: 120 } }).feet).toBe('paws');
+  });
+  it('gives a big fur herbivore hooves and a small one paws', () => {
+    const wolf = byId('wolf');
+    const grazer = { ...wolf, mind: { ...wolf.mind, plants: ['grass'], preyMin: 0, preyMax: 0 } };
+    expect(inferBuild(grazer).feet).toBe('hooves');
+    expect(inferBuild({ ...grazer, life: { ...grazer.life, massKg: 20 } }).feet).toBe('paws');
   });
   it('gives water birds a bill and webbed feet, other birds a beak and talons', () => {
     expect(inferFace(byId('duck')).nose).toBe('bill');

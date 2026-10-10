@@ -35,6 +35,8 @@ export const fox = native({
     ],
     eyes: { color: '#c88a1a', pupil: 'slit', size: 0.95 },
   },
+  build: { muscle: 0.6, feet: 'paws' },
+  face: { nose: 'pad', noseColor: '#1a1410', earInner: '#f0e6da', brow: 0.35 },
   motion: { gait: 'walk', bounce: 0.35, sway: 0.4, stance: 'normal' },
   life: { sizeM: 1.0, massKg: 6, topSpeed: 13, stamina: 0.6, lifespanDays: 1800, maturityDays: 300, litterMin: 3, litterMax: 6, juvenileHead: 1.4, juvenileFluff: 0.6 },
   mind: {

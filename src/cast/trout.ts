@@ -26,6 +26,8 @@ export const trout = native({
     ],
     eyes: { color: '#c9a23a', pupil: 'round', size: 1 },
   },
+  build: { muscle: 0.3, feet: 'plain' },
+  face: { nose: 'slits', lids: false, brow: 0 },
   motion: { gait: 'swim', bounce: 0, sway: 0.6, stance: 'low' },
   life: { sizeM: 0.4, massKg: 0.8, topSpeed: 3, stamina: 0.6, lifespanDays: 2500, maturityDays: 700, litterMin: 6, litterMax: 12, juvenileHead: 1.3, juvenileFluff: 0 },
   mind: {

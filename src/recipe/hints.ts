@@ -22,7 +22,7 @@ export function inferBuild(r: HintInput): Build {
   const muscle = Math.min(1, Math.max(0, MUSCLE[cov] - (squat ? 0.2 : 0)));
   const feet: Build['feet'] = !hasFeet ? 'plain'
     : cov === 'feathers' ? (water ? 'webbed' : 'talons')
-    : cov === 'fur' ? (hasLegs && r.life.massKg > 30 ? 'hooves' : 'paws')
+    : cov === 'fur' ? (hasLegs && r.life.massKg > 30 && r.mind.preyMax === 0 ? 'hooves' : 'paws') // big plant-eaters only
     : (cov === 'slime' || cov === 'skin') && water ? 'webbed'
     : 'plain';
   return { muscle, feet };

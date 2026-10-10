@@ -34,6 +34,8 @@ export const deer = native({
     ],
     eyes: { color: '#2a1a10', pupil: 'bar', size: 0.95 },
   },
+  build: { muscle: 0.8, feet: 'hooves' },
+  face: { nose: 'pad', noseColor: '#1c1714', earInner: '#e9d6cc', brow: 0.3 },
   motion: { gait: 'walk', bounce: 0.3, sway: 0.3, stance: 'normal' },
   life: { sizeM: 1.6, massKg: 70, topSpeed: 13, stamina: 0.7, lifespanDays: 4000, maturityDays: 500, litterMin: 1, litterMax: 2, juvenileHead: 1.35, juvenileFluff: 0.4 },
   mind: {

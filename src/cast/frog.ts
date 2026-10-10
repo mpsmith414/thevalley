@@ -26,6 +26,8 @@ export const frog = native({
     ],
     eyes: { color: '#c8a030', pupil: 'bar', size: 1 },
   },
+  build: { muscle: 0.2, feet: 'webbed' },
+  face: { nose: 'slits', brow: 0.1 },
   motion: { gait: 'hop', bounce: 0.8, sway: 0.1, stance: 'low' },
   life: { sizeM: 0.18, massKg: 0.5, topSpeed: 3, stamina: 0.3, lifespanDays: 3000, maturityDays: 700, litterMin: 12, litterMax: 12, juvenileHead: 1.2, juvenileFluff: 0 },
   mind: {

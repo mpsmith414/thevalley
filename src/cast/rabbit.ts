@@ -27,6 +27,8 @@ export const rabbit = native({
     ],
     eyes: { color: '#1a1008', pupil: 'round', size: 0.95 },
   },
+  build: { muscle: 0.4, feet: 'paws' },
+  face: { nose: 'pad', noseColor: '#c98b8b', earInner: '#e8b4b0', brow: 0.2 },
   motion: { gait: 'hop', bounce: 0.7, sway: 0.2, stance: 'low' },
   life: { sizeM: 0.4, massKg: 1.8, topSpeed: 11, stamina: 0.4, lifespanDays: 3000, maturityDays: 120, litterMin: 3, litterMax: 7, juvenileHead: 1.4, juvenileFluff: 0.8 },
   mind: {
