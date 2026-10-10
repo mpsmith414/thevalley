@@ -31,6 +31,8 @@ export function shellTop(pack: RegionPack): number {
 
 /** Eyes the fur keeps clear of (more are rare; the rest just get the coat). */
 const MAX_EYES = 4;
+/** Where the eyes start in the `furCoat` array (after two elements per region). */
+const EYE_BASE = 2 * MAX_REGIONS;
 
 /**
  * The coat settings per region, as one vec4 array (the fur material's only uniform buffer beyond the skin's six):
@@ -118,7 +120,7 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   // round the eyes the fur is short and stands up (lying fur slid over the eyeball and hid it)
   let eyeGap: F = float(1);
   for (let k = 0; k < MAX_EYES; k++) {
-    const e = coat.element(2 * MAX_REGIONS + k) as unknown as E;
+    const e = coat.element(EYE_BASE + k) as unknown as E;
     const beyond = length(r.bp.sub(e.xyz)).sub(e.w.mul(EYE_RIM));
     eyeGap = min(eyeGap, smoothstep(0, max(e.w.add(r.furLength.mul(EYE_REACH)), 1e-5), beyond));
   }
@@ -148,27 +150,32 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   m.positionNode = positionLocal.add(rise).add(along).add(sag).add(wander).add(cross(n, gs).mul(wave(t)));
 
   // --- per vertex, for the strands (shells repeat 16–24 times, so the pixel work must stay small) ---
-  // the lattice: cells scaled to the region's fur length; offset keeps ids clear of zero; a little noise breaks up moiré
-  const cellPos = varying(r.bp.div(cell).add(1000).add(mx_noise_vec3(r.bp.mul(25)).mul(1.5)));
-  // the strand's slide from the shell below to this one, in the rest pose's lattice (rest groom, rest normal)
+  // Everything that depends on the region's cell size is passed in metres and divided per pixel by the pixel's own region's
+  // cell: divided per vertex, a triangle whose corners lie in regions of different cells interpolated between two lattice
+  // scales (~50 cells swept across it) and drew a flat seam along every such border.
+  const bpV = varying(r.bp), wobble = varying(mx_noise_vec3(r.bp.mul(25)));
+  // the strand's slide from the shell below to this one, in the rest pose's lattice (rest groom, rest normal), in metres
   const rn = attribute('normal', 'vec3'), gr = r.groom;
   const step = gr.mul(len.mul(lean).mul(t15.sub(tp15)))
     .add(vec3(0, -1, 0).mul(droop.mul(len).mul(t.mul(t).sub(tp.mul(tp)))))
     .add(cross(rn, gr).mul(wave(t).sub(wave(tp))));
-  const flat = step.sub(rn.mul(dot(step, rn))).div(cell).toVar();
-  const axis = varying(flat.mul(min(1, float(MAX_STEP).div(max(length(flat), 1e-6)))));
-  const look = varying(vec4(radius, guard, guardLen, clump));
+  const slide = varying(step.sub(rn.mul(dot(step, rn))));
   const restN = varying(rn);
-  // the clump lattice wobbles (a straight lattice sliced by a flat flank drew its partings as long straight scratches)
+  // the clump lattice wobbles (a straight lattice sliced by a flat flank drew its partings as long straight scratches);
+  // bounded (CLUMP_WOBBLE), so across a border between cell sizes it only shifts the clumps a little, smoothly
   const clumpWarp = varying(mx_noise_vec3(r.bp.div(cell.mul(CLUMP_CELL * 3))).mul(CLUMP_WOBBLE));
 
-  // --- per pixel ---
-  const P = cellPos.toVar();
+  // --- per pixel (the coat settings of the pixel's own region: a clean switch at the border's midline) ---
+  const cellF = cB.w.toVar();
+  // the lattice: cells scaled to the region's fur length; offset keeps ids clear of zero; a little noise breaks up moiré
+  const P = bpV.div(cellF).add(1000).add(wobble.mul(1.5)).toVar();
+  const flat = slide.div(cellF).toVar();
+  const axis = flat.mul(min(1, float(MAX_STEP).div(max(length(flat), 1e-6)))).toVar();
   // cells per pixel: far off a strand is thinner than a pixel and the coat would sparkle, so strands widen to stay about
   // 1.5 pixels wide (and the shading across and along them flattens, below), and the coat reads as a soft, even nap
-  const px = length(fwidth(P)).mul(0.5).toVar();
+  const px = length(fwidth(bpV)).div(cellF).mul(0.5).toVar();
   const far = smoothstep(0.25, 1, px).toVar();
-  const rad = look.x, gShare = look.y, gLen = look.z, clumpK = min(look.w.mul(t), 0.6).toVar();
+  const rad = radius, gShare = guard, gLen = guardLen, clumpK = min(clump.mul(t), 0.6).toVar();
   // clumps: the lattice is sampled spread out from each clump's centre, so its strands' tips gather (by clump × t);
   // past the clump's edge strands thin, a parting where clumps gather strongly
   const K = vec3(dot(P, ROT[0]), dot(P, ROT[1]), dot(P, ROT[2])).div(CLUMP_CELL).add(clumpWarp).toVar();
