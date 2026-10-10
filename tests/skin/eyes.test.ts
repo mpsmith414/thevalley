@@ -2,6 +2,7 @@ import { Bone, Group, Raycaster, Vector3, type Mesh } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import { buildBody, type BodyData } from '../../src/builder/build';
 import { fox } from '../../src/cast/fox';
+import { deer } from '../../src/cast/deer';
 import { frog } from '../../src/cast/frog';
 import { trout } from '../../src/cast/trout';
 import type { Recipe } from '../../src/recipe/schema';
@@ -124,6 +125,21 @@ describe('an upturned eye', () => {
     fe.blink(0);
     expect(lowerRim(fe)).toBeCloseTo(-55 * deg, 9);
     expect(-fe.lids[0].rotation.x).toBeCloseTo(50 * deg, 9);
+  });
+});
+
+describe('pupils after the turn', () => {
+  /** The eye's local axes in creature space (the rest pose: bones unturned). */
+  const axes = (e: Eye) => ({ x: new Vector3(1, 0, 0).applyQuaternion(e.quaternion), y: new Vector3(0, 1, 0).applyQuaternion(e.quaternion) });
+  it("stand a fox's slit upright (its long axis, local y, as near vertical as the gaze allows) and lay a deer's bar level", () => {
+    expect(fox.skin.eyes.pupil).toBe('slit');
+    expect(deer.skin.eyes.pupil).toBe('bar');
+    for (const e of eyesOf(foxBody, fox).eyes) {
+      const { x, y } = axes(e), z = e.getWorldDirection(new Vector3());
+      expect(y.y).toBeCloseTo(Math.sqrt(1 - z.y * z.y), 9);
+      expect(x.y).toBeCloseTo(0, 9);
+    }
+    for (const e of eyesOf(buildBody(deer, [2]), deer).eyes) expect(axes(e).x.y).toBeCloseTo(0, 9); // the bar's long axis is local x
   });
 });
 

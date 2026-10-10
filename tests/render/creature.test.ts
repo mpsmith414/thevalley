@@ -1,7 +1,8 @@
 import { Quaternion, Vector3, type Material, type Object3D, type SkinnedMesh } from 'three/webgpu';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildBody, individualVariation } from '../../src/builder/build';
 import { createCreatureObject, type CreatureObject } from '../../src/render/creature';
+import { eyePlaces } from '../../src/skin/eyes';
 import { fox } from '../../src/cast/fox';
 import { cross, dot, norm, sub, type Vec3 } from '../../src/util/vec';
 import { jawWeight } from '../fixtures/jaw';
@@ -10,6 +11,7 @@ import { blob, quadruped } from '../fixtures/recipes';
 // two coarse levels of detail are enough: the first gets 12 fur shells on High, the second 6
 const body = buildBody(quadruped, [2, 2]);
 const bones = body.skeleton.bones;
+const foxBody = buildBody(fox, [0]); // the fox at full detail: its face, jaw and eyes
 const variation = (seed: number) => individualVariation(quadruped, seed, bones.length, bones.map((b) => b.partId));
 const shells = (o: CreatureObject) => o.root.children.filter((c): c is SkinnedMesh => c.name.startsWith('fur'));
 const disposed = (m: Material) => {
@@ -71,10 +73,55 @@ describe('createCreatureObject with a shared look', () => {
     expect(furGone()).toBe(true);
     expect(lidsGone()).toBe(true);
   });
+
+  it("frees each animal's own eye resources (eyeball, its material, the lids' cap) with it", () => {
+    const a = createCreatureObject(body, quadruped, 'high', variation(1));
+    const b = createCreatureObject(body, quadruped, 'high', variation(2), a.look);
+    const e = b.eyes[0];
+    const gone = [e.geometry, e.material as Material, e.lids[0].geometry].map((x) => disposed(x as Material));
+    const aEye = disposed(a.eyes[0].geometry as unknown as Material);
+    b.dispose();
+    gone.forEach((g) => expect(g()).toBe(true));
+    expect(aEye()).toBe(false); // the other animal's own eyes are its own
+  });
+
+  it('makes (and frees) its own lid material, with a warning, when a borrowed look has none', () => {
+    const a = createCreatureObject(body, quadruped, 'high', variation(1));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const b = createCreatureObject(body, quadruped, 'high', variation(2), { ...a.look, lids: null });
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    const mat = b.eyes[0].lids[0].material as Material;
+    expect(mat).toBeDefined();
+    expect(mat).not.toBe(a.look.lids);
+    const gone = disposed(mat);
+    b.dispose();
+    expect(gone()).toBe(true);
+  });
+});
+
+describe('the belly flag (partInfo.w)', () => {
+  it('fades out round the eyes (a socket ceiling faces down, and took the belly colour) but stays on the throat', () => {
+    const g = createCreatureObject(foxBody, fox, 'low').meshes[0].geometry;
+    const info = g.attributes.partInfo.array as Float32Array, P = foxBody.lods[0].positions, N = foxBody.lods[0].normals;
+    const eyes = eyePlaces(foxBody, fox.skin.eyes.size);
+    expect(eyes).toHaveLength(2);
+    let near = 0, throat = 0;
+    for (let v = 0; v < P.length / 3; v++) {
+      const d = Math.min(...eyes.map((e) => Math.hypot(P[v * 3] - e.centre.x, P[v * 3 + 1] - e.centre.y, P[v * 3 + 2] - e.centre.z) / e.r));
+      if (d < 1.3) {
+        near++;
+        expect(info[v * 4 + 3]).toBe(0);
+      }
+      if (d > 3 && N[v * 3 + 1] < -0.75 && info[v * 4 + 3] === 1) throat++;
+    }
+    expect(near).toBeGreaterThan(20);
+    expect(throat).toBeGreaterThan(100);
+  });
 });
 
 describe('the jaw', () => {
-  const fb = buildBody(fox, [0]), m = fb.mouth!, lod = fb.lods[0], P = lod.positions, n = P.length / 3, jaw = fb.skeleton.jaw;
+  const fb = foxBody, m = fb.mouth!, lod = fb.lods[0], P = lod.positions, n = P.length / 3, jaw = fb.skeleton.jaw;
   const H = fb.skeleton.bones[m.head], rH = Math.max(H.r0, H.r1), L = Math.hypot(m.tip.x - m.hinge.x, m.tip.y - m.hinge.y, m.tip.z - m.hinge.z);
   const obj = createCreatureObject(fb, fox, 'low');
   /** Every LOD0 vertex skinned on the CPU in the current pose (creature space). */

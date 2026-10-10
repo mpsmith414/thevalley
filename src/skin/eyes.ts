@@ -4,6 +4,7 @@ import {
 import { float, length, mix, positionLocal, smoothstep, uniform, uv, vec2, abs } from 'three/tsl';
 import type { BodyData } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
+import { lerp, norm, sub, type Vec3 } from '../util/vec';
 
 /** An eyeball (looking along local +z) with its lids (none on a fish). `blink(amount)`: 0 open … 1 shut. */
 export type Eye = Mesh & { blink(amount: number): void; lids: Mesh[] };
@@ -18,10 +19,11 @@ const LID_R = 1.07;
 /** The lower lid's size against the upper: open, the two overlap behind the eye, and on one surface they z-fought there. */
 const LOWER_SCALE = 0.98;
 /**
- * How much wider an upturned eye's lower lid opens at rest (radians, at full upturn: the eye looking ≥ 0.9 up). A frog's
- * eye looks ~58° up, so from beside it you meet it right at a −55° rim and it read half shut and sleepy.
+ * How much wider an upturned eye's lower lid opens at rest (radians), from no wider for an eye looking up by UPTURN_FROM
+ * (the gaze's y) or less to UPTURN_OPEN at UPTURN_FULL and more. A frog's eye looks ~58° up (y 0.85), so from beside it
+ * you meet it right at a −55° rim and it read half shut and sleepy; the other natives look up by 0.25 at most.
  */
-const UPTURN_OPEN = 30 * deg;
+const UPTURN_OPEN = 30 * deg, UPTURN_FROM = 0.4, UPTURN_FULL = 0.9;
 
 /** Lid rim elevations (radians) for a closing amount: upper +50° → −35°, lower −55° → −35°. */
 export function lidAngles(amount: number): { upper: number; lower: number } {
@@ -86,6 +88,18 @@ function gaze(dir: Vector3): Quaternion {
   return new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(new Vector3().crossVectors(y, dir), y, dir));
 }
 
+/** Where an eye bone's eyeball sits: its centre (creature space, rest pose), gaze (unit) and radius. */
+export type EyePlace = { bone: number; centre: Vec3; dir: Vec3; r: number };
+
+/** Every eye bone's eyeball: centred halfway along the bone, looking along it, radius max(r0, r1) × the recipe's eye size. */
+export function eyePlaces(body: BodyData, eyeSize: number): EyePlace[] {
+  return body.skeleton.bones.flatMap((d, bone) => {
+    if (d.role !== 'eye') return [];
+    const dir = sub(d.end, d.start);
+    return [{ bone, centre: lerp(d.start, d.end, 0.5), dir: norm(dir), r: Math.max(d.r0, d.r1) * eyeSize }];
+  });
+}
+
 /**
  * Bright, glossy eyes on every eye bone, looking outward along the bone, each with an upper and a lower lid when the
  * recipe has lids (`face.lids`). Pass the animal's `tint` (set on the lids, as on its body) and its species' `lids`
@@ -97,17 +111,14 @@ export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?:
   const lidMat = recipe.face.lids ? (lids ?? lidMaterial(body, recipe)) : null;
   // a hemispherical cap over y > 0: unrotated, its rim lies in the eye's y = 0 plane, its front edge at elevation 0
   const lidGeo = lidMat ? new SphereGeometry(LID_R, 24, 8, 0, 2 * Math.PI, 0, Math.PI / 2) : null;
-  return body.skeleton.bones.flatMap((d, i) => {
-    if (d.role !== 'eye') return [];
-    const dir = new Vector3(d.end.x - d.start.x, d.end.y - d.start.y, d.end.z - d.start.z);
-    const len = dir.length();
-    dir.normalize();
-    const r = Math.max(d.r0, d.r1) * recipe.skin.eyes.size;
+  const defs = body.skeleton.bones;
+  return eyePlaces(body, recipe.skin.eyes.size).map(({ bone: i, centre, dir: g, r }) => {
+    const d = defs[i], dir = new Vector3(g.x, g.y, g.z);
     const eye = new Mesh(geo, mat) as unknown as Eye;
     eye.name = `eye:${d.name}`;
     eye.scale.setScalar(r);
     eye.quaternion.copy(gaze(dir));
-    eye.position.copy(dir.clone().multiplyScalar(len * 0.5)); // relative to the eye bone (at its start)
+    eye.position.set(centre.x - d.start.x, centre.y - d.start.y, centre.z - d.start.z); // relative to the eye bone (at its start)
     eye.castShadow = true;
     eye.lids = lidGeo && lidMat ? ['upper', 'lower'].map((k) => {
       const l = new Mesh(lidGeo, lidMat);
@@ -120,7 +131,7 @@ export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?:
       return l;
     }) : [];
     const [upper, lower] = eye.lids;
-    const wider = UPTURN_OPEN * Math.min(1, Math.max(0, (dir.y - 0.4) / 0.5));
+    const wider = UPTURN_OPEN * Math.min(1, Math.max(0, (dir.y - UPTURN_FROM) / (UPTURN_FULL - UPTURN_FROM)));
     // a cap's front edge tips up by e when turned −e about x; the lower is the cap turned over (z by π) first
     eye.blink = upper ? (amount: number) => {
       const a = lidAngles(amount);
@@ -129,6 +140,6 @@ export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?:
     } : () => {};
     eye.blink(0);
     bones[i].add(eye);
-    return [eye];
+    return eye;
   });
 }

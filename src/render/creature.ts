@@ -4,7 +4,7 @@ import {
 import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
-import { createEyes, lidMaterial, type Eye } from '../skin/eyes';
+import { createEyes, eyePlaces, lidMaterial, type Eye, type EyePlace } from '../skin/eyes';
 import { createFurShells, furMaterial } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
@@ -43,9 +43,27 @@ export type CreatureObject = {
 };
 
 const BELLY_ROLES = new Set(['torso', 'neck', 'head', 'tail']);
+/** Round each eye (in eyeball radii) the belly fades out, from none inside the first to full past the second. */
+const EYE_NO_BELLY = [1.3, 1.6] as const;
+
+/**
+ * How much a vertex may show the belly colour: 1 on the belly roles' bones, fading to 0 near the eyes (a socket's ceiling
+ * faces down like a belly and showed a pale crescent over the eye).
+ */
+function bellyFlag(ok: number, x: number, y: number, z: number, eyes: EyePlace[]): number {
+  if (!ok) return 0;
+  let f = 1;
+  for (const e of eyes) {
+    const d = Math.hypot(x - e.centre.x, y - e.centre.y, z - e.centre.z) / e.r;
+    const t = Math.min(1, Math.max(0, (d - EYE_NO_BELLY[0]) / (EYE_NO_BELLY[1] - EYE_NO_BELLY[0])));
+    f = Math.min(f, t * t * (3 - 2 * t));
+  }
+  return f;
+}
 
 
-export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
+/** One level of detail's geometry. Pass the eyes (`eyePlaces`) to keep the belly colour out of their sockets. */
+export function lodGeometry(l: LodMesh, body: BodyData, eyes: EyePlace[] = []): BufferGeometry {
   const g = new BufferGeometry();
   g.setAttribute('position', new BufferAttribute(l.positions, 3));
   g.setAttribute('normal', new BufferAttribute(l.normals, 3));
@@ -58,7 +76,7 @@ export function lodGeometry(l: LodMesh, body: BodyData): BufferGeometry {
     info[v * 4] = l.region[v];
     info[v * 4 + 1] = l.partT[v];
     info[v * 4 + 2] = l.partS[v];
-    info[v * 4 + 3] = bellyOk[l.boneOf[v]];
+    info[v * 4 + 3] = bellyFlag(bellyOk[l.boneOf[v]], l.positions[v * 3], l.positions[v * 3 + 1], l.positions[v * 3 + 2], eyes);
   }
   g.setAttribute('partInfo', new BufferAttribute(info, 4));
   // the rest position, and the region index squared: with the index itself (partInfo.x) the fragment shader can tell
@@ -104,8 +122,9 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!), lids: recipe.face.lids ? lidMaterial(body, recipe) : null };
   const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
   const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
+  const places = eyePlaces(body, recipe.skin.eyes.size);
   const meshes = body.lods.map((l) => {
-    const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body), own.skin);
+    const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body, places), own.skin);
     m.userData.tint = tint;
     m.castShadow = true;
     m.receiveShadow = true;
@@ -135,7 +154,13 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     jaw = { bone, axis, shut: bone.position.clone(), open: (theta) => void bone.quaternion.setFromAxisAngle(axis, theta) };
   }
   if (variation) root.scale.setScalar(variation.boneScale[0] ?? 1);
-  const eyes = createEyes(body, recipe, bones, tint, own.lids);
+  // a borrowed look without lids (from a lidless recipe) for a lidded one: lids of this animal's own, freed with it
+  let ownLids: Material | null = null;
+  if (recipe.face.lids && !own.lids) {
+    console.warn('a borrowed creature look has no lid material for a recipe with lids: making one for this animal');
+    ownLids = lidMaterial(body, recipe);
+  }
+  const eyes = createEyes(body, recipe, bones, tint, own.lids ?? ownLids);
 
   const obj: CreatureObject = {
     root, look: own, meshes, bones, skeleton,
@@ -161,7 +186,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
       meshes.forEach((m) => m.geometry.dispose());
       // the eyes' sphere, their material and the lids' cap are this animal's own (the lid material is the species')
       const e = eyes[0];
-      if (e) [e.geometry, e.material as Material, e.lids[0]?.geometry].forEach((x) => x?.dispose());
+      if (e) [e.geometry, e.material as Material, e.lids[0]?.geometry, ownLids].forEach((x) => x?.dispose());
       if (!look) [own.skin, own.fur, own.lids].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
       root.removeFromParent();
     },
