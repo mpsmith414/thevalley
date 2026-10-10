@@ -25,8 +25,10 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 - **Sub-project 3a, Lifeform Polish: shapes and faces, is built on `feat/lifeform-polish` and NOT merged.** It waits
   for the owner's OK on the before/after sheets (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`,
   each row before | after for the 8 natives then the 6 test bodies; `valley-animals.png`; `after-drawings.png` and the drawings'
-  `after-drawing-<n>-*.png`). 14 tasks plus 10b (body cache, worker pool) and 10c (face tuning), 31 commits with this one.
-  The three measured "done when" items hold: every body builds in under 3 s (worst: the frog, 2.5 s), River Bend 14.9 ms
+  `after-drawing-<n>-*.png`; after the final review also `final-ears-*`, `final-biped-*`). 14 tasks plus 10b (body cache,
+  worker pool) and 10c (face tuning), then three final-review fix commits (ears, upright heads, LOD0 cap and small items);
+  the final whole-branch review's verdict is **ready to merge** once the owner OKs the sheets.
+  The three measured "done when" items hold: every body builds in under 3 s (worst: the frog, 2.4 s), River Bend 14.9 ms
   median (15.0 before), tests, `tsc` and `npm run build` pass. What it added: schema v2 hints (`build`, `face`), an
   anatomy layer (muscles, joints, ribcage, feet, a sculpted face), sparse fine meshing with importance-weighted
   simplification (LOD0–2 from one chain), a `feature` vertex attribute (nose, inner ear, lips/mouth, hoof colours), a
@@ -112,8 +114,8 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
   `valley-animals.png`: deer, fox and duck up close in the valley at noon; the four drawings' `after-drawing-<n>-face/34/side`).
   The spec's first "done when" is the owner's OK on them; merge only then.
 - **Fur looks spiky at close range** (face portraits): unchanged by 3a, it is the fur shells; 3b's fur rework.
-- **The frog's LOD0 is 1.5× the old triangle count**, not ~1.2× (100k triangles; the anatomy adds surface and the
-  budget follows surface area). It costs nothing measurable at River Bend; the other bodies are 1.20–1.30×.
+- **LOD0 is capped at 1.3× the old triangle count** (the frog was 1.5×; the cap also trims the hawk −16 %, bird −9 %,
+  duck −3 %). Eyelids are hidden at LOD2, so a distant sleeping animal shows open eyes (barely visible at that range).
 - **Build times are 5–15× the old builder** (0.25–2.5 s per body, the frog 2.5 s of a 3 s limit). The body cache and
   worker pool hide it after the first build; a new drawing waits about that long once.
 - **Hawk:** folded wings stick out behind it on its upright perch (the rig folds wings to a fixed near-level
@@ -121,8 +123,9 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
   cell-limited cone; the beak region's border on the face is ragged with fur off.
 - **Mouths:** the open mouth's cheeks are a stretched dark membrane (fine to the 0.3 rad the jaw is clamped to, long
   triangles beyond 0.4); the lip band is too narrow at LOD1/2 and on the trout; a small dark tick behind the duck's bill.
-- **Upright heads** (the biped test body) get their mouth slit running up the face (the slit follows the head bone).
-  Native animals are fine; a drawn upright creature could look odd.
+- **Upright heads** (the biped and `upright` test bodies) get a level face frame: the mouth runs across the face below
+  the eyes. Its painted lip line is wide (reads as a cartoon smile). A head sunk deep in a fat torso with low eyes gets
+  no mouth at all (by design: no mouth beats a wrong one).
 - **Wolf:** the skull to muzzle profile is still a smooth wedge with little stop.
 - **The four test drawings** went through the designer once at the end (Sonnet, 3 look-again passes each, 16 calls,
   no errors): Puffle (fluffball), Zigzag Crowner (six-legged lizard), Puffback Zigzag (snake with wing puffs), Dotty
@@ -215,7 +218,9 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 
 **Meshing and simplification** (`src/builder/sparse.ts`, `simplify.ts`, `mesher.ts`, `build.ts`)
 - Building only LOD2 costs a full build; frog build time headroom is ~0.5 s of the 3 s limit (2.5 s).
-- The frog's LOD0 is 1.5× the old triangle count (the budget follows surface area, which the anatomy grows).
+- Upright heads: the lip line is wide; sunk upright heads get no mouth (a wider fallback could use the clearance height).
+- Geometry is built per animal per LOD (`lodGeometry`): caching it per species would save 1–4 ms per spawn and GPU memory.
+- `bodyKey` (persisted in the body cache) is three 32-bit FNV hashes: a stronger hash would be safer long term.
 - The edge-length regulariser (REG 1e-3) raises coarse-LOD error (< 1‰); zero-area input faces are never removed (none
   on real bodies); rejected edges are retried only when an endpoint changes.
 - `splitNonManifold` is silent on an unresolved crowded edge (never seen); trout normals disagree at 29–31 vertices
@@ -224,13 +229,10 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
   (1.82M of 2M).
 
 **Anatomy** (`src/builder/anatomy`)
-- A backward-leaning upright bone gets a ventral "up" (no current body has one; drawn recipes could): flip so
-  `up.z ≤ 0` for the neck and torso rules.
 - The coarse SDF's "never overstates" comment over-claims for blended bodies (1.14 against 1.25 slack); `skeleton.min/max`
   cover bones only (~1 cm short).
 - The belly-tuck gate ignores the blend k and leg radius (heuristic); the 0.75-cell clamp on r0 never binds.
-- `Feature.cuts` is applied to every op in `marksAt` (the doc says marks only); three-region junction triangles are
-  approximate in the material; the rabbit's ear root gets 0.25 at 1–2 vertices.
+- Three-region junction triangles are approximate in the material; the rabbit's ear root gets 0.25 at 1–2 vertices.
 - Upright heads (the biped test body) get a mouth slit running up the face; the wolf's skull to muzzle has little stop;
   the hawk's hook tip is a thin cell-limited cone and its beak border is ragged.
 
