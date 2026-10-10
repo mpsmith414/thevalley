@@ -15,6 +15,7 @@ Specs and plans:
 - Vision and roadmap: [docs/superpowers/specs/2026-10-06-vision-and-roadmap.md](docs/superpowers/specs/2026-10-06-vision-and-roadmap.md)
 - The Valley: [design](docs/superpowers/specs/2026-10-07-valley-design.md), [plan](docs/superpowers/plans/2026-10-07-valley.md)
 - The Creature Lab: [design](docs/superpowers/specs/2026-10-06-creature-lab-design.md), [plan](docs/superpowers/plans/2026-10-06-creature-lab.md)
+- Lifeform Polish 3a, shapes and faces: [design](docs/superpowers/specs/2026-10-09-lifeform-polish-shapes-faces-design.md), [plan](docs/superpowers/plans/2026-10-09-lifeform-polish-shapes-faces.md)
 - Where things stand: [docs/superpowers/HANDOFF.md](docs/superpowers/HANDOFF.md)
 
 ## Run it
@@ -105,12 +106,15 @@ resolution (down to 70 % on High) holds the frame rate in between. You can pick 
 - `src/render`: the WebGPU renderer, quality tiers, the creature renderer and stage, startup pipeline compiling and the
   skinning patch.
 - `src/recipe`: the creature recipe (zod schema), normalising (clamps and repairs any input) and small edits.
-- `src/builder`: recipe → skeleton → smooth "clay" distance field → surface-nets mesh (3 levels of detail) → skin
-  weights. It runs in a pool of up to 4 Web Workers and is deterministic, so built bodies are cached in IndexedDB
-  (`creature-bodies`, newest 64) under the recipe's body key plus a hash of the builder's source (a changed builder never reads old bodies).
-- `src/skin`: one shared TSL material (patterns, belly colour, coverings), fur shells and eyes.
+- `src/builder`: recipe → skeleton (plus a jaw bone) → smooth "clay" distance field with an anatomy layer (muscles,
+  joints, ribcage, feet, a sculpted face) → fine surface-nets mesh near the surface → importance-weighted simplification
+  (3 levels of detail from one chain) → skin weights. It runs in a pool of up to 4 Web Workers and is deterministic, so
+  built bodies are cached in IndexedDB (`creature-bodies`, the 32 most recently used) under the recipe's body key plus a
+  hash of the builder's source (a changed builder never reads old bodies). See "Bodies and faces" under the lab.
+- `src/skin`: one shared TSL material (patterns, belly colour, coverings, face colours: nose, inner ear, lips, mouth,
+  hooves), fur shells, eyes and eyelids.
 - `src/motion`: limbs and gaits, FABRIK IK with planted feet, the rig (walk, fly, swim, lie down), secondary motion
-  (head, tail, ears, wings, fins, breathing, blinking) and actions.
+  (head, tail, ears, wings, fins, breathing, blinking, jaw and lids) and actions.
 - `src/cast`: the native animals, hand-written recipes that set the quality bar.
 - `src/designer` and `server/`: the Claude designer service (read, look-again, tweak), the browser loop and image
   preparation.
@@ -127,16 +131,19 @@ CPU's ~3.5 ms and the GPU never overlap, as they do in the live loop: a little p
 
 | Viewpoint | Median ms | 90th pct ms | Draw calls | Triangles |
 |---|---:|---:|---:|---:|
-| 1 Lake Shore | 13.2 | 14.2 | 140 | 5.0 M |
-| 2 Meadow | 10.0 | 10.9 | 86 | 1.7 M |
-| 3 Ridge Top | 13.0 | 14.0 | 96 | 4.3 M |
-| 4 River Bend | 16.1 | 17.0 | 136 | 8.9 M |
-| 5 Forest Floor | 13.9 | 14.3 | 97 | 7.8 M |
-| 6 Beach | 11.9 | 12.9 | 132 | 5.8 M |
-| 7 Rocky Knoll | 9.9 | 10.4 | 77 | 2.4 M |
-| 8 Valley Overview | 7.0 | 7.7 | 40 | 1.7 M |
+| 1 Lake Shore | 12.5 | 13.9 | 152 | 5.0 M |
+| 2 Meadow | 10.0 | 10.4 | 118 | 1.7 M |
+| 3 Ridge Top | 12.0 | 12.8 | 96 | 4.3 M |
+| 4 River Bend | 14.9 | 15.8 | 136 | 8.9 M |
+| 5 Forest Floor | 12.9 | 13.5 | 105 | 7.8 M |
+| 6 Beach | 10.9 | 11.8 | 140 | 5.8 M |
+| 7 Rocky Knoll | 9.3 | 10.2 | 97 | 2.4 M |
+| 8 Valley Overview | 6.3 | 7.2 | 40 | 1.7 M |
 
-Draw calls and triangles include the shadow cascades and the lake's mirror. At River Bend the CPU part is 3.4 ms, so
+Measured 2026-10-10 with the Lifeform Polish 3a creatures (finer bodies, eyelids). The same run on the code just
+before 3a gave River Bend 15.0 / 16.1 ms, so the new bodies cost nothing measurable there (the extra draw calls at
+Meadow, Lake Shore and Rocky Knoll are most likely the eyelids, separate meshes, of the animals in view). An earlier run at the end of the Valley build
+gave River Bend 16.1 ms: runs vary by about 1 ms. Draw calls and triangles include the shadow cascades and the lake's mirror. At River Bend the CPU part is 3.4 ms, so
 the live loop's frame is about 13 ms. The live frame rate itself still wants checking on the TV (the measuring window
 was hidden, which stops animation frames): open the menu after a first visit and see whether Quality → Auto kept High.
 
@@ -202,13 +209,64 @@ fixes things. **Change it** takes words like "make it bigger" or "give it wings"
 kept in the **Gallery** in this browser, with **Save a backup** / **Load a backup**.
 
 Settings in the Workshop: detail level, fur, skeleton view, quality tier, and the number of
-look-again passes (default 3; each pass is one more Claude call).
+look-again passes (default 3; each pass is one more Claude call). Its **Face** row plays the face on the turntable:
+Blink, Yawn, Chew, Alert (ears pricked forward) and Ears back; the actions (call, eat, drink, sleep) move the jaw, lids
+and ears too.
+
+### Bodies and faces
+
+Every creature (native or drawn) gets the same automatic anatomy from its part roles, tuned by a few recipe hints
+(schema v2: `build.muscle` 0–1 and `build.feet`; `face.nose`, `face.noseColor`, `face.lids`, `face.earInner`,
+`face.brow`). The designer fills them in; anything missing is inferred from the covering, gait and habitat, and v1
+recipes upgrade on load.
+
+- **Body** (`src/builder/anatomy`): muscle bellies on the upper legs (haunches and shoulders), knobs at the knees,
+  hocks and wrists with slimmer tendons below, a ribcage swell and belly tuck, shoulder blades and a spine line on
+  four-legged animals, a throat line and crest on the neck. Feet by `build.feet`: paws (four toe pads), hooves (a split
+  tip, coloured as hoof), talons (three forward, one back) or webbed (three toes and a web).
+- **Face:** a cranium swell, brow ridges, eye sockets, cheeks, a muzzle that narrows to its tip, and a nose by
+  `face.nose`: a pad with nostrils and a groove, a hooked beak, a flat bill, or two slits. A mouth slit runs from the
+  tip to a corner (far back for meat-eaters, short for plant-eaters), closed at rest by a jaw bone that opens up to
+  0.3 rad, with a dark mouth inside. Ears are cupped, with a lighter inner ear. Eyes sit in their sockets under upper
+  and lower lids that blink, half-close and shut in sleep.
+- **Meshing:** a coarse pass finds the surface; only the blocks it crosses are sampled finely (330 cells along the
+  longest side, coarser for bulky bodies so the raw mesh stays under ~110,000 vertices). The fine mesh is simplified
+  by quadric edge collapse, weighted so the face, feet and joints keep their detail and the flanks give it up. LOD0,
+  LOD1 and LOD2 are snapshots of that one chain: LOD0 about 1.2× the triangles the old 110-cell grid gave, LOD1 a
+  quarter of LOD0, LOD2 a sixteenth.
+- **Cache:** a body is built once per browser (a few workers in parallel) and read back from IndexedDB after that.
+  The valley's animals are ready about 3.5 s after the page opens on a later visit (bodies read in under 1 s); the
+  first visit builds them in about 9 s behind the loading screen.
+
+Body builds, all three levels of detail, main thread (`npx tsx tools/perf.ts`, Node on the owner's PC; the target is
+under 3 s each). "Before" is the old uniform-grid builder.
+
+| Body | Build (ms) | Before (ms) | LOD0 / LOD1 / LOD2 triangles | Before LOD0 |
+|---|---:|---:|---|---:|
+| Deer | 1,651 | 248 | 36,726 / 9,182 / 2,294 | 29,568 |
+| Rabbit | 1,886 | 440 | 63,702 / 15,926 / 3,980 | 51,688 |
+| Red Fox | 1,185 | 137 | 23,788 / 5,946 / 1,486 | 19,124 |
+| Wolf | 1,466 | 157 | 32,770 / 8,192 / 2,048 | 26,000 |
+| Duck | 1,452 | 190 | 28,214 / 7,054 / 1,762 | 22,368 |
+| Hawk | 690 | 80 | 12,286 / 3,072 / 768 | 9,840 |
+| Trout | 702 | 66 | 13,540 / 3,384 / 846 | 10,588 |
+| Frog | 2,524 | 583 | 100,238 / 25,060 / 6,264 | 65,788 |
+| quadruped (test) | 1,337 | 118 | 31,274 / 7,818 / 1,954 | 23,992 |
+| snake (test) | 248 | 15 | 7,606 / 1,902 / 474 | 6,284 |
+| hexapod (test) | 1,395 | 205 | 52,922 / 13,230 / 3,308 | 43,036 |
+| blob (test) | 986 | 163 | 119,490 / 29,872 / 7,468 | 99,404 |
+| biped (test) | 946 | 46 | 23,270 / 5,818 / 1,454 | 18,248 |
+| bird (test) | 1,009 | 126 | 18,800 / 4,700 / 1,174 | 14,704 |
+
+The tool also prints where each build's time goes (sampling, meshing, weighting, simplifying, normals, skinning).
 
 ### Status
 
 Built and checked on the owner's PC (RTX 3060 Ti, WebGPU):
 
-- Body builds (full detail, main thread, `npx tsx tools/perf.ts`): 50–450 ms per native animal. The frog is slowest at 0.45 s; the target is under 3 s.
+- Body builds (all three levels of detail, main thread, `npx tsx tools/perf.ts`): 0.25–2.5 s per body since Lifeform
+  Polish 3a (table above). The frog is slowest at 2.5 s; the target is under 3 s. Built bodies are cached, so a body
+  is built once per browser.
 - Planted feet slide 0 cm while walking, trotting, galloping, changing speed and circling.
 - Frame cost at 1920×1080 on the high tier (one walking animal, stage, fur, shadows; simulation + render + GPU finish): wolf 7.3 ms, fox 10.5 ms, rabbit 11 ms, deer 10.3 ms, frog 6.1 ms. 60 fps needs under 16.7 ms.
 - The owner has run the designer live with their own key.

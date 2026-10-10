@@ -99,7 +99,7 @@ export function inferFace(r: HintInput): Face;
 
 Inference rules (exactly these; `cov = headCovering(r)`, `water = r.mind.habitat.includes('water')`, `hasFeet = r.parts.some(p => p.role === 'foot')`, `hasLegs = r.parts.some(p => p.role === 'leg')`):
 - `muscle`: fur 0.6, feathers 0.5, skin/scales 0.3, slime/shell 0.15; minus 0.2 when `motion.gait === 'hop'` and the largest torso `max(r0, r1)` is more than 0.25 × `life.sizeM`; clamp to [0, 1].
-- `feet`: `!hasFeet` → plain; feathers && water → webbed; feathers → talons; fur && hasLegs && `life.massKg > 30` → hooves; fur → paws; (slime or skin) && water → webbed; else plain.
+- `feet`: `!hasFeet` → plain; feathers && water → webbed; feathers → talons; fur && hasLegs && `life.massKg > 30` && `mind.preyMax === 0` (a big plant-eater) → hooves; fur → paws; (slime or skin) && water → webbed; else plain.
 - `nose`: feathers && water → bill; feathers → beak; fur → pad; skin/scales/slime → slits; shell → none.
 - `lids`: `false` when `motion.gait === 'swim'` and `mind.habitat` is exactly `['water']`; else `true`.
 - `brow`: 0.5 when `nose === 'beak'`, else 0.3. `noseColor`, `earInner`: null.

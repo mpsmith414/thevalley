@@ -1,4 +1,4 @@
-# Handoff: where Creature Ecosystem stands (2026-10-09)
+# Handoff: where Creature Ecosystem stands (2026-10-10)
 
 Read this first in a new session, then the specs it points to.
 
@@ -10,6 +10,8 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 - Vision, decisions and roadmap: `docs/superpowers/specs/2026-10-06-vision-and-roadmap.md`
 - Sub-project 1 design and plan: `docs/superpowers/specs/2026-10-06-creature-lab-design.md`, `docs/superpowers/plans/2026-10-06-creature-lab.md`
 - Sub-project 2 design and plan: `docs/superpowers/specs/2026-10-07-valley-design.md`, `docs/superpowers/plans/2026-10-07-valley.md`
+- Sub-project 3a design and plan: `docs/superpowers/specs/2026-10-09-lifeform-polish-shapes-faces-design.md`,
+  `docs/superpowers/plans/2026-10-09-lifeform-polish-shapes-faces.md` (build ledger: `.superpowers/sdd/progress.md`)
 - How it works, how to run it, controls, performance and status: `README.md`
 
 ## Where things are
@@ -18,11 +20,21 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
   says it works.
 - **Sub-project 2, the Valley, is built** and merged to `main` (21 tasks, about 60 commits; 447 tests (one wall-clock test runs only with `PERF=1`), `npx tsc --noEmit` clean, `npm run build` OK). The valley is on `/` (`index.html`), the lab on
   `/lab.html`.
-- **Everything is on `main`**, pushed to the public GitHub repo `https://github.com/mpsmith414/thevalley`
+- **Sub-projects 1 and 2 are on `main`**, pushed to the public GitHub repo `https://github.com/mpsmith414/thevalley`
   (merged with the owner's OK on 2026-10-09). Work new sub-projects on a feature branch and merge only on the owner's OK.
+- **Sub-project 3a, Lifeform Polish: shapes and faces, is built on `feat/lifeform-polish` and NOT merged.** It waits
+  for the owner's OK on the before/after sheets (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`,
+  each row before | after for the 8 natives then the 6 test bodies; `valley-animals.png`; `after-drawings.png` and the drawings'
+  `after-drawing-<n>-*.png`). 14 tasks plus 10b (body cache, worker pool) and 10c (face tuning), 31 commits with this one.
+  The three measured "done when" items hold: every body builds in under 3 s (worst: the frog, 2.5 s), River Bend 14.9 ms
+  median (15.0 before), tests, `tsc` and `npm run build` pass. What it added: schema v2 hints (`build`, `face`), an
+  anatomy layer (muscles, joints, ribcage, feet, a sculpted face), sparse fine meshing with importance-weighted
+  simplification (LOD0–2 from one chain), a `feature` vertex attribute (nose, inner ear, lips/mouth, hoof colours), a
+  jaw bone, eyelids, face motion (call, chew, lap, yawn, lids, ears), a body cache in IndexedDB and a builder worker
+  pool, and the native cast's hints and retune. README "Bodies and faces" has the details and numbers.
 - `.env` (gitignored) holds the owner's key. They use a **multi-workspace key**, so `ANTHROPIC_WORKSPACE_ID` is also set and sent as the `anthropic-workspace-id` header.
 - The designer asks Claude for **plain JSON** against the schema (written into the cached instructions). The recipe schema is too big for constrained structured outputs ("compiled grammar is too large"). The server validates leniently, normalises (it infers missing part roles from ids, among other repairs) and retries once.
-- Owner's verdict on the lab: a first pass. **Shapes and faces bother them most.** That is the next sub-project.
+- Owner's verdict on the lab: a first pass. **Shapes and faces bother them most.** That was sub-project 3a (above).
 - Owner's verdict on the valley (2026-10-09, played it live): **"looks pretty awesome so far"**, ready to move on to
   Lifeform Polish. The open checks below (TV frame rate, night darkness, River Bend, audio clips) were not raised as
   blockers.
@@ -50,7 +62,7 @@ The build was checked through screenshots in a hidden browser pane, so some thin
   Chrome keeps a shader cache; smaller shaders (the 4-cascade shadow code is in every lit material, 45–85 KB of WGSL
   each); one terrain shader for every clipmap level (levels 0 and 1 compile separately, ~1 s each); or taking the
   start screen's press during loading.
-- River Bend is the heaviest view (16.1 ms serial proxy, 13 ms live estimate). If the TV shows drops there, the near
+- River Bend is the heaviest view (14.9–16.1 ms serial proxy depending on the run, about 13 ms live estimate). If the TV shows drops there, the near
   and mid tree bands (each ~4.4 ms of camera pass there) are the levers.
 - Visual: night is very dark and blue; the forest floor is dark at dawn and golden hour; far meadows and rock faces read
   as flat colour from high up; the river reads as a straight canal near River Bend, with a pale rim along its banks;
@@ -86,6 +98,37 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
     (in no cache key) while the key light is out. Related: `compileAsync` skips shadow passes, so the animals' shadow
     pipelines are made by one warm-up render (`Residents.warmShadows`), and the sky's lights are on every layer so a
     creatures-only camera is lit like the main view and shares its pipelines.
+11. **Flat integer varying for the creature's region** (`src/skin/material.ts` `regionNodes`, added in 3a): the seam fix
+    reads `varying(int(...))` and relies on three's WGSL emitting integer varyings with `@interpolate(flat)` and on
+    WebGPU's flat value coming from the triangle's first corner (the provoking vertex). If three changes either, region
+    borders show a stripe of other regions' colours again (the fox's tail base is the test case: `t9-fox-side-lod2`).
+    The eyelids (`src/skin/eyes.ts`) use only public API (a `DoubleSide` material, a per-object `onObjectUpdate`
+    tint) and share the skinning patch (item 1) with the body.
+
+## Lifeform Polish 3a: what the owner should check, and known issues
+
+- **The sheets** (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`: each row is before | after; rows
+  deer, rabbit, fox, wolf, duck, hawk, trout, frog, then the test bodies quadruped, snake, hexapod, blob, biped, bird;
+  `valley-animals.png`: deer, fox and duck up close in the valley at noon; the four drawings' `after-drawing-<n>-face/34/side`).
+  The spec's first "done when" is the owner's OK on them; merge only then.
+- **Fur looks spiky at close range** (face portraits): unchanged by 3a, it is the fur shells; 3b's fur rework.
+- **The frog's LOD0 is 1.5× the old triangle count**, not ~1.2× (100k triangles; the anatomy adds surface and the
+  budget follows surface area). It costs nothing measurable at River Bend; the other bodies are 1.20–1.30×.
+- **Build times are 5–15× the old builder** (0.25–2.5 s per body, the frog 2.5 s of a 3 s limit). The body cache and
+  worker pool hide it after the first build; a new drawing waits about that long once.
+- **Hawk:** folded wings stick out behind it on its upright perch (the rig folds wings to a fixed near-level
+  direction), and it flies nose-up 30–40° (the rig never levels a flier). Both are motion (3b). Its hook tip is a thin,
+  cell-limited cone; the beak region's border on the face is ragged with fur off.
+- **Mouths:** the open mouth's cheeks are a stretched dark membrane (fine to the 0.3 rad the jaw is clamped to, long
+  triangles beyond 0.4); the lip band is too narrow at LOD1/2 and on the trout; a small dark tick behind the duck's bill.
+- **Upright heads** (the biped test body) get their mouth slit running up the face (the slit follows the head bone).
+  Native animals are fine; a drawn upright creature could look odd.
+- **Wolf:** the skull to muzzle profile is still a smooth wedge with little stop.
+- **The four test drawings** went through the designer once at the end (Sonnet, 3 look-again passes each, 16 calls,
+  no errors): Puffle (fluffball), Zigzag Crowner (six-legged lizard), Puffback Zigzag (snake with wing puffs), Dotty
+  Longneck (turtle). The designer filled the new hints itself (muscle, feet, nose, brow, an inner-ear colour for the
+  fluffball). Sheet: `.shots/after-drawings.png` (drawing | face | three-quarter | side). The `-face` shot frames the
+  head bone, so for a creature whose head is most of its body (Puffle) it is far too close.
 
 ## Backlog
 
@@ -160,12 +203,70 @@ Kept on purpose from the build and the final review: small, none blocks the merg
   - `ValleyClient` has no timeout;
   - `start.ts` and partial animal-spawn failure are untested.
 
+## 3a backlog (Lifeform Polish: shapes and faces)
+
+From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). None blocks the merge.
+
+**For 3b (fur, motion, post-processing)**
+- Fur at close range looks spiky (face portraits); fur thins over the wider lip band (fur length is `1 − feature.z`).
+- Hawk: fold the wings along the back's slope (`secondary.ts` `flapWings` folds to a fixed `(±0.22, 0.05, −1)`), so they
+  stop sticking out behind on the upright perch; level fliers in flight (the hawk flies 30–40° nose-up).
+- Spine flex and weight shift (out of 3a's scope); alert ears linger 2–5 s after a glance at the camera.
+
+**Meshing and simplification** (`src/builder/sparse.ts`, `simplify.ts`, `mesher.ts`, `build.ts`)
+- Building only LOD2 costs a full build; frog build time headroom is ~0.5 s of the 3 s limit (2.5 s).
+- The frog's LOD0 is 1.5× the old triangle count (the budget follows surface area, which the anatomy grows).
+- The edge-length regulariser (REG 1e-3) raises coarse-LOD error (< 1‰); zero-area input faces are never removed (none
+  on real bodies); rejected edges are retried only when an endpoint changes.
+- `splitNonManifold` is silent on an unresolved crowded edge (never seen); trout normals disagree at 29–31 vertices
+  (< 0.05 %); the raw-size cap estimate cannot see thin webs; the "two cells" Detail comment is stale.
+- Tests: the trout is not in the real-body sampler test; `toFixed(4)` comparisons; the evaluation-count margin is thin
+  (1.82M of 2M).
+
+**Anatomy** (`src/builder/anatomy`)
+- A backward-leaning upright bone gets a ventral "up" (no current body has one; drawn recipes could): flip so
+  `up.z ≤ 0` for the neck and torso rules.
+- The coarse SDF's "never overstates" comment over-claims for blended bodies (1.14 against 1.25 slack); `skeleton.min/max`
+  cover bones only (~1 cm short).
+- The belly-tuck gate ignores the blend k and leg radius (heuristic); the 0.75-cell clamp on r0 never binds.
+- `Feature.cuts` is applied to every op in `marksAt` (the doc says marks only); three-region junction triangles are
+  approximate in the material; the rabbit's ear root gets 0.25 at 1–2 vertices.
+- Upright heads (the biped test body) get a mouth slit running up the face; the wolf's skull to muzzle has little stop;
+  the hawk's hook tip is a thin cell-limited cone and its beak border is ragged.
+
+**Jaw and mouth** (`src/builder/build.ts`, `weights.ts`, `anatomy/face.ts`)
+- The all-or-none slot branch in skinning never fires and is untested (a latent jump).
+- Open mouths: the cheeks are a stretched membrane (long triangles past 0.4 rad; the jaw is clamped to 0.3); corners
+  stretch slightly on the deer; the rabbit's ear root folds (5 → 14) at 0.4 rad; four sub-pixel sliver flips.
+- The biped test body has one fold (0.14 of the median) at 0.3 rad inside the lip line; no open-pose fold test; the
+  wolf's rest-pose sliver test is fragile (one sliver flipped it during the retune).
+- The lip band is too narrow at LOD1/2 and on the trout; a small dark tick behind the duck's bill (start the lip line
+  about one band ahead of the hinge for beaks and bills); the frog has no production-cell slit-depth assertion.
+
+**Eyes and lids** (`src/skin/eyes.ts`, `src/render/creature.ts`)
+- `eyePlaces` and the belly fade run per animal per LOD (1–4 ms at spawn); the fade edge 1.6 is not pinned by a test;
+  the fade radii are tied to `face.ts`'s socket constants by a comment only.
+
+**Face motion** (`src/motion/secondary.ts`, `actions.ts`)
+- A hold's release stomps intents (lab only today; the boundary is a comment); `earTwitch`/`springStep` allocate per frame;
+  the chew lid ease is untested.
+
+**Body cache and worker pool** (`src/builder/cache.ts`, `pool.ts`)
+- A failed `used` write throws away a good cache hit (`cache.ts:60`); no v1 → v2 database upgrade test; one stray
+  worker error retires that worker for good; a gallery of more than 32 creatures churns the cache.
+
+**Recipe, hints, lab** (`src/recipe/hints.ts`, `src/lab`)
+- Hints tests miss the hop penalty, shell, slits and slime-webbed branches; no test that the gallery passes a
+  `RecipeError` through; `headCovering` assumes non-empty arrays.
+- `portrait`: the camera restore is not in try/finally, it leaves the loop paused, and `-34`/`-side` aim at
+  root y + rest height; `tools/perf.ts` does not flag bodies over 3 s.
+
 ## Roadmap
 
 1. Creature Lab: built
 2. The Valley: built and merged
-3. **Lifeform Polish (committed): next.** Shapes and faces first, then fur, motion and post-processing. The creatures
-   can now be seen in the valley, which is what this pass was waiting for.
+3. **Lifeform Polish:** 3a (shapes and faces) built on `feat/lifeform-polish`, waiting for the owner's OK to merge;
+   **3b (fur, motion, post-processing): next**, a brainstorm of its own on top of the new bodies.
 4. The Living Ecosystem
 5. Views and Eyes
 6. Bring It to Life (phone)
@@ -175,13 +276,19 @@ Kept on purpose from the build and the final review: small, none blocks the merg
 Follow the usual flow: brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only
 on the owner's OK.
 
-**Starting the next chat:** "Read docs/superpowers/HANDOFF.md, then start the Lifeform Polish brainstorm (sub-project 3)."
-Begin on a new branch from `main` (for example `feat/lifeform-polish`).
+**Next: Lifeform Polish 3b brainstorm (fur, motion, post-processing).** First get the owner's OK on the 3a sheets and
+merge `feat/lifeform-polish` into `main` (then push). Then start a new chat with: "Read docs/superpowers/HANDOFF.md,
+then start the Lifeform Polish 3b brainstorm (fur, motion, post-processing)." Begin on a new branch from `main` (for
+example `feat/lifeform-polish-3b`). Starting points: the "For 3b" group in the 3a backlog (spiky close-up fur, the
+hawk's wing fold and flight pitch, spine flex and weight shift), the fur shells in `src/skin/fur.ts`, the rig and
+secondary motion in `src/motion`, and the valley's render path for post-processing (`src/render`, `src/world`), with
+River Bend (`__valley.perf()`, 14.9 ms median now) as the frame budget to hold. Use `__lab.portrait(recipe, prefix)`
+for before shots on `main` first, as 3a did.
 
 ## Dev tips that save time
 
 - The preview tool reads `.claude/launch.json` from the session's original folder. Start the session in `CreatureEcosystem2` (the `valley` or `lab` configuration, port 5180), or run `npm run dev` yourself.
-- The app window is often hidden, which freezes animation frames, CSS transitions and the screenshot tool. Use the dev hooks instead: in the valley `__valley.step(frames)`, `__valley.shot(name)`, `__valley.screen(name)`, `__valley.tour(prefix)`, `__valley.perf()`, `__valley.timings`; in the lab `__lab.step`, `__lab.shot`, `__lab.screen`.
+- The app window is often hidden, which freezes animation frames, CSS transitions and the screenshot tool. Use the dev hooks instead: in the valley `__valley.step(frames)`, `__valley.shot(name)`, `__valley.screen(name)`, `__valley.tour(prefix)`, `__valley.perf()`, `__valley.timings`; in the lab `__lab.step`, `__lab.shot`, `__lab.screen`, `__lab.portrait(recipe, prefix)` (the standard `-face`, `-34` and `-side` shots used for the 3a sheets; recipes in `__lab.CAST` and `__lab.fixtures`) and `__lab.face(cmd)` (blink, yawn, chew, alert, back). The drawing test set exposes `__drawings.rows` and `runOne(row)`; its recipes are not exposed, so 3a captured them by intercepting the gallery save of each row's "Open in lab".
 - Live frame times (stalls, hitches): `__valley.frames.start()`, then play, then `__valley.frames.stop()` gives the real
   frames' intervals and working ms and lists the slow ones with the valley hour. In a hidden window call
   `__valley.frames.pump()` first: the live loop then runs from a timer that waits for the GPU after each frame (so GPU

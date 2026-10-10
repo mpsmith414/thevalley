@@ -173,7 +173,7 @@ The lab gets controls to trigger blink, yawn, call, chew and ear poses on the tu
 ## 7. Native cast, designer, upgrade, testing
 
 - **Native cast:** each of the 8 gets its hints by hand (fox: `muscle` 0.6, `paws`, `pad` nose `#1a1410`, pale inner
-  ear; deer: `muscle` 0.8, `hooves`; hawk: `talons`, `beak`, `brow` 0.7; and so on). Proportions are retuned where the
+  ear; deer: `muscle` 0.8, `hooves`; hawk: `talons`, `beak`, `brow` 0.75; and so on). Proportions are retuned where the
   new shapes show they are off. They stay the quality bar.
 - **Designer:** the cached instructions describe `build` and `face` in a few lines with examples. Lenient server
   validation plus `normalizeRecipe` fill anything missing, so a reply without hints still works.
