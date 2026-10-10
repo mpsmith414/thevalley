@@ -132,7 +132,7 @@ describe('the jaw', () => {
     // no stretched spikes: nothing pulls far, but the mouth's own skin (the lips and the cheeks' lip line, marked at both
     // ends), which stretches by design into the open mouth's dark inside, and only about as far as the mouth opens
     const I = lod.indices, d = (A: Float32Array, a: number, b: number) => Math.hypot(A[a * 3] - A[b * 3], A[a * 3 + 1] - A[b * 3 + 1], A[a * 3 + 2] - A[b * 3 + 2]);
-    const lip = (v: number) => lod.feature[v * 4 + 2] >= 0.2;
+    const lip = (v: number) => lod.feature[v * 4 + 2] >= 0.5; // (where the lip colour starts)
     let grow = 0, lips = 0;
     for (let t = 0; t < I.length; t += 3)
       for (const [a, b] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) {

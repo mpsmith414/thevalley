@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { anatomy, type Anatomy } from '../../src/builder/anatomy';
-import { faceFeatures, frameAlong, headFrame, LIPS_PART, mouthFrame } from '../../src/builder/anatomy/face';
+import { faceFeatures, frameAlong, headFrame, LIPS_PART, mouthFrame, noseRadius, PAD } from '../../src/builder/anatomy/face';
 import { buildBody } from '../../src/builder/build';
 import { feature, marksAt, shapeSdf, smax, type Shape } from '../../src/builder/anatomy/shapes';
 import { bodySdf, smin, thinAxis } from '../../src/builder/sdf';
@@ -112,7 +112,7 @@ describe('face features', () => {
     const { sk, f } = faceOf(fox), M = sk.bones.find((b) => b.role === 'mouth')!, H = sk.bones.find((b) => b.role === 'head')!;
     const nose = f.find((g) => g.name === 'nose')!.shape;
     if (nose.type !== 'ellipsoid') throw new Error('ellipsoid');
-    const a = norm(sub(M.end, M.start)), rp = Math.min(Math.max(M.r1, 0.35 * M.r0), 0.3 * Math.max(H.r0, H.r1));
+    const a = norm(sub(M.end, M.start)), rp = Math.min(noseRadius(H, M), PAD * Math.max(H.r0, H.r1));
     expect(dot(sub(nose.c, M.end), a)).toBeCloseTo(M.r1 - 0.15 * rp, 9);
     expect(dot(sub(nose.c, M.end), a) + nose.r.x).toBeGreaterThan(M.r1); // it stands a little proud of the tip
   });
@@ -154,6 +154,15 @@ describe('face features', () => {
     // a short mouth: the plant-eaters' hinge-to-tip is a smaller part of the head than the hunters'
     const share = (id: string) => { const r = cast(id), sk = buildSkeleton(r), H = sk.bones.find((b) => b.role === 'head')!; return corner(id).L / Math.max(H.r0, H.r1); };
     for (const plant of ['rabbit', 'deer']) for (const hunter of ['fox', 'wolf']) expect(share(plant), `${plant} < ${hunter}`).toBeLessThan(share(hunter));
+    // a bird's mouth is its beak: whatever it eats, its corner is at or ahead of the beak's base (at the head's surface)
+    for (const id of ['duck', 'hawk'])
+      for (const preyMax of [0, 0.5]) {
+        const r = { ...cast(id), mind: { ...cast(id).mind, preyMax } }, sk = buildSkeleton(r), m = mouthFrame(sk, r, detail(sk))!;
+        const H = sk.bones[m.head], B = sk.bones[m.mouth], lH = dist(H.start, H.end), a = norm(sub(H.end, H.start));
+        // along the head bone, then along the beak (its line bends at the head's end)
+        const along = dot(sub(m.hinge, H.end), a) > 0 ? lH + dot(sub(m.hinge, B.start), norm(sub(B.end, B.start))) : dot(sub(m.hinge, H.start), a);
+        expect(along, `${id} preyMax ${preyMax}`).toBeGreaterThanOrEqual(lH + Math.max(B.r0, B.r1) - 1e-9);
+      }
     // diet is what moves it: the same fox fed only plants gets the short mouth
     const veg = { ...fox, mind: { ...fox.mind, preyMax: 0 } }, sk = buildSkeleton(fox);
     expect(dist(mouthFrame(sk, veg, detail(sk))!.tip, mouthFrame(sk, veg, detail(sk))!.hinge)).toBeLessThan(dist(mouthFrame(sk, fox, detail(sk))!.tip, mouthFrame(sk, fox, detail(sk))!.hinge));

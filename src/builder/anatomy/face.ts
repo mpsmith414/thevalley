@@ -17,7 +17,8 @@ export const LIPS_PART = 0.75;
 /**
  * Behind the lips' corner, where the cheeks close the mouth's sides, the jaw's pull (src/builder/weights.ts) ramps in over
  * this many slit widths instead of one: the rest lift squeezes that skin to a third rather than a twentieth (slivers turned
- * over), and opening the mouth stretches it a little less. It narrows to the slit over the 0.1 L before the corner.
+ * over), and opening the mouth stretches it a little less. It narrows to the slit over the 0.25 L before the corner (over
+ * 0.1 L the rest lift varied along the cheek enough to turn a sliver over).
  */
 export const CHEEK_SPAN = 1.5;
 
@@ -71,24 +72,26 @@ function head(sk: Skeleton) {
 
 /**
  * How far along the head's line (the head bone, then the front mouth bone) the mouth's corner sits, in metres from the
- * head's start. A hunter (`prey`: it eats animals) keeps a long gape, its corner below the front of the eye (without eyes,
- * 55% along the head bone); a plant-eater's mouth is short, its corner a fifth of the way along the muzzle (without a
- * muzzle bone, 60% of the way from the head's start to its tip). A hunter's corner is never ahead of a plant-eater's, and
- * a bird's (`bird`: a beak or bill) never behind its beak's base.
+ * head's start. The diet rule is binary (`prey`: recipe.mind.preyMax > 0). A hunter keeps a long gape, its corner below
+ * the front of the eye (without eyes, 55% along the head bone); a plant-eater's mouth is short, its corner a fifth of the
+ * way along the muzzle (without a muzzle bone, 60% of the way from the head's start to its tip). A hunter's corner is never
+ * ahead of a plant-eater's. A bird's (`bird`: a beak or bill), whatever it eats, is never behind its beak's base (at the
+ * head's surface): its mouth is its beak.
  */
 function corner(sk: Skeleton, hd: NonNullable<ReturnType<typeof head>>, prey: boolean, bird: boolean): number {
   const { h, H, M, f } = hd, lH = length(H);
   const plant = M ? lH + 0.2 * length(M) : 0.6 * (lH + tipRadius(H));
-  if (!prey) return plant;
-  let eye = -1;
-  sk.bones.forEach((E, i) => {
-    if (E.role !== 'eye' || !descends(sk, i, h)) return;
-    // the eyeball's front, as far along the head as it reaches
-    eye = Math.max(eye, dot(sub(lerp(E.start, E.end, 0.5), H.start), f.a) + R(E));
-  });
-  // a bird's mouth is its beak or bill: its corner sits no further back than the beak's base (out at the head's surface)
-  const base = bird && M ? lH + R(M) : 0;
-  return Math.min(Math.max(eye >= 0 ? eye : 0.55 * lH, base), plant);
+  let c = plant;
+  if (prey) {
+    let eye = -1;
+    sk.bones.forEach((E, i) => {
+      if (E.role !== 'eye' || !descends(sk, i, h)) return;
+      // the eyeball's front, as far along the head as it reaches
+      eye = Math.max(eye, dot(sub(lerp(E.start, E.end, 0.5), H.start), f.a) + R(E));
+    });
+    c = Math.min(eye >= 0 ? eye : 0.55 * lH, plant);
+  }
+  return bird && M ? Math.max(c, lH + R(M)) : c;
 }
 
 /** The point `s` metres along the head's line (the head bone, then the front mouth bone), and the radius there. */
@@ -120,12 +123,13 @@ export function mouthFrame(sk: Skeleton, recipe: Pick<Recipe, 'face' | 'mind'>, 
 }
 
 /**
- * The lips' dark mark fades out over LIP_BAND slit half-widths from the slit (at 3, a closed mouth read as a thick dark
- * band).
+ * The lips' mark fades out over LIP_BAND slit half-widths from the slit. The skin takes the lip colour only over the mark's
+ * upper half (src/skin/material.ts), so the dark line is about half the band each side: at 3 with the colour from the
+ * mark's lower half, a closed mouth read as a thick dark band; at 1.2 the colour flipped within one edge (ragged lips).
  */
-const LIP_BAND = 1.2;
+const LIP_BAND = 2.5;
 /** A pad nose is at most this many head radii across its tip (its half-width is 0.8 of that). */
-const PAD = 0.3;
+export const PAD = 0.3;
 /** Where a thin ear's inner-ear mark starts, in base radii up the ear from its (buried) start. */
 const EAR_CUT = 0.5;
 const ellipsoid = (c: Vec3, ax: [Vec3, Vec3, Vec3], r: Vec3): Shape => ({ type: 'ellipsoid', c, ax, r });
@@ -186,7 +190,7 @@ export function faceFeatures(sk: Skeleton, recipe: Pick<Recipe, 'build' | 'face'
       // nostrils: small dimples in the pad's front (where wider than a cell), dark inside (the mouth's dark colour)
       const c = at(T, [na, 0.3 * rp], [ns, s * 0.35 * rp], [nu, 0.1 * rp]);
       if (0.13 * rp >= 1.2 * cell) out.push(feature('carve', sphere(c, 0.13 * rp), 0.04 * rp, { mark: 'nose', markBand: 0.1 * rp, name: 'nostril', bone }));
-      if (0.12 * rp >= 0.5 * cell) out.push(feature('mark', sphere(c, 0.08 * rp), 0, { mark: 'mouth', markBand: 0.12 * rp, name: 'nostrilDark', bone }));
+      if (0.12 * rp >= 0.5 * cell) out.push(feature('mark', sphere(c, 0.1 * rp), 0, { mark: 'mouth', markBand: 0.1 * rp, name: 'nostrilDark', bone }));
     }
     if (0.07 * rp >= 0.7 * cell) {
       const r = Math.max(0.07 * rp, cell);

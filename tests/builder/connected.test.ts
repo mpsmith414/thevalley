@@ -65,7 +65,7 @@ describe('connected bodies, and a jaw that opens without tearing', () => {
         // mark) stretch by design into the open mouth's dark inside (the cheeks close its sides behind the parted lips);
         // they only must not run far beyond the opening itself
         const arm = (v: number) => { const q = at(P, v); return Math.hypot(dot(q, mf.forward), dot(q, mf.up)); };
-        const lip = (v: number) => m.feature[v * 4 + 2] >= 0.2;
+        const lip = (v: number) => m.feature[v * 4 + 2] >= 0.5; // (where the lip colour starts)
         let worst = 0, mouthWorst = 0;
         for (let t = 0; t < I.length; t += 3)
           for (const [a, c] of [[I[t], I[t + 1]], [I[t + 1], I[t + 2]], [I[t + 2], I[t]]]) {
@@ -89,14 +89,17 @@ describe('connected bodies, and a jaw that opens without tearing', () => {
       const b = body(), mf = b.mouth;
       if (!mf) return;
       const L = Math.hypot(mf.tip.x - mf.hinge.x, mf.tip.y - mf.hinge.y, mf.tip.z - mf.hinge.z), theta = 0.3;
-      // the open mouth's mid-plane: the slit's plane turned down half the jaw's angle about the hinge
-      const mid = add(scale(mf.forward, Math.cos(theta / 2)), scale(mf.up, -Math.sin(theta / 2)));
+      // planes through the open mouth: the slit's plane turned down a quarter, half and three quarters of the jaw's angle
+      // about the hinge (the gap's upper, middle and lower parts)
+      const planes = [0.25, 0.5, 0.75].map((k) => add(scale(mf.forward, Math.cos(k * theta)), scale(mf.up, -Math.sin(k * theta))));
       b.lods.forEach((m, l) => {
         const open = jawPose(m, b.skeleton.jaw, mf, b.jawLift, theta);
-        for (let k = 1; k <= 14; k++) {
-          const o = add(mf.hinge, scale(mid, 0.05 * k * L));
-          for (const s of [1, -1]) expect(rayHits(m.indices, open, o, scale(mf.side, s)), `LOD${l} at ${(0.05 * k).toFixed(2)} L, side ${s}`).toBe(true);
-        }
+        planes.forEach((dir, j) => {
+          for (let k = 1; k <= 14; k++) {
+            const o = add(mf.hinge, scale(dir, 0.05 * k * L));
+            for (const s of [1, -1]) expect(rayHits(m.indices, open, o, scale(mf.side, s)), `LOD${l} at ${(0.05 * k).toFixed(2)} L, ${(j + 1) / 4} down the gap, side ${s}`).toBe(true);
+          }
+        });
       });
     }, 60_000);
   }

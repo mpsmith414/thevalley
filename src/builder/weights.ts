@@ -70,7 +70,7 @@ export function skinWeights(positions: Float32Array, sk: Skeleton, regions: stri
     }
     if (share === 0) return;
     const q = { x: P[v * 3] - mouth!.hinge.x, y: P[v * 3 + 1] - mouth!.hinge.y, z: P[v * 3 + 2] - mouth!.hinge.z }, h = mouth!.halfThick;
-    const f = dot(q, mouth!.forward), span = 2 * h * (1 + (CHEEK_SPAN - 1) * (1 - smoothstep(mouth!.lips - 0.1 * L, mouth!.lips, f)));
+    const f = dot(q, mouth!.forward), span = 2 * h * (1 + (CHEEK_SPAN - 1) * (1 - smoothstep(mouth!.lips - 0.25 * L, mouth!.lips, f)));
     const below = Math.min(1, Math.max(0, (h - dot(q, mouth!.up)) / span));
     let jw = below * smoothstep(-0.3 * rH, 0.1 * rH, f) * pull(share);
     if (jw <= 0) return;

@@ -116,9 +116,10 @@ export function markedColor(r: ReturnType<typeof regionNodes>): C {
   const f = r.feature;
   const c1 = mix(r.colorNode, r.nose, f.x);
   const c2 = mix(c1, r.earInner, f.y.mul(0.85));
-  // (only a hint of the gum tone: the closed slit shows its walls, and at full strength it read as a gaping pink mouth;
-  // none in the nostrils, dark openings in the nose)
-  const c3 = mix(mix(c2, LIPS, smoothstep(0, 0.5, f.z)), GUMS, smoothstep(0.75, 1, f.z).mul(float(1).sub(f.x)).mul(GUM_TONE));
+  // the lip colour over the mark's upper half (a wide band, so it fades over several edges rather than flipping within
+  // one); only a hint of the gum tone, deepest in the mouth (the closed slit shows its walls, and at full strength it read
+  // as a gaping pink mouth); none in the nostrils, dark openings in the nose
+  const c3 = mix(mix(c2, LIPS, smoothstep(0.5, 1, f.z)), GUMS, smoothstep(0.92, 1, f.z).mul(float(1).sub(f.x)).mul(GUM_TONE));
   return mix(c3, r.colorNode.mul(0.3), f.w) as unknown as C;
 }
 
