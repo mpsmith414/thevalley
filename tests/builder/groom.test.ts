@@ -60,5 +60,5 @@ describe('groom', () => {
       }
       expect(Array.from(a)).toEqual(Array.from(b));
     }
-  });
+  }, 30_000); // four body builds: past the 5 s default when the whole suite runs in parallel
 });
