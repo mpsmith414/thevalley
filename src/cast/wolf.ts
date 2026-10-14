@@ -25,8 +25,8 @@ export const wolf = native({
   ],
   skin: {
     regions: [
-      region('body', 'fur', '#6e685e', { belly: '#d8d2c6', furLength: 0.035, fluff: 0.5 }),
-      region('legs', 'fur', '#857e72', { belly: '#b8b0a2', furLength: 0.015, fluff: 0.3 }),
+      region('body', 'fur', '#6e685e', { belly: '#d8d2c6', furLength: 0.035, fluff: 0.5, coat: 'shaggy' }),
+      region('legs', 'fur', '#857e72', { belly: '#b8b0a2', furLength: 0.015, fluff: 0.3, coat: 'soft' }),
     ],
     eyes: { color: '#d4a020', pupil: 'round', size: 0.9 },
   },

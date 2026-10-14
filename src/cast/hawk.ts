@@ -22,10 +22,12 @@ export const hawk = native({
     regions: [
       region('body', 'feathers', '#6b4a2e', {
         belly: '#efe4d2',
+        furLength: 0.03,
+        coat: 'smooth',
         pattern: { kind: 'stripes', color: '#7a5636', scale: 0.03, amount: 0.3, along: false },
       }),
-      region('wing', 'feathers', '#5a3e26', { belly: '#d9cbb4' }),
-      region('tail', 'feathers', '#b4532a'),
+      region('wing', 'feathers', '#5a3e26', { belly: '#d9cbb4', furLength: 0.03, coat: 'smooth' }),
+      region('tail', 'feathers', '#b4532a', { furLength: 0.03, coat: 'smooth' }),
       region('beak', 'shell', '#3a3430'),
       region('feet', 'skin', '#e3b23c'),
     ],

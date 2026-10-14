@@ -26,10 +26,11 @@ describe('furMaterial', () => {
     expect(furMaterial(packRegions(bare, bare.skin.regions.map((r) => r.id)))).toBeNull();
   });
 
-  it('draws strands with alpha to coverage (smooth edges under MSAA)', () => {
+  it('cuts strands with a plain alpha test (alpha to coverage turned partly covered pixels grey)', () => {
     const m = furMaterial(packRegions(quadruped, ['body', 'tail']));
     expect(m).not.toBeNull();
-    expect(m!.alphaToCoverage).toBe(true);
+    expect(m!.alphaToCoverage).toBe(false);
+    expect(m!.alphaTest).toBe(0.5);
   });
 
   it('is lit as strands, with the ambient light × the cavity', () => {

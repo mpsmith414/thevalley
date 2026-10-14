@@ -1,11 +1,14 @@
 /**
  * Strand lighting for the fur shells (spec §4): Kajiya-Kay with two specular lobes along the strand, shifted apart (a
  * whitish one towards the root, a broader one tinted by the hair towards the tip), a wrapped diffuse (fur scatters, so the
- * terminator is soft) and a warm backlit rim when the light is behind the strand. The ambient light is darkened by the
- * cavity through the material's `aoNode` (three's own ambient-occlusion pass), and by the root darkening in the colour.
+ * terminator is soft) and a warm backlit rim when the light is behind the strand, strongest at the tips (weighted by the
+ * shell height t, capped at 1: weighted 1 − t, as first planned, it lit the inner shells, which the outline never shows,
+ * and left the fringe at the outline dark; above t = 1 it went negative and darkened the guard hairs). The ambient light
+ * is darkened by the cavity through the material's `aoNode` (three's own ambient-occlusion pass), and by the root
+ * darkening in the colour.
  */
 import { PhysicalLightingModel, type Node, type NodeBuilder } from 'three/webgpu';
-import { abs, diffuseColor, dot, float, max, mix, normalize, normalView, positionViewDirection, pow, smoothstep, vec3 } from 'three/tsl';
+import { abs, clamp, diffuseColor, dot, float, max, mix, normalize, normalView, positionViewDirection, pow, smoothstep, vec3 } from 'three/tsl';
 import { probe } from '../render/probe';
 import { add, dot as dot3, norm, scale, type Vec3 } from '../util/vec';
 
@@ -17,7 +20,7 @@ export const STRAND = { shift1: -0.1, shift2: 0.1, exp1: 80, exp2: 20 } as const
 /** Diffuse wrap: N·L down to −WRAP still gets some light. */
 const WRAP = 0.35;
 /** The primary lobe's strength × the light colour (whitish), and the backlit rim's. */
-const SPEC1 = 0.6, BACK = 0.6;
+const SPEC1 = 0.6, BACK = 0.9;
 /**
  * Both lobes' strength in the shader. At full strength (the lobes peak at 1 × sheen, beside a Lambert diffuse of about
  * albedo/π) the primary added as much white light as a red coat reflects red: the fox looked frosted grey, its dark socks
@@ -47,7 +50,7 @@ export function strandShadeCPU(o: StrandIn): { diffuse: number; spec1: number; s
     diffuse: Math.max(0, (NL + WRAP) / (1 + WRAP)),
     spec1: lobe(shift1, exp1),
     spec2: lobe(shift2, exp2),
-    back: (1 - t) * Math.max(0, -dot3(V, L)) ** 4 * Math.max(0, 1 - Math.abs(NL)) * sheen * BACK,
+    back: Math.min(Math.max(t, 0), 1) * Math.max(0, -dot3(V, L)) ** 4 * Math.max(0, 1 - Math.abs(NL)) * sheen * BACK,
   };
 }
 function smooth(a: number, b: number, x: number) {
@@ -69,7 +72,7 @@ export function strandShade(T: C, N: C, L: C, V: C, t: F, sheen: F, exp1: F | nu
     diffuse: max(0, NL.add(WRAP).div(1 + WRAP)),
     spec1: lobe(STRAND.shift1, exp1),
     spec2: lobe(STRAND.shift2, STRAND.exp2),
-    back: float(1).sub(t).mul(pow(max(dot(V, L).negate(), 0), 4)).mul(max(float(1).sub(abs(NL)), 0)).mul(sheen).mul(BACK),
+    back: clamp(t, 0, 1).mul(pow(max(dot(V, L).negate(), 0), 4)).mul(max(float(1).sub(abs(NL)), 0)).mul(sheen).mul(BACK),
   };
 }
 

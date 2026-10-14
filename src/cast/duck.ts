@@ -21,10 +21,10 @@ export const duck = native({
   ],
   skin: {
     regions: [
-      region('body', 'feathers', '#8c8070', { belly: '#cfc8ba' }),
-      region('head', 'feathers', '#1d5a3a'),
+      region('body', 'feathers', '#8c8070', { belly: '#cfc8ba', furLength: 0.02, coat: 'smooth' }),
+      region('head', 'feathers', '#1d5a3a', { furLength: 0.02, coat: 'smooth' }),
       region('bill', 'skin', '#d8b02a'),
-      region('wing', 'feathers', '#6e6458', { belly: '#b9b0a2' }),
+      region('wing', 'feathers', '#6e6458', { belly: '#b9b0a2', furLength: 0.02, coat: 'smooth' }),
       region('feet', 'skin', '#e07a20'),
     ],
     eyes: { color: '#1a120c', pupil: 'round', size: 1 },

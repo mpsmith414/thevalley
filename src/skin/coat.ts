@@ -26,7 +26,7 @@ export const COAT_LOOK: Record<Coat, CoatLook> = {
   shaggy: { lean: 0.45, density: 0.8, radius: 0.38, guard: 0.6, guardLen: 1.3, clump: 0.55, crimp: 0.15, sheen: 0.45, droop: 0.5 },
   woolly: { lean: 0.15, density: 1.6, radius: 0.42, guard: 0, guardLen: 1, clump: 0.35, crimp: 0.8, sheen: 0.15, droop: 0.1 },
   bristly: { lean: 0.25, density: 0.6, radius: 0.3, guard: 0.7, guardLen: 1.2, clump: 0, crimp: 0, sheen: 0.25, droop: 0 },
-  smooth: { lean: 0.9, density: 1, radius: 0.3, guard: 0, guardLen: 1, clump: 0, crimp: 0, sheen: 0.6, droop: 0 },
+  smooth: { lean: 0.9, density: 1, radius: 0.3, guard: 0, guardLen: 1, clump: 0, crimp: 0, sheen: 0.35, droop: 0 },
   downy: { lean: 0.3, density: 1.4, radius: 0.4, guard: 0, guardLen: 1, clump: 0.4, crimp: 0.3, sheen: 0.2, droop: 0.15 },
 };
 
@@ -176,8 +176,11 @@ export function feathersAt(p: C, cell: F, groom: C, normal: C, fw: F) {
 const FEATHER_TONE = 0.08;
 /** How dark a feather is in the shadow of the tip lying over it (towards its root), × its colour. */
 const FEATHER_SHADOW = 0.72;
-/** A feather's average shade: what the pattern fades to where feathers are only a few pixels (it read as a knitted grid). */
-const FEATHER_MEAN = 0.87;
+/**
+ * A feather's average shade: what the pattern fades to where feathers are only a few pixels (it read as a knitted grid).
+ * Measured over flat and slanted planes with `featherAtCPU` (the barbs already faded, as they are by then): 0.815–0.838.
+ */
+const FEATHER_MEAN = 0.82;
 /**
  * A feather's shade at (u, v) (× its colour): a darker shaft line, barbs streaking across the vane, a slightly lighter edge,
  * darker towards its root, where the tips of the row before lie over it (the overlap reads at any distance), and each

@@ -14,6 +14,26 @@ describe('the native cast', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  it('gives every fur and feather region its coat', () => {
+    // every hair or feather region of every native, by id; frog and trout have none
+    const COATS: Record<string, Record<string, string>> = {
+      deer: { body: 'sleek', muzzle: 'sleek', tail: 'soft' },
+      fox: { body: 'soft', snout: 'sleek', ears: 'sleek', socks: 'soft', brush: 'shaggy', tip: 'shaggy' },
+      rabbit: { body: 'soft', tail: 'soft' },
+      wolf: { body: 'shaggy', legs: 'soft' },
+      duck: { body: 'smooth', head: 'smooth', wing: 'smooth' },
+      hawk: { body: 'smooth', wing: 'smooth', tail: 'smooth' },
+      frog: {},
+      trout: {},
+    };
+    for (const { recipe } of CAST) {
+      const haired = recipe.skin.regions.filter((r) => r.covering === 'fur' || r.covering === 'feathers');
+      expect(Object.fromEntries(haired.map((r) => [r.id, r.coat])), recipe.id).toEqual(COATS[recipe.id]);
+      // feathers are drawn only where the region has a length (the feather cell is set by it)
+      for (const r of haired) expect(r.furLength, `${recipe.id} ${r.id}`).toBeGreaterThan(0);
+    }
+  });
+
   for (const { recipe } of CAST) {
     describe(recipe.name, () => {
       it('is already clean (nothing for normalise to fix)', () => {

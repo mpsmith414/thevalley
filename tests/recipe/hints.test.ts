@@ -74,7 +74,8 @@ describe('v1 → v2 → v3 upgrade', () => {
     for (const r of (v2.skin as { regions: Record<string, unknown>[] }).regions) delete r.coat;
     const { recipe, fixes } = normalizeRecipe(v2);
     expect(recipe.schemaVersion).toBe(3);
-    expect(recipe.skin.regions).toEqual(byId('fox').skin.regions);
+    // the fox's own coats are chosen by hand; a v2 recipe has none, so each is inferred
+    expect(recipe.skin.regions).toEqual(byId('fox').skin.regions.map((r) => ({ ...r, coat: inferCoat(r) })));
     expect(fixes).toContain(`skin.regions[0].coat → ${recipe.skin.regions[0].coat}`);
     expect(recipe.skin.regions[0].coat).toBe(inferCoat(recipe.skin.regions[0]));
   });

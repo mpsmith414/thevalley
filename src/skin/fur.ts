@@ -38,8 +38,11 @@ export function shellTop(pack: RegionPack): number {
  * speckle at a few metres, and the coat read as fur.)
  */
 const FEATHER_LIFT = 0.06;
-/** The primary specular lobe's sharpness on feathers (contour feathers are glossier than hair). */
-const FEATHER_EXP1 = 120;
+/**
+ * The primary specular lobe's sharpness on feathers: broad. A feather's sheen lies across its whole vane; a sharp lobe
+ * (120) along the groom, which runs round a head, drew a thin pale ring on the mallard's head and a smear on the hawk's brow.
+ */
+const FEATHER_EXP1 = 24;
 
 /** Eyes the fur keeps clear of (more are rare; the rest just get the coat). */
 const MAX_EYES = 4;
@@ -75,7 +78,7 @@ export function packCoat(pack: RegionPack, eyes: EyePlace[] = []): Vector4[] {
 const EYE_RIM = 1.1, EYE_REACH = 1.2;
 /** The fur's length right round an eye, × its length. */
 const EYE_LEN = 0.35;
-/** A strand's least radius, in pixels: thinner, alpha to coverage dithers it and the coat goes grainy. */
+/** A strand's least radius, in pixels: thinner, strands drop in and out of pixels and the coat goes grainy. */
 const MIN_WIDTH = 0.75;
 /** The coat's even shade far off, × its colour (close to the skin's, so gaps between strands don't speckle). */
 const FAR_SHADE = 0.9;
@@ -87,6 +90,11 @@ const STRAND_ROUND = 0.2;
 const UNDER_TOP = 0.75;
 /** Guard-hair cells per strand cell (a sparser, coarser lattice). */
 const GUARD_CELL = 2.5;
+/**
+ * A guard hair's radius × an underfur strand's (both in strand cells: the guard lattice's own cells are GUARD_CELL times
+ * larger). At 1.2 guard cells (3 × an underfur strand) they drew as wide pale leaves lying over the coat: shingles, not hair.
+ */
+const GUARD_THICK = 1.3;
 /** Clump cells per strand cell. */
 const CLUMP_CELL = 6;
 /** How far the clump lattice wobbles, in clump cells. */
@@ -141,7 +149,7 @@ class FurNodeMaterial extends MeshStandardNodeMaterial {
  * `lodGeometry`), so a strand rises from the skin and lies over towards the tail; on it, the strands are 3D lattice cells
  * scaled to the fur length, each drawn as the short segment its strand travels between this shell and the one below (so a
  * leaning hair reads as a line, not a stack of dots). Guard hairs come from a coarser lattice and reach higher; clumps pull
- * strand tips together; crimp waves them. Edges use alpha to coverage (MSAA), with the alpha test as the fallback. Lit
+ * strand tips together; crimp waves them. Edges are a plain alpha test. Lit
  * as strands (`FurLightingModel`: two specular lobes along the strand, wrapped diffuse, a backlit rim), with the ambient
  * light × the cavity.
  */
@@ -226,7 +234,11 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
       If(tp.equal(0), () => {
         // the rest groom is the raw attribute (the cavity already brings it to this stage; a varying of its own would be the 17th)
         const f = feathersAt(bpV, cc.z, gr, restN, fw);
-        out.assign(vec4(select(f.found, float(1), float(0)), f.shade, 0, 0));
+        // not over a triangle that reaches into a region without feathers (the length, and the colour, interpolated
+        // across it): there the shell drew a band of mixed colour and a lifted edge along the border; the skin beneath
+        // has the same feathers
+        const whole = (coat.element(r.across.mul(PER_REGION).add(2)) as unknown as E).y.greaterThan(0.5);
+        out.assign(vec4(select(f.found.and(whole), float(1), float(0)), f.shade, 0, 0));
       });
     }).Else(() => {
       const cellF = cb.w;
@@ -276,7 +288,7 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
       const sg = cellSeed(og).toVar();
       const hg = hash(sg.add(uint(3))).toVar();
       const gOwn = gLen.mul(fract(hg.mul(5.31)).mul(0.15).add(0.85));
-      const rg = max(rad.mul(1.2).mul(float(1).sub(t.mul(0.6))), min(px.mul(MIN_WIDTH / GUARD_CELL), 0.45)).mul(smoothstep(0, 0.08, gOwn.sub(t))).mul(select(hg.lessThan(gShare), float(1), float(0)));
+      const rg = max(rad.mul(GUARD_THICK / GUARD_CELL).mul(float(1).sub(t.mul(0.6))), min(px.mul(MIN_WIDTH / GUARD_CELL), 0.45)).mul(smoothstep(0, 0.08, gOwn.sub(t))).mul(select(hg.lessThan(gShare), float(1), float(0)));
       const gs1 = strand(rg.toVar(), segDist(G.sub(og), jitterOf(sg), axis.div(GUARD_CELL), restN).toVar(), hg);
       const alphaG = gs1.alpha;
       // where a guard hair is drawn: they catch the light more (the strand lighting gives them their own sheen)
@@ -294,9 +306,21 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
 
   const lenV = varying(len);
   m.opacityNode = select(lenV.greaterThan(0.0005), clamp(look.x, 0, 1), float(0));
-  m.alphaTest = 0.5; // with MSAA, alpha to coverage turns the test into a smooth, one-pixel edge; without it, a plain cut
-  m.alphaToCoverage = true;
-  m.colorNode = varying(markedColor(r)).mul(look.y);
+  // a plain cut. Alpha to coverage (three r186, WebGPU on Chrome/Windows) drew every pixel a strand only partly covered
+  // darker, towards grey, not as a mix of the strand and what lay behind: a dark outline round each strand close up, and
+  // at a few metres, where strands are about a pixel, a salt-and-pepper coat (the "grey, dithered" fur)
+  m.alphaTest = 0.5;
+  m.alphaToCoverage = false;
+  // feathers take their pattern (bars, spots) per pixel: the colour is passed per vertex, and on a bird's large triangles a
+  // pattern sampled at the corners blurred away (the hawk's barring); the fur keeps its per-vertex pattern (soft-edged in a
+  // coat anyway, and on 16 shells the pattern's noise per pixel would cost)
+  const colV = varying(markedColor({ ...r, colorNode: mix(r.plainColor, r.patternColor, r.patternOf(r.rn as unknown as C).mul(float(1).sub(r.feathers))) as unknown as typeof r.colorNode }));
+  const colour = Fn(() => {
+    const c = colV.toVar();
+    If(cC.y.greaterThan(0.5), () => c.assign(mix(c, r.patternColor, r.patternOf(restN as unknown as C))));
+    return c;
+  })() as unknown as C;
+  m.colorNode = colour.mul(look.y);
   const guardHair = look.z.greaterThan(0.5);
   m.roughnessNode = select(guardHair, float(0.8), float(0.95));
   m.aoNode = r.cavity; // ambient × cavity (and × the root darkening, already in the colour)

@@ -22,8 +22,8 @@ export const rabbit = native({
   ],
   skin: {
     regions: [
-      region('body', 'fur', '#8a7560', { belly: '#dccfb9', furLength: 0.015, fluff: 0.5 }),
-      region('tail', 'fur', '#f2efe8', { furLength: 0.02, fluff: 0.8 }),
+      region('body', 'fur', '#8a7560', { belly: '#dccfb9', furLength: 0.015, fluff: 0.5, coat: 'soft' }),
+      region('tail', 'fur', '#f2efe8', { furLength: 0.02, fluff: 0.8, coat: 'soft' }),
     ],
     eyes: { color: '#1a1008', pupil: 'round', size: 0.95 },
   },

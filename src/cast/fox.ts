@@ -26,12 +26,12 @@ export const fox = native({
   ],
   skin: {
     regions: [
-      region('body', 'fur', '#c8641e', { belly: '#f1ebe0', furLength: 0.018, fluff: 0.35 }),
-      region('snout', 'fur', '#c4621e', { belly: '#f4efe6', furLength: 0.008 }),
-      region('ears', 'fur', '#3a2416', { furLength: 0.006 }),
-      region('socks', 'fur', '#2a1d16', { furLength: 0.01, fluff: 0.2 }),
-      region('brush', 'fur', '#c0601f', { belly: '#d9a37a', furLength: 0.035, fluff: 0.75 }),
-      region('tip', 'fur', '#f4efe6', { furLength: 0.035, fluff: 0.75 }),
+      region('body', 'fur', '#c8641e', { belly: '#f1ebe0', furLength: 0.018, fluff: 0.35, coat: 'soft' }),
+      region('snout', 'fur', '#c4621e', { belly: '#f4efe6', furLength: 0.008, coat: 'sleek' }),
+      region('ears', 'fur', '#3a2416', { furLength: 0.006, coat: 'sleek' }),
+      region('socks', 'fur', '#2a1d16', { furLength: 0.01, fluff: 0.2, coat: 'soft' }),
+      region('brush', 'fur', '#c0601f', { belly: '#d9a37a', furLength: 0.035, fluff: 0.75, coat: 'shaggy' }),
+      region('tip', 'fur', '#f4efe6', { furLength: 0.035, fluff: 0.75, coat: 'shaggy' }),
     ],
     eyes: { color: '#c88a1a', pupil: 'slit', size: 0.95 },
   },

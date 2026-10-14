@@ -1,4 +1,4 @@
-import { MeshPhysicalNodeMaterial, Vector3, Vector4, Color } from 'three/webgpu';
+import { MeshPhysicalNodeMaterial, Vector3, Vector4, Color, type Node } from 'three/webgpu';
 import {
   abs, attribute, bumpMap, color, float, Fn, fract, fwidth, If, int, length, max, mix, mx_noise_float, mx_worley_noise_float,
   select, sin, smoothstep, step, uniform, uniformArray, varying, vec3,
@@ -63,7 +63,12 @@ export function regionNodes(pack: RegionPack) {
   const a = float(varying(int(info.x.add(0.5).floor()))).toVar();
   const dv = info.x.sub(a).toVar();
   const b = bp4.w.sub(a.mul(a)).div(select(abs(dv).greaterThan(1e-4), dv, float(1))).sub(a).toVar();
-  const i = int(select(abs(dv).mul(2).greaterThan(abs(b.sub(a))).and(abs(dv).greaterThan(1e-4)), b, a).add(0.5).floor().clamp(0, MAX_REGIONS - 1));
+  const mixed = abs(dv).greaterThan(1e-4);
+  const past = abs(dv).mul(2).greaterThan(abs(b.sub(a))).and(mixed);
+  const index = (x: ReturnType<typeof select>) => int((x as unknown as F).add(0.5).floor().clamp(0, MAX_REGIONS - 1));
+  const i = index(select(past, b, a));
+  // the triangle's other region (itself where the triangle lies in one region)
+  const across = index(select(mixed, select(past, a, b), a));
   const at = (a: V4) => a.element(i) as unknown as ReturnType<typeof vec3> & { w: F; xyz: C };
   const colA = at(U.colA), colB = at(U.colB), colC = at(U.colC), parA = at(U.parA), parB = at(U.parB), parC = at(U.parC);
   const pt = info.y;
@@ -90,11 +95,15 @@ export function regionNodes(pack: RegionPack) {
         select(kind.lessThan(2.5), patches,
           select(kind.lessThan(3.5), rings, gradient))))) as unknown as F;
 
-  // a lighter underside where the rest-pose surface faces down
-  const bellyAmt = float(1).sub(smoothstep(-0.75, -0.3, rn.y)).mul(hasBelly).mul(info.w);
+  // a lighter underside where the rest-pose surface (normal `n`) faces down
+  const bellyOf = (n: Node<'vec3'>) => float(1).sub(smoothstep(-0.75, -0.3, n.y)).mul(hasBelly).mul(info.w);
+  const bellyAmt = bellyOf(rn as unknown as Node<'vec3'>);
   const mottle = mx_noise_float(bp.mul(18)).mul(0.06).add(0.97);
   const base = mix(colA.xyz, colB.xyz, bellyAmt);
-  const colorNode = mix(base, colC.xyz, mask.mul(float(1).sub(bellyAmt.mul(0.6)))).mul(mottle).mul(tint) as unknown as C;
+  /** How much of the pattern's colour shows, for the rest normal `n` (fainter on the belly). */
+  const patternOf = (n: Node<'vec3'>) => mask.mul(float(1).sub(bellyOf(n).mul(0.6))) as unknown as F;
+  const plainColor = base.mul(mottle).mul(tint) as unknown as Node<'vec3'>, patternColor = colC.xyz.mul(mottle).mul(tint) as unknown as Node<'vec3'>;
+  const colorNode = mix(plainColor, patternColor, patternOf(rn as unknown as Node<'vec3'>)) as unknown as C;
 
   // surface relief by covering: cells for scales and shell, ripples for feathers, fine grain otherwise
   const cov = parB.x as unknown as F;
@@ -111,7 +120,7 @@ export function regionNodes(pack: RegionPack) {
   const nose = (U.parC.element(0) as unknown as { yzw: C }).yzw, earInner = (U.parC.element(1) as unknown as { yzw: C }).yzw;
 
   return {
-    tint, i, bp, rn, pt, colorNode, height, mask, feature, nose, earInner, feathers: feathers as unknown as F,
+    tint, i, across, bp, rn, pt, colorNode, plainColor, patternColor, patternOf, height, mask, feature, nose, earInner, feathers: feathers as unknown as F,
     groom: groom4.xyz as unknown as C, cavity: groom4.w as unknown as F,
     furLength: parA.z as unknown as F, fluff: parA.w as unknown as F,
     roughness: parB.y as unknown as F, sheen: parB.z as unknown as F, clearcoat: parB.w as unknown as F,

@@ -37,6 +37,14 @@ describe('strandShadeCPU', () => {
     expect(strandShadeCPU({ T, N, L, V: norm(v3(-0.3, 0.95, 0)), t: 0.5, sheen: 1 }).back).toBeGreaterThan(0);
   });
 
+  it('glows most at the tips, where the hair is thinnest and the fringe stands against the light (never below zero)', () => {
+    const L = norm(v3(0.3, -0.95, 0)), Vb = norm(v3(-0.3, 0.95, 0));
+    const back = (t: number) => strandShadeCPU({ T, N, L, V: Vb, t, sheen: 1 }).back;
+    expect(back(0)).toBe(0);
+    expect(back(1)).toBeGreaterThan(back(0.3));
+    expect(back(1.3)).toBe(back(1)); // guard hairs reach past a fur length
+  });
+
   it('has no specular or backlight without sheen, and the same diffuse', () => {
     const L = norm(v3(0.3, -0.95, 0)), Vb = norm(v3(-0.3, 0.95, 0));
     for (const [l, v] of [[v3(Math.sin(10 * deg), Math.cos(10 * deg), 0), V], [L, Vb]]) {

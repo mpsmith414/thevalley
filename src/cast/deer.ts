@@ -27,10 +27,10 @@ export const deer = native({
   ],
   skin: {
     regions: [
-      region('body', 'fur', '#7d5536', { belly: '#eadfc8', furLength: 0.012, fluff: 0.15 }),
-      region('muzzle', 'fur', '#5e4634', { belly: '#efe8dc', furLength: 0.006 }),
+      region('body', 'fur', '#7d5536', { belly: '#eadfc8', furLength: 0.012, fluff: 0.15, coat: 'sleek' }),
+      region('muzzle', 'fur', '#5e4634', { belly: '#efe8dc', furLength: 0.006, coat: 'sleek' }),
       region('hoof', 'shell', '#2a221c'),
-      region('tail', 'fur', '#7c5026', { belly: '#f6f2ea', furLength: 0.02, fluff: 0.4 }),
+      region('tail', 'fur', '#7c5026', { belly: '#f6f2ea', furLength: 0.02, fluff: 0.4, coat: 'soft' }),
     ],
     eyes: { color: '#2a1a10', pupil: 'bar', size: 0.95 },
   },
