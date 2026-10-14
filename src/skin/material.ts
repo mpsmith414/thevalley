@@ -3,13 +3,21 @@ import {
   abs, attribute, bumpMap, color, float, fract, int, max, mix, mx_noise_float, mx_worley_noise_float, select, sin, smoothstep, step, uniform,
   uniformArray, varying, vec3,
 } from 'three/tsl';
-import { COVERINGS, MAX_REGIONS } from '../recipe/schema';
+import { COVERINGS, MAX_REGIONS, type Covering } from '../recipe/schema';
 import { COVERING_LOOK, type RegionPack } from './patterns';
 
 type F = ReturnType<typeof float>;
 type C = ReturnType<typeof vec3>;
 type V4 = ReturnType<typeof uniformArray>;
 const NO_TINT = new Vector3(1, 1, 1);
+
+/** The surface relief a covering gets: cells for scales and shell, ripples for feathers, a fine grain otherwise. */
+export function reliefKind(covering: Covering): 'cells' | 'ripple' | 'grain' {
+  return covering === 'scales' || covering === 'shell' ? 'cells' : covering === 'feathers' ? 'ripple' : 'grain';
+}
+/** True where the covering index `cov` (into COVERINGS) has relief `kind` (the shader's twin of `reliefKind`). */
+const isRelief = (cov: F, kind: ReturnType<typeof reliefKind>) =>
+  COVERINGS.flatMap((c, i) => (reliefKind(c) === kind ? [cov.equal(i)] : [])).reduce((a, b) => a.or(b));
 
 /**
  * Region settings as six vec4 arrays (WebGPU allows 12 uniform buffers per shader stage):
@@ -90,8 +98,7 @@ export function regionNodes(pack: RegionPack) {
   const cells = mx_worley_noise_float(bp.mul(90));
   const ripple = mx_worley_noise_float(bp.mul(vec3(40, 70, 25)));
   const grain = mx_noise_float(bp.mul(160));
-  const isCells = cov.equal(2).or(cov.equal(4)); // scales, shell
-  const height = (select(isCells, cells, select(cov.equal(1), ripple, grain)) as unknown as F).mul(parC.x);
+  const height = (select(isRelief(cov, 'cells'), cells, select(isRelief(cov, 'ripple'), ripple, grain)) as unknown as F).mul(parC.x);
 
   // the colour marks (nose, inner ear, mouth, hoof) and the face colours
   const feature = attribute('feature', 'vec4');
@@ -107,6 +114,15 @@ export function regionNodes(pack: RegionPack) {
     roughness: parB.y as unknown as F, sheen: parB.z as unknown as F, clearcoat: parB.w as unknown as F,
   };
 }
+
+/** How much of the region's fur grows here, 0..1: none on the nose, lips or hooves, short inside the ears. */
+export function furCover(r: ReturnType<typeof regionNodes>): F {
+  const f = r.feature;
+  return float(1).sub(max(max(f.x, f.z), max(f.w, f.y.mul(0.7)))) as unknown as F;
+}
+
+/** The skin under fur, × the hair colour: dense underfur seen between the strands, never bare skin. */
+const UNDERFUR = 0.6;
 
 const LIPS = color(new Color('#3a2220')), GUMS = color(new Color('#9a4a48')), GUM_TONE = 0.2;
 /** The nose's finish: roughness, and a thin, soft clear coat (moist, not glassy). */
@@ -129,13 +145,18 @@ export function markedColor(r: ReturnType<typeof regionNodes>): C {
 
 /**
  * One material for a whole species: colour, pattern, belly and finish come from the region uniforms, and each animal's
- * tint from its objects' `userData.tint`.
+ * tint from its objects' `userData.tint` (and whether its fur shells are on, `userData.underfur`).
  */
 export function createSkinMaterial(pack: RegionPack) {
   const r = regionNodes(pack), f = r.feature;
-  const col = markedColor(r);
+  // where fur grows and the mesh wears its shells (`userData.underfur`, set by the creature per level of detail: far off,
+  // or with the fur off, the skin is the coat and keeps the hair's own shade), the skin is the hair colour, darkened
+  const underfur = uniform(0).onObjectUpdate(({ object }) => (object?.userData.underfur as number | undefined) ?? 0);
+  const furred = select(r.furLength.greaterThan(0), furCover(r), float(0)).mul(underfur);
+  const col = markedColor(r).mul(mix(float(1), float(UNDERFUR), furred)) as unknown as C;
   const m = new MeshPhysicalNodeMaterial();
   m.colorNode = col;
+  m.aoNode = r.cavity; // ambient light darkens in armpits, groins, along the belly line and behind the ears
   // a damp nose (at 0.25 the sky's reflection turned a big round nose to grey glass), matte hooves
   m.roughnessNode = mix(mix(r.roughness, NOSE_ROUGHNESS, f.x), 0.5, f.w);
   m.metalnessNode = float(0);

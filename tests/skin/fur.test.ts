@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { COATS } from '../../src/recipe/schema';
 import { furMaterial, furShellOffsets, packCoat, shellTop } from '../../src/skin/fur';
 import { COAT_LOOK, strandCell } from '../../src/skin/coat';
+import { FurLightingModel } from '../../src/skin/fur-light';
 import { packRegions } from '../../src/skin/patterns';
 import { blob, quadruped } from '../fixtures/recipes';
 
@@ -26,6 +27,12 @@ describe('furMaterial', () => {
     expect(m).not.toBeNull();
     expect(m!.alphaToCoverage).toBe(true);
   });
+
+  it('is lit as strands, with the ambient light × the cavity', () => {
+    const m = furMaterial(packRegions(quadruped, ['body', 'tail']))!;
+    expect(m.setupLightingModel()).toBeInstanceOf(FurLightingModel);
+    expect(m.aoNode).not.toBeNull();
+  });
 });
 
 describe('packRegions coat', () => {
@@ -38,15 +45,17 @@ describe('packRegions coat', () => {
 });
 
 describe('packCoat', () => {
-  it('packs each region coat in two vec4s (cell from strandCell), then the eyes', () => {
+  it('packs each region coat in three vec4s (cell from strandCell, then the sheen), then the eyes', () => {
     const p = packRegions(quadruped, ['body', 'tail']);
     const v = packCoat(p, [{ bone: 0, centre: { x: 0.1, y: 0.2, z: 0.3 }, dir: { x: 0, y: 0, z: 1 }, r: 0.01 }]);
-    expect(v).toHaveLength(8 * 2 + 4);
+    expect(v).toHaveLength(8 * 3 + 4);
     const soft = COAT_LOOK.soft;
     expect(v[0].toArray()).toEqual([soft.lean, soft.radius, soft.guard, soft.guardLen]);
     expect(v[1].w).toBeCloseTo(strandCell(0.02, soft.density), 10);
-    expect(v[16].toArray()).toEqual([0.1, 0.2, 0.3, 0.01]);
-    expect(v[17].w).toBe(0); // no second eye
+    expect(v[2].x).toBe(soft.sheen);
+    expect(v[5].x).toBe(0); // scales: no coat, no sheen
+    expect(v[24].toArray()).toEqual([0.1, 0.2, 0.3, 0.01]);
+    expect(v[25].w).toBe(0); // no second eye
   });
 
   it('the shells reach the longest guard hairs (1 fur length without any)', () => {

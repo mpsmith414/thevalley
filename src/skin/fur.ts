@@ -1,13 +1,14 @@
 import { MeshStandardNodeMaterial, SkinnedMesh, Vector4, type BufferGeometry, type Material, type Node } from 'three/webgpu';
 import {
-  abs, attribute, clamp, cross, dot, float, floor, fract, fwidth, hash, int, length, max, min, mix, mx_noise_vec3, normalize, normalLocal,
-  positionLocal, pow, select, sin, smoothstep, tangentLocal, uint, uniform, uniformArray, varying, vec3, vec4,
+  abs, attribute, clamp, cross, dot, float, floor, fract, fwidth, hash, int, length, max, min, mix, modelViewMatrix, mx_noise_vec3, normalize,
+  normalLocal, positionLocal, pow, select, sin, smoothstep, tangentLocal, uint, uniform, uniformArray, varying, vec3, vec4,
 } from 'three/tsl';
 import { COATS, MAX_REGIONS } from '../recipe/schema';
 import { skinsTangent } from '../render/probe';
 import { COAT_LOOK, strandCell } from './coat';
 import type { EyePlace } from './eyes';
-import { markedColor, regionNodes } from './material';
+import { FurLightingModel, type StrandInputs } from './fur-light';
+import { furCover, markedColor, regionNodes } from './material';
 import type { RegionPack } from './patterns';
 
 type F = Node<'float'>;
@@ -31,13 +32,15 @@ export function shellTop(pack: RegionPack): number {
 
 /** Eyes the fur keeps clear of (more are rare; the rest just get the coat). */
 const MAX_EYES = 4;
-/** Where the eyes start in the `furCoat` array (after two elements per region). */
-const EYE_BASE = 2 * MAX_REGIONS;
+/** `furCoat` elements per region. */
+const PER_REGION = 3;
+/** Where the eyes start in the `furCoat` array (after the regions' elements). */
+const EYE_BASE = PER_REGION * MAX_REGIONS;
 
 /**
  * The coat settings per region, as one vec4 array (the fur material's only uniform buffer beyond the skin's six):
- * element 2i = (lean, radius, guard, guardLen), 2i+1 = (clump, crimp, droop, cell) with cell = `strandCell`; then
- * MAX_EYES elements (eye centre at rest, eyeball radius; radius 0 for none).
+ * element 3i = (lean, radius, guard, guardLen), 3i+1 = (clump, crimp, droop, cell) with cell = `strandCell`, 3i+2 =
+ * (sheen, 0, 0, 0); then MAX_EYES elements (eye centre at rest, eyeball radius; radius 0 for none).
  */
 export function packCoat(pack: RegionPack, eyes: EyePlace[] = []): Vector4[] {
   const v: Vector4[] = [];
@@ -45,6 +48,7 @@ export function packCoat(pack: RegionPack, eyes: EyePlace[] = []): Vector4[] {
     const c = pack.coat[i] >= 0 ? COAT_LOOK[COATS[pack.coat[i]]] : null;
     v.push(new Vector4(c?.lean ?? 0, c?.radius ?? 0, c?.guard ?? 0, c?.guardLen ?? 1));
     v.push(new Vector4(c?.clump ?? 0, c?.crimp ?? 0, c?.droop ?? 0, strandCell(pack.furLength[i], c?.density ?? 1)));
+    v.push(new Vector4(c?.sheen ?? 0, 0, 0, 0));
   }
   for (let k = 0; k < MAX_EYES; k++) {
     const e = eyes[k];
@@ -76,6 +80,11 @@ const CLUMP_CELL = 6;
 const CLUMP_WOBBLE = 0.6;
 /** A strand's lean between two shells reaches at most this many cells (it is drawn as a segment; see `axis`). */
 const MAX_STEP = 1.2;
+/** Guard hairs catch the light more: their sheen × the coat's. */
+const GUARD_SHEEN = 1.5;
+/** The sheen far off (× the coat's), where strands are wider than they are (see `far`): each lit strand was a pale
+ * speck on the darker underfur, and the coat looked frosted. */
+const FAR_SHEEN = 0.3;
 /** A rotation for the clump lattice, so clump borders don't line up with the strand grid or the body's axes. */
 const ROT = [vec3(0.6683, -0.5632, 0.486), vec3(0.6652, 0.7448, -0.0516), vec3(-0.3329, 0.3578, 0.8724)];
 
@@ -100,6 +109,14 @@ function segDist(l: C, j: C, a: C, rn: C): F {
   return length(v.sub(rn.mul(dot(v, rn).mul(1 - DEPTH_WEIGHT))));
 }
 
+/** The fur shells' material: three's standard one, lit as strands (`FurLightingModel`). */
+class FurNodeMaterial extends MeshStandardNodeMaterial {
+  strand: StrandInputs | null = null;
+  setupLightingModel() {
+    return this.strand ? new FurLightingModel(this.strand) : super.setupLightingModel();
+  }
+}
+
 /**
  * The one material every fur shell of a creature (and of its whole species) shares: each shell's height, in fur lengths,
  * is read per object from `userData.shellT` (and the shell below's from `userData.shellPrev`). The shells reach
@@ -109,12 +126,14 @@ function segDist(l: C, j: C, a: C, rn: C): F {
  * `lodGeometry`), so a strand rises from the skin and lies over towards the tail; on it, the strands are 3D lattice cells
  * scaled to the fur length, each drawn as the short segment its strand travels between this shell and the one below (so a
  * leaning hair reads as a line, not a stack of dots). Guard hairs come from a coarser lattice and reach higher; clumps pull
- * strand tips together; crimp waves them. Edges use alpha to coverage (MSAA), with the alpha test as the fallback.
+ * strand tips together; crimp waves them. Edges use alpha to coverage (MSAA), with the alpha test as the fallback. Lit
+ * as strands (`FurLightingModel`: two specular lobes along the strand, wrapped diffuse, a backlit rim), with the ambient
+ * light × the cavity.
  */
 export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStandardNodeMaterial | null {
   if (pack.furLength.every((l) => l <= 0)) return null;
   skinsTangent();
-  const r = regionNodes(pack), f = r.feature;
+  const r = regionNodes(pack);
   const coat = uniformArray(packCoat(pack, eyes), 'vec4').setName('furCoat') as V4;
   type E = ReturnType<typeof vec4> & { x: F; y: F; z: F; w: F; xyz: C };
   // round the eyes the fur is short and stands up (lying fur slid over the eyeball and hid it)
@@ -126,10 +145,11 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   }
   const clear = eyeGap.toVar();
   // no fur on the nose, lips or hooves, short fur inside the ears and round the eyes
-  const len = r.furLength.mul(float(1).sub(max(max(f.x, f.z), max(f.w, f.y.mul(0.7))))).mul(mix(float(EYE_LEN), float(1), clear)).toVar();
+  const len = r.furLength.mul(furCover(r)).mul(mix(float(EYE_LEN), float(1), clear)).toVar();
   const t = uniform(0).onObjectUpdate(({ object }) => (object?.userData.shellT as number | undefined) ?? 0);
   const tp = uniform(0).onObjectUpdate(({ object }) => (object?.userData.shellPrev as number | undefined) ?? 0);
-  const cA = coat.element(r.i.mul(2)) as unknown as E, cB = coat.element(r.i.mul(2).add(1)) as unknown as E;
+  const cA = coat.element(r.i.mul(PER_REGION)) as unknown as E, cB = coat.element(r.i.mul(PER_REGION).add(1)) as unknown as E;
+  const cC = coat.element(r.i.mul(PER_REGION).add(2)) as unknown as E;
   const lean = cA.x.mul(clear), radius = cA.y, guard = cA.z, guardLen = cA.w;
   const clump = cB.x, crimp = cB.y, droop = cB.z, cell = cB.w;
 
@@ -145,9 +165,15 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   const along = gs.mul(len.mul(lean).mul(t15));
   const sag = vec3(0, -1, 0).mul(droop.mul(len).mul(t.mul(t)));
   // fluffy fur wanders (as before)
-  const wander = mx_noise_vec3(r.bp.mul(40)).mul(r.fluff).mul(len).mul(t).mul(0.8);
-  const m = new MeshStandardNodeMaterial();
+  const roam = mx_noise_vec3(r.bp.mul(40)).mul(r.fluff).mul(0.8).toVar();
+  const wander = roam.mul(len).mul(t);
+  const m = new FurNodeMaterial();
   m.positionNode = positionLocal.add(rise).add(along).add(sag).add(wander).add(cross(n, gs).mul(wave(t)));
+  // the strand's direction for the strand lighting: its chord from the root to its tip (the shell offset at t = 1, over
+  // len). The offset's derivative at each shell (the literal tangent) turns through up to 90° from root to tip on lean
+  // coats, so each shell lit up at its own light angle and the highlight broke into bright flecks, one shell at a time
+  const strandT = n.mul(max(float(1).sub(lean), 0.05)).add(gs.mul(lean)).add(vec3(0, -1, 0).mul(droop)).add(roam);
+  const tangentV = varying(modelViewMatrix.mul(vec4(strandT, 0)).xyz);
 
   // --- per vertex, for the strands (shells repeat 16–24 times, so the pixel work must stay small) ---
   // Everything that depends on the region's cell size is passed in metres and divided per pixel by the pixel's own region's
@@ -227,6 +253,8 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   // fur is darker near the skin (self-shadowing), lighter at the tips
   m.colorNode = varying(markedColor(r)).mul(mix(mix(float(0.6), float(1), smoothstep(0, 1, t)).mul(tone), float(FAR_SHADE), far));
   m.roughnessNode = select(isGuard, float(0.8), float(0.95));
+  m.aoNode = r.cavity; // ambient × cavity (and × the root darkening, already in the colour)
+  m.strand = { tangent: normalize(tangentV), t, sheen: cC.x.mul(select(isGuard, float(GUARD_SHEEN), float(1))).mul(mix(float(1), float(FAR_SHEEN), far)) };
   return m;
 }
 

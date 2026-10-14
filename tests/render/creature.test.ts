@@ -46,6 +46,18 @@ describe('levels of detail', () => {
       }
     }
   });
+
+  it('marks the skin as underfur only where its shells are shown (not without shells, not with the fur off)', () => {
+    const shown = (o: CreatureObject) => o.meshes.map((m) => (m.visible ? m.userData.underfur : null)).filter((u) => u !== null);
+    const o = createCreatureObject(body, quadruped, 'high');
+    for (const l of [0, 1] as const) {
+      o.setLod(l);
+      expect(shown(o), `LOD${l}`).toEqual([1]);
+    }
+    o.setFur(false);
+    expect(shown(o)).toEqual([0]);
+    expect(shown(createCreatureObject(body, quadruped, 'low'))).toEqual([0]); // Low draws no shells
+  });
 });
 
 describe('createCreatureObject with a shared look', () => {
