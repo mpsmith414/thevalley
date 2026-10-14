@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md` (read it with this plan).
 
+> **Build order note (2026-10-13):** this plan runs in two parts. **Part 1 (fur): Tasks 1–9**, then a fur checkpoint
+> (the fur parts of Task 20 and Task 19's designer run; see HANDOFF "Next"), then a merge on the owner's OK. Tasks 1–6
+> are already merged to `main`. **Part 2 (motion and post-processing): Tasks 10–20** run after sub-project 4 (The
+> Living Ecosystem), on the same branch or a fresh one from `main`. Re-record Task 1's motion "before" clips then if the
+> motion code changed in between. Task 9's River Bend budget (≤ 0.5 ms for fur) is unchanged; Part 2 keeps the other
+> 0.5 ms for post-processing and contact shadows.
+
 ## Global Constraints
 
 - Specs: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md` (this sub-project); 3a's `docs/superpowers/specs/2026-10-09-lifeform-polish-shapes-faces-design.md` (the bodies it builds on).

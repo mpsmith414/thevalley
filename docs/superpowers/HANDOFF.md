@@ -1,4 +1,4 @@
-# Handoff: where Creature Ecosystem stands (2026-10-10, 3b paused after Task 6)
+# Handoff: where Creature Ecosystem stands (2026-10-13, 3b paused after Task 6; next: finish the fur, then 6)
 
 Read this first in a new session, then the specs it points to.
 
@@ -268,35 +268,57 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 1. Creature Lab: built
 2. The Valley: built and merged
 3. **Lifeform Polish:** 3a (shapes and faces) built and merged (2026-10-10);
-   **3b (fur, motion, post-processing): in progress** on `feat/lifeform-polish-3b` (paused after Task 6 of 20).
+   **3b (fur, motion, post-processing): in progress** on `feat/lifeform-polish-3b`. Tasks 1–6 of 20 are merged to
+   `main` (the owner's OK, 2026-10-12, fast-forward to `fcfd649`).
 4. The Living Ecosystem
 5. Views and Eyes
 6. Bring It to Life (phone)
 7. Weather and Events
 8. The Director
 
-Follow the usual flow: brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only
-on the owner's OK.
+**Build order (agreed with the owner 2026-10-13; also in the vision doc's roadmap):**
 
-**Next: resume the Lifeform Polish 3b build at Task 7.** The brainstorm is done (the owner chose: fur and motion first,
-light post-processing; whole-animal fur views; a feather mode; a `coat` word per region; gait mechanics, starts/stops/turns,
-fliers and swimmers; grade + bloom + creature contact shading). The owner asked for the build to run autonomously
-("go with your recommendations… I am expecting high quality") and paused it on 2026-10-10 after Task 6.
+1. **Finish 3b's fur**: plan Tasks 7–9, then a fur checkpoint (below), then merge on the owner's OK.
+2. **6 Bring It to Life.** Released creatures go through one small, saved creature list that 4 will extend, not
+   replace. Phone mic and live camera need HTTPS on the home network (decide how in its brainstorm).
+3. **4 The Living Ecosystem.** The simulation reports "moments" as they happen from day one, for the Director.
+4. 3b's remaining motion and post-processing (plan Tasks 10–20, same branch or a fresh one from `main`).
+5. **5 Views and Eyes** (at least follow and lock-on).
+6. **8 The Director.**
+7. **7 Weather and Events.**
 
-- Spec: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md`
-- Plan (20 tasks): `docs/superpowers/plans/2026-10-10-lifeform-polish-fur-motion-post.md`
+The owner is most excited about 6 and 8, and wants every skipped part built afterwards. Follow the usual flow:
+brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only on the owner's OK. In the
+3b brainstorm the owner said to go with the recommendations without more questions and expects high quality.
+
+**Next: finish 3b's fur (Tasks 7–9), then start the sub-project 6 brainstorm.**
+
+- 3b spec: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md`; plan (20 tasks):
+  `docs/superpowers/plans/2026-10-10-lifeform-polish-fur-motion-post.md`.
 - Build ledger, briefs, reports and rulings (gitignored, local only):
-  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md` — read it first; it lists every completed
-  task with commits, the controller's rulings (R1–R6) and deferred minors.
-- Done (all reviewed): 1 clip/GIF tools and the before record (`.shots/b3-*`; River Bend baseline 15.0 ms median, frog
-  build 2.48 s), 2 the `groom` vec4 replaces `restNormal`, 3 groom (hair direction) bake, 4 cavity (SDF AO) bake,
-  5 recipe schema v3 with `coat`, 6 the fur shell rewrite (`.shots/t6-compare.png`: the studs and spikes are gone).
+  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md`. Read it first. It lists every completed
+  task with commits, the controller's rulings (R1–R6), deferred minors and look notes for Task 9. The Task 7 brief is
+  already extracted there (`task-7-brief.md`); the shared instruction files for implementers and reviewers are
+  `implementer-instructions.md` and `reviewer-instructions.md` in the same folder.
+- Done and reviewed: 1 clip/GIF tools and the before record (`.shots/b3-*`; River Bend baseline 15.0 ms median, frog
+  build 2.48 s), 2 the `groom` vec4 replaces `restNormal`, 3 groom (hair direction) bake, 4 cavity (SDF AO) bake, 5
+  recipe schema v3 with `coat`, 6 the fur shell rewrite (`.shots/t6-compare.png`: the studs and spikes are gone).
   Key ruling R6: the groom array is bound on the geometry as the attribute `tangent`, so three r186's skinning bends it
   (`tangentLocal` in the fur shader; probed in `src/render/probe.ts`). The renderer is now `alpha: false`.
+- **Not yet checked on `main`:** fur runs 16 shells on High (was 12) and its frame cost is unmeasured until Task 9. If
+  River Bend drops frames on the TV, set `QUALITY.high.furShells` back to 12 (`src/render/quality.ts`).
+- Next up: Task 7 strand lighting and cavity shading, Task 8 feather mode, Task 9 the cast's coats, the fur tune and the
+  fur frame budget (≤ 0.5 ms over the baseline). Then the **fur checkpoint** (not a plan task; do it on the same
+  branch):
+  - the fur parts of Task 20: final portraits `a3-<id>` for the 8 natives and 6 fixtures, and the before | after sheets
+    `compare3b-fur-face/34/side.png`;
+  - Task 19, the designer run of the four test drawings (it tests the `coat` words; about $1–1.50 with the owner's key);
+  - a short "Fur" note in the README, and this handoff updated;
+  - `npm test`, `npx tsc --noEmit`, `npm run build`, and the River Bend number.
+  Then ask the owner to merge. Tasks 10–20 (motion, post-processing, the remaining sheets and docs) wait until after
+  sub-project 4.
 - To resume, start a new chat with: "Read docs/superpowers/HANDOFF.md, then resume the Lifeform Polish 3b build at
-  Task 7 (subagent-driven, from the ledger)." Next up: Task 7 strand lighting and cavity shading, 8 feathers, 9 the
-  cast's coats and the fur frame budget (≤ 0.5 ms of the 1 ms), then motion (10–15), post-processing (16–18), the
-  designer run (19) and the sheets and docs (20). Merge only on the owner's OK.
+  Task 7 (subagent-driven, from the ledger) through the fur checkpoint."
 
 ## Dev tips that save time
 

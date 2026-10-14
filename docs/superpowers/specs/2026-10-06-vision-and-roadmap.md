@@ -73,6 +73,21 @@ spec → plan → build cycle and ends with something the family can enjoy.
 7. **Weather and Events:** natural weather, event recipes, consequences and recovery.
 8. **The Director:** moment detection, pop-up invitations, the auto-documentary camera and narration.
 
+**Build order (agreed 2026-10-13).** The numbers above are the roadmap's names; the order of building is:
+
+1. Finish 3b's fur (its plan's Tasks 7–9), merge on the owner's OK.
+2. **6 Bring It to Life.** Released creatures go through one small, saved creature list that 4 later extends rather
+   than replaces. Until 4, they live with today's actions (wander, eat, drink, sleep, call, flee).
+3. **4 The Living Ecosystem.** The simulation reports "moments" as they happen (a fox began stalking, a fawn was born,
+   the herd is drinking) from day one, so the Director can build on them.
+4. 3b's remaining motion and post-processing (its plan's Tasks 10–20).
+5. **5 Views and Eyes** (at least follow and lock-on, which the Director's camera stands on).
+6. **8 The Director.**
+7. **7 Weather and Events**, which then feeds the Director new kinds of moments.
+
+Why: 6 depends only on built work and is the project's emotional core, so it can safely jump ahead. 8 needs 4's
+behaviours and 5's cameras to have anything to film, so building it earlier would mean rework.
+
 Later ideas, deliberately out of scope for now: swapping creatures between friends' valleys,
 several saved valleys, a "while you were away" recap, a magical hybrid event, a hand-drawn
 "storybook" rendering style, and AI-generated 3D models as an experiment.
