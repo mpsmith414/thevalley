@@ -148,10 +148,11 @@ Added by 3b's fur (Tasks 6–9):
     with it on (r186, Chrome on D3D12 here) every partly covered pixel came out darker, towards neutral grey, instead of
     a mix of strand and background: dark outlines round strands close up and a salt-and-pepper coat at a few metres.
     Root cause not found in three or Dawn. The renderer stays `alpha: false` (with A2C the page showed through the
-    canvas); `renderer.ts`'s comment still names A2C as the reason. Retry A2C on a three upgrade.
-18. **`hashCPU` copies three's TSL `hash`** (`src/skin/coat.ts`, no probe): the CPU twin of r186's PCG `hash` (from
-    three's `Hash.js`) that the feather tests use. If three changes its hash, the tests still pass but check a feather
-    lattice the GPU no longer draws (the picture is still fine: the GPU uses three's own).
+    canvas; `renderer.ts`'s comment says so). Retry A2C on a three upgrade.
+18. **`hashCPU` copies three's TSL `hash`** (`src/skin/coat.ts`, tested): the CPU twin of r186's PCG `hash` (from
+    three's `Hash.js`) that the feather tests use. `tests/skin/coat.test.ts` checks the source of three's `hash` still
+    has the PCG's constants and shifts, so an upgrade that changes it fails the tests instead of leaving them checking a
+    feather lattice the GPU no longer draws (the picture itself would be fine: the GPU uses three's own).
 
 ## Lifeform Polish 3a: what the owner checked, and known issues
 
@@ -203,8 +204,12 @@ the owner decides on the sheets.
 - **The wolf reads pale grey** with the strand lighting: its recipe colour (#6e685e) under this light; b3 looked darker
   mostly because of the old alpha-to-coverage greying.
 - **The lab draws 24 shells, the valley 16**, so lab portraits are a little denser than in the valley.
-- **Console:** three's "Return statement used in an inline Fn()" warning (from `fur.ts`'s expression-bodied `Fn`s);
-  harmless.
+- **Birds at the fur range** (22 m for the duck and hawk): the skin past it is lit as a surface, the feather shell inside
+  it as strands. Measured in the lab (4 views each, body pixels): the step is +1.4 % on average for the duck and +3.0 %
+  for the hawk, from −2 % to +8 % by view (it depends on the light's side, not on the colour). Darkening the far skin
+  to the feathers' mean shade (× 0.82) flipped it to −3.3 % and −2.3 % with the worst view as large, so it was left.
+- **Forest Floor measures 13.0 ms against its 12.3 ms baseline (+0.7 ms).** Not the fur: its only animals are two foxes
+  at LOD2, 190–235 m off, with the fur off. Cause unknown.
 - **Designer run (2026-10-14, Sonnet, 16 calls, all 200, about 3.5 min):** the coats came out right with no prompt
   change: Puffle Bun (fluffball) body fur `soft`; Crownbug (six-legged lizard) none; Puffback Wiggler (snake) its
   orange and pink puffs fur `soft`; Dotty Longneck (turtle) none. The snake's three blue dots don't show on its puffs,
@@ -351,21 +356,20 @@ From the build ledger's deferred minors for Tasks 6–9 (`progress.md`). None bl
 - Mixed feather/fur coats rasterise and discard the feather regions on every shell above the first, and pull the fur
   at their border low.
 - `bpV = varying(r.bp)` duplicates the bodyPos varying: reading `r.bp` directly frees one of the 16 inter-stage slots.
-- The expression-bodied `Fn` at `fur.ts` ~320 (`() => c.assign(...)`) prints three's "Return statement used in an
-  inline Fn()" warning: give it braces.
 - Marks can be painted over by the per-pixel feather pattern (the mix order at `fur.ts` ~317–321).
-- Noisy `as unknown as` casts (`material.ts` ~98–106, `fur.ts` ~317); the `renderer.ts` comment on `alpha: false` still
-  names alpha-to-coverage fur, which is now off.
+- Noisy `as unknown as` casts (`material.ts` ~98–106, `fur.ts` ~317).
+- `FurNodeMaterial.strand` is a plain object of nodes, outside three's material cache key: nothing per-species may go in
+  it (a comment there says so).
 
 **Strand lighting** (`src/skin/fur-light.ts`, `src/skin/material.ts`)
-- `SHADOW_LIFT`'s comment says "a fur length out from the body", but the lift is the length × (1 + t); the
-  `receivedShadowPositionNode` probe checks only that the property exists, and `fur.test` only that the node is set.
+- The `receivedShadowPositionNode` probe checks only that the property exists, and `fur.test` only that the node is
+  set.
 - `isRelief`'s `reduce` has no initial value; its covering-index mapping and the per-mesh `underfur` flag reaching the
   colour are untested.
 
 **Feathers** (`src/skin/coat.ts`)
-- `featherAt` returns an unused `w`; rare holes (0.006 %) sit just off the test's plane offset; the "is deterministic"
-  test asserts little; `hashCPU` copies three's hash (r186 item 18): owning the PCG would end that reliance.
+- Rare holes (0.006 %) sit just off the test's plane offset; the "is deterministic" test asserts little; `hashCPU`
+  copies three's hash (r186 item 18, now tested): owning the PCG would end that reliance.
 - No unit coverage for `across`, `whole` or the per-pixel feather pattern (Task 9's additions to `regionNodes`).
 
 ## Roadmap
@@ -405,9 +409,12 @@ brainstorm → spec → plan → build autonomously on a feature branch → scre
   drawings, the walk GIFs); what is known to be off: "Lifeform Polish 3b fur: known issues".
 - Build ledger, briefs, reports and rulings (gitignored, local only):
   `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md`. It lists every task with commits, the
-  controller's rulings (R1–R12) and the deferred minors; `checkpoint-report.md` there has the checkpoint's measurements
+  controller's rulings (R1–R14) and the deferred minors; `checkpoint-report.md` there has the checkpoint's measurements
   in full. Key rulings for later work: R6 (the groom bound as `tangent`), R10 (alpha to coverage off on the fur), R11
-  (the backlit rim weighted by shell height), R12 (River Bend does not measure fur; measure with an animal close up).
+  (the backlit rim weighted by shell height), R12 (River Bend does not measure fur; measure with an animal close up),
+  R13 (the fur stays at 16 shells on High), R14 (feathers keep a broad, weaker highlight, `FEATHER_EXP1` 24 and the
+  `smooth` sheen 0.35, against the spec's "narrower, stronger": the narrow one drew a pale ring on the mallard's head
+  and a smear on the hawk's brow).
 - Fur frame cost decision: `QUALITY.high.furShells` stays 16. If the TV drops frames with animals close, set it to 12
   (`src/render/quality.ts`; about 0.5 ms back per close animal).
 - When Part 2 resumes: Task 10 is next (body mechanics; brief to extract from the plan). Rulings R2 (the settle spring

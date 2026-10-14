@@ -264,7 +264,8 @@ The tool also prints where each build's time goes (sampling, meshing, weighting,
 
 Fur and feathers are drawn as shells: copies of the body pushed out along the normal, each cutting the strands at its
 height. Lifeform Polish 3b rebuilt them (schema v3 adds a `coat` word per fur or feather region; the designer picks it,
-and anything missing is inferred from the region's covering and length).
+and anything missing is inferred from the region's covering and length; feathers given no length get 2 cm, as feathers
+without one would not draw).
 
 - **Bake** (`src/builder/groom.ts`, `cavity.ts`): every vertex gets a hair direction and a cavity value, baked with the
   body for each level of detail and kept in its cache. The direction blends the bones' flows by skin weight (tail-wards
@@ -315,5 +316,5 @@ Built and checked on the owner's PC (RTX 3060 Ti, WebGPU):
   Polish 3a (table above; 3b's fur bake adds a little). The frog is slowest at 2.6 s; the target is under 3 s. Built bodies are cached, so a body
   is built once per browser.
 - Planted feet slide 0 cm while walking, trotting, galloping, changing speed and circling.
-- Frame cost at 1920×1080 on the high tier (one walking animal, stage, fur, shadows; simulation + render + GPU finish): wolf 7.3 ms, fox 10.5 ms, rabbit 11 ms, deer 10.3 ms, frog 6.1 ms. 60 fps needs under 16.7 ms.
+- Frame cost at 1920×1080 on the high tier, measured before 3b's fur (one walking animal, stage, the old fur, shadows; simulation + render + GPU finish): wolf 7.3 ms, fox 10.5 ms, rabbit 11 ms, deer 10.3 ms, frog 6.1 ms. 60 fps needs under 16.7 ms. With 3b's fur, see "Fur and feathers" above (a close fox 10.3 ms, a lying deer 9.9 ms, render only).
 - The owner has run the designer live with their own key.

@@ -112,6 +112,9 @@ describe('the system prompt', () => {
   it('teaches every coat word', () => {
     for (const w of COATS) expect(SYSTEM_PROMPT).toContain(`"${w}"`);
   });
+  it('asks for a feather length (feathers without one draw none)', () => {
+    expect(SYSTEM_PROMPT).toContain('feathers (with furLength 0.01-0.03 m)');
+  });
 });
 
 describe('extractJson', () => {

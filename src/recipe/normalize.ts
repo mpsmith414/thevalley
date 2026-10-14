@@ -13,6 +13,8 @@ type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
+/** A feathers region's length (m) when it has none: the natives' feathers are 2–3 cm. */
+export const FEATHER_LENGTH = 0.02;
 
 /** Defaults for every section except `parts` (a recipe must bring its own body) and the hints inferred from it. */
 export const DEFAULT_RECIPE: Omit<Recipe, 'parts' | 'build' | 'face'> = {
@@ -124,7 +126,14 @@ export function normalizeRecipe(raw: unknown): { recipe: Recipe; fixes: string[]
       along: bool(p.along, false),
     };
     const covering = pick(r.covering, COVERINGS, `region ${id} covering`, 'skin');
-    const furLength = num(r.furLength, LIMITS.furLength, `region ${id} furLength`, 0);
+    // feathers with no length would draw none (the feather shell and the skin's feathers both need one), and a designer's
+    // bird often leaves it out: smooth or downy, they get a default
+    const feathers = covering === 'feathers';
+    let furLength = num(r.furLength, LIMITS.furLength, `region ${id} furLength`, feathers ? FEATHER_LENGTH : 0);
+    if (feathers && furLength <= 0) {
+      fixes.push(`region ${id} furLength ${furLength} → ${FEATHER_LENGTH} (feathers need a length)`);
+      furLength = FEATHER_LENGTH;
+    }
     const fluff = num(r.fluff, LIMITS.unit, `region ${id} fluff`, 0);
     // a missing, unknown or mismatched coat word (fur's on feathers, any on scales) is inferred from the rest
     const fits = covering === 'fur' ? FUR_COATS : covering === 'feathers' ? FEATHER_COATS : [];

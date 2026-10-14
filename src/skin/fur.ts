@@ -107,10 +107,11 @@ const GUARD_SHEEN = 1.5;
  * speck on the darker underfur, and the coat looked frosted. */
 const FAR_SHEEN = 0.3;
 /**
- * How far out from the body (in fur lengths, along the normal) the fur looks up the shadows it receives. Near the outline
- * the body's own soft shadow edge lay over the fringe of hair and put out its backlit rim; looked up this far out, the
- * fringe is clear of it while the body's far side stays in its own shadow and shadows cast by anything else (ridges,
- * trees: far larger than a fur length) still fall on the coat.
+ * How far beyond each shell (in fur lengths, along the normal) the fur looks up the shadows it receives: the lift is added
+ * to the shell's displaced position, so they are looked up 1 + (that shell's rise) fur lengths from the body, up to 1 + t.
+ * Near the outline the body's own soft shadow edge lay over the fringe of hair and put out its backlit rim; looked up this
+ * far out, the fringe is clear of it while the body's far side stays in its own shadow and shadows cast by anything else
+ * (ridges, trees: far larger than a fur length) still fall on the coat.
  */
 const SHADOW_LIFT = 1;
 /** A rotation for the clump lattice, so clump borders don't line up with the strand grid or the body's axes. */
@@ -134,6 +135,8 @@ function segDist(l: C, j: C, a: C, rn: C): F {
 
 /** The fur shells' material: three's standard one, lit as strands (`FurLightingModel`). */
 class FurNodeMaterial extends MeshStandardNodeMaterial {
+  // a plain object of nodes, invisible to three's material cache key (r186 keys only a material's own node properties):
+  // nothing per-species may go in `strand`, or species could share a pipeline built with another's values
   strand: StrandInputs | null = null;
   setupLightingModel() {
     return this.strand ? new FurLightingModel(this.strand) : super.setupLightingModel();
@@ -317,7 +320,9 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   const colV = varying(markedColor({ ...r, colorNode: mix(r.plainColor, r.patternColor, r.patternOf(r.rn as unknown as C).mul(float(1).sub(r.feathers))) as unknown as typeof r.colorNode }));
   const colour = Fn(() => {
     const c = colV.toVar();
-    If(cC.y.greaterThan(0.5), () => c.assign(mix(c, r.patternColor, r.patternOf(restN as unknown as C))));
+    If(cC.y.greaterThan(0.5), () => {
+      c.assign(mix(c, r.patternColor, r.patternOf(restN as unknown as C)));
+    });
     return c;
   })() as unknown as C;
   m.colorNode = colour.mul(look.y);

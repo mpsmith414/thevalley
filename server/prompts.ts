@@ -39,7 +39,7 @@ Worked examples (adapt sizes to the creature):
 Every part must include every field, role included. Keep to at most 40 parts. Everything mirrored counts twice; stay under 90 bones in total.
 
 # Skin
-Regions (at most 8) give coverings and colours: fur (with furLength 0.005-0.05 m and fluff 0-1), feathers, scales, skin, shell or slime. "belly" is an optional lighter underside colour. Patterns: stripes, spots, patches, rings (bands around a part) or gradient; scale is the size of one repeat in metres; amount is how much of the region it covers (0-1). Colours are "#rrggbb". Eyes: colour, pupil (round, slit, bar, none) and size (0.2-1).
+Regions (at most 8) give coverings and colours: fur (with furLength 0.005-0.05 m and fluff 0-1), feathers (with furLength 0.01-0.03 m), scales, skin, shell or slime. "belly" is an optional lighter underside colour. Patterns: stripes, spots, patches, rings (bands around a part) or gradient; scale is the size of one repeat in metres; amount is how much of the region it covers (0-1). Colours are "#rrggbb". Eyes: colour, pupil (round, slit, bar, none) and size (0.2-1).
 "coat" per region: for fur "sleek" (short and glossy: deer, otter), "soft" (fox, rabbit, cat), "shaggy" (long and hanging: a bison's mane, a sheepdog), "woolly" (thick and crimped: a sheep) or "bristly" (stiff and sparse: a boar); for feathers "smooth" (sleek feathers lying flat) or "downy" (fluffy: a chick, an owl's chest); null for scales, skin, shell or slime.
 
 # Build and face

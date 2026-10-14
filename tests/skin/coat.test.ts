@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hash } from 'three/tsl';
 import { COATS, type Region } from '../../src/recipe/schema';
 import { COAT_LOOK, FEATHER, drawsFeathers, regionCoat, strandCell } from '../../src/skin/coat';
 
@@ -55,9 +56,17 @@ describe('feathers', () => {
     expect(drawsFeathers(null)).toBe(false);
   });
 
-  it('keeps the vane shape in one place: longer than wide, a thin shaft', () => {
-    expect(FEATHER.span).toBe(1.8);
-    expect(FEATHER.shaft).toBe(0.04);
+  it('keeps the vane longer than wide', () => {
     expect(FEATHER.span).toBeGreaterThan(2 * FEATHER.width);
+  });
+});
+
+describe("three's TSL hash", () => {
+  // `featherAtCPU` copies r186's `hash` (nodes/math/Hash.js, PCG) as `hashCPU`: an upgrade that changes it would move the
+  // CPU twin's feathers off the drawn ones without an error, so its source is checked here (dev builds keep it readable)
+  it('is still the PCG hash the CPU twin copies', () => {
+    const src = String((hash as unknown as { shaderNode?: { jsFunc?: unknown } }).shaderNode?.jsFunc ?? '').replace(/\s+/g, '');
+    for (const s of ['mul(747796405)', 'add(2891336453)', 'shiftRight(28).add(4)', 'mul(277803737)', 'shiftRight(22)', 'mul(1/2**32)'])
+      expect(src).toContain(s);
   });
 });

@@ -71,7 +71,10 @@ const REACH = FEATHER.span / 2;
 const OFFSET = 1000;
 const MIN_FCELL = 0.006, MAX_FCELL = 0.025;
 
-/** Feather cell size (m): clamp(0.5 × furLength, 6 mm, 25 mm); 6 mm without a length. */
+/**
+ * Feather cell size (m): clamp(0.5 × furLength, 6 mm, 25 mm). 6 mm without a length, a value nothing draws with: neither
+ * the shell nor the skin draws feathers where the length is 0, and `normalizeRecipe` gives every feathers region one.
+ */
 export function featherCell(furLength: number): number {
   if (!(furLength > 0)) return MIN_FCELL;
   return Math.min(MAX_FCELL, Math.max(MIN_FCELL, 0.5 * furLength));
@@ -133,8 +136,8 @@ export function featherAtCPU(p: Vec3, groom: Vec3, normal: Vec3, cell: number): 
 
 /**
  * The feather lattice in TSL (the twin of `featherAtCPU`: change them together), for `p` a rest position in metres and the
- * rest groom and normal there. Returns vars: found (bool: false with no groom along the surface, or in a hole), u, v, h
- * (the feather's hash), w (its half-width at u, in cells). Call it inside a `Fn`.
+ * rest groom and normal there. Returns vars: found (bool: false with no groom along the surface, or in a hole), u, v and h
+ * (the feather's hash). Call it inside a `Fn`.
  */
 export function featherAt(p: C, cell: F, groom: C, normal: C) {
   const n = normalize(normal).toVar();
@@ -158,8 +161,7 @@ export function featherAt(p: C, cell: F, groom: C, normal: C) {
     v.assign(select(take, vm, v));
     h.assign(select(take, hm, h));
   }
-  const w = sin(u.mul(0.85).add(0.15).mul(Math.PI)).mul(FEATHER.width);
-  return { found: front.lessThan(1e8).and(gl.greaterThanEqual(1e-4)), u, v, h, w };
+  return { found: front.lessThan(1e8).and(gl.greaterThanEqual(1e-4)), u, v, h };
 }
 
 /**

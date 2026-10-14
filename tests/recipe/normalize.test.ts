@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeRecipe, RecipeError } from '../../src/recipe/normalize';
+import { FEATHER_LENGTH, normalizeRecipe, RecipeError } from '../../src/recipe/normalize';
 import { MAX_BONES, MAX_PARTS } from '../../src/recipe/schema';
 import { P, makeRecipe, quadruped } from '../fixtures/recipes';
 
@@ -99,6 +99,24 @@ describe('normalizeRecipe', () => {
     const { recipe } = normalizeRecipe(r);
     expect(recipe.parts[0].region).toBe('body');
     expect(recipe.skin.regions[0].color).toBe('#8a7a66');
+  });
+
+  it('gives feathers without a length a default one, and reports it', () => {
+    const r = clone(quadruped) as unknown as { skin: { regions: Record<string, unknown>[] } };
+    const base = r.skin.regions[0];
+    r.skin.regions = [
+      { ...base, id: 'zero', covering: 'feathers', furLength: 0, fluff: 0.1, coat: 'smooth' },
+      { ...base, id: 'none', covering: 'feathers', furLength: undefined, fluff: 0.8, coat: 'downy' },
+      { ...base, id: 'given', covering: 'feathers', furLength: 0.03, coat: 'smooth' },
+      { ...base, id: 'scaly', covering: 'scales', furLength: 0, coat: null },
+      { ...base, id: 'bare', covering: 'skin', furLength: 0, coat: null },
+    ];
+    const { recipe, fixes } = normalizeRecipe(r);
+    expect(recipe.skin.regions.map((x) => x.furLength)).toEqual([FEATHER_LENGTH, FEATHER_LENGTH, 0.03, 0, 0]);
+    expect(FEATHER_LENGTH).toBe(0.02);
+    expect(fixes).toContain('region zero furLength 0 → 0.02 (feathers need a length)');
+    expect(fixes).toContain('region none furLength missing → 0.02');
+    expect(fixes.filter((f) => /region (given|scaly|bare) furLength/.test(f))).toEqual([]);
   });
 
   it('fills missing sections from defaults', () => {
