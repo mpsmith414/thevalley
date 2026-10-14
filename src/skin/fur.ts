@@ -1,10 +1,10 @@
 import { MeshStandardNodeMaterial, SkinnedMesh, Vector4, type BufferGeometry, type Material, type Node } from 'three/webgpu';
 import {
   abs, attribute, clamp, cross, dot, float, floor, fract, fwidth, hash, int, length, max, min, mix, modelViewMatrix, mx_noise_vec3, normalize,
-  normalLocal, positionLocal, pow, select, sin, smoothstep, tangentLocal, uint, uniform, uniformArray, varying, vec3, vec4,
+  normalLocal, normalWorld, positionLocal, positionWorld, pow, select, sin, smoothstep, tangentLocal, uint, uniform, uniformArray, varying, vec3, vec4,
 } from 'three/tsl';
 import { COATS, MAX_REGIONS } from '../recipe/schema';
-import { skinsTangent } from '../render/probe';
+import { probe, skinsTangent } from '../render/probe';
 import { COAT_LOOK, strandCell } from './coat';
 import type { EyePlace } from './eyes';
 import { FurLightingModel, type StrandInputs } from './fur-light';
@@ -85,6 +85,13 @@ const GUARD_SHEEN = 1.5;
 /** The sheen far off (× the coat's), where strands are wider than they are (see `far`): each lit strand was a pale
  * speck on the darker underfur, and the coat looked frosted. */
 const FAR_SHEEN = 0.3;
+/**
+ * How far out from the body (in fur lengths, along the normal) the fur looks up the shadows it receives. Near the outline
+ * the body's own soft shadow edge lay over the fringe of hair and put out its backlit rim; looked up this far out, the
+ * fringe is clear of it while the body's far side stays in its own shadow and shadows cast by anything else (ridges,
+ * trees: far larger than a fur length) still fall on the coat.
+ */
+const SHADOW_LIFT = 1;
 /** A rotation for the clump lattice, so clump borders don't line up with the strand grid or the body's axes. */
 const ROT = [vec3(0.6683, -0.5632, 0.486), vec3(0.6652, 0.7448, -0.0516), vec3(-0.3329, 0.3578, 0.8724)];
 
@@ -247,13 +254,17 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
   const tone = select(isGuard, gs1.tone, select(u1.alpha.greaterThan(u2.alpha), u1.tone, u2.tone));
   m.userData.shellTop = shellTop(pack);
 
-  m.opacityNode = select(varying(len).greaterThan(0.0005), clamp(max(alphaU, alphaG), 0, 1), float(0));
+  const lenV = varying(len);
+  m.opacityNode = select(lenV.greaterThan(0.0005), clamp(max(alphaU, alphaG), 0, 1), float(0));
   m.alphaTest = 0.5; // with MSAA, alpha to coverage turns the test into a smooth, one-pixel edge; without it, a plain cut
   m.alphaToCoverage = true;
   // fur is darker near the skin (self-shadowing), lighter at the tips
   m.colorNode = varying(markedColor(r)).mul(mix(mix(float(0.6), float(1), smoothstep(0, 1, t)).mul(tone), float(FAR_SHADE), far));
   m.roughnessNode = select(isGuard, float(0.8), float(0.95));
   m.aoNode = r.cavity; // ambient × cavity (and × the root darkening, already in the colour)
+  // three r186 reads a material's `receivedShadowPositionNode` for the world position its received shadows are looked up at
+  probe('receivedShadowPositionNode' in m, "NodeMaterial has no receivedShadowPositionNode, so the body's own shadow edge puts out the fur's backlit rim (fur.ts)");
+  m.receivedShadowPositionNode = positionWorld.add(normalWorld.mul(lenV.mul(SHADOW_LIFT)));
   m.strand = { tangent: normalize(tangentV), t, sheen: cC.x.mul(select(isGuard, float(GUARD_SHEEN), float(1))).mul(mix(float(1), float(FAR_SHEEN), far)) };
   return m;
 }

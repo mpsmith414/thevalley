@@ -96,15 +96,9 @@ export class FurLightingModel extends PhysicalLightingModel {
     const rim = mix(hair, vec3(...WARM), WARM_MIX);
     const spec = s.spec1.mul(SPEC1).add(hair.mul(s.spec2)).mul(STRAND_SPEC);
     reflectedLight.directSpecular.addAssign(light.mul(spec));
-    // the rim: light through the fringe of hair at the outline. The body's shadow map covers that fringe (the fur casts no
-    // shadow, and the soft shadow edge lies over it), which put the rim out entirely; the term's own (1 − |N·L|) with the
-    // light behind already keeps it to the outline, so it takes the light unshadowed (three r186 keeps that colour as the
-    // light node's `baseColorNode` once it has set up a shadow; without one, `lightColor` is unshadowed anyway)
-    const ln = (input as unknown as { lightNode?: { baseColorNode?: C | null; light?: { castShadow?: boolean } } }).lightNode;
-    const b = builder as unknown as { object?: { receiveShadow?: boolean }; renderer?: { shadowMap?: { enabled?: boolean } } };
-    const shadowed = !!(ln?.light?.castShadow && b.object?.receiveShadow && b.renderer?.shadowMap?.enabled);
-    probe(!shadowed || !!ln?.baseColorNode, "a shadowed light node has no baseColorNode (its unshadowed colour), so the fur's backlit rim is shadowed out (fur-light.ts)");
-    const base = ln?.baseColorNode ?? lightColor;
-    reflectedLight.directSpecular.addAssign(base.mul(1 / Math.PI).mul(rim).mul(s.back));
+    // the rim: light through the fringe of hair at the outline, shadowed like the rest (by ridges, trees, other animals);
+    // the fur material looks its shadow up a little out from the body (`receivedShadowPositionNode` in fur.ts), so the
+    // body's own soft shadow edge doesn't put the fringe's rim out
+    reflectedLight.directSpecular.addAssign(light.mul(rim).mul(s.back));
   }
 }

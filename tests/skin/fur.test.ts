@@ -33,6 +33,10 @@ describe('furMaterial', () => {
     expect(m.setupLightingModel()).toBeInstanceOf(FurLightingModel);
     expect(m.aoNode).not.toBeNull();
   });
+
+  it('looks its received shadows up out from the body (so the backlit rim clears the body shadow edge)', () => {
+    expect(furMaterial(packRegions(quadruped, ['body', 'tail']))!.receivedShadowPositionNode).not.toBeNull();
+  });
 });
 
 describe('packRegions coat', () => {
