@@ -5,7 +5,7 @@ import {
 } from 'three/tsl';
 import { COATS, MAX_REGIONS } from '../recipe/schema';
 import { probe, skinsTangent } from '../render/probe';
-import { cellSeed, COAT_LOOK, drawsFeathersAt, featherAt, featherCell, featherShade, strandCell } from './coat';
+import { cellSeed, COAT_LOOK, drawsFeathersAt, featherCell, feathersAt, strandCell } from './coat';
 import type { EyePlace } from './eyes';
 import { FurLightingModel, STRAND, type StrandInputs } from './fur-light';
 import { furCover, markedColor, regionNodes } from './material';
@@ -224,15 +224,9 @@ export function furMaterial(pack: RegionPack, eyes: EyePlace[] = []): MeshStanda
     If(cc.y.greaterThan(0.5), () => {
       // feathers: the lowest shell draws them all (see FEATHER_LIFT); the shells above draw none
       If(tp.equal(0), () => {
-        const fcell = cc.z;
-        const nr = normalize(restN);
-        // the rest groom: the raw attribute (the cavity already brings it to this stage; a varying of its own would be the 17th)
-        const g2 = gr.sub(nr.mul(dot(gr, nr))).toVar();
-        const g2l = length(g2).toVar();
-        const gsr = g2.div(max(g2l, 1e-4)).toVar();
-        const f = featherAt(bpV, fcell, gsr, cross(nr, gsr));
-        const pxF = fw.div(fcell).mul(0.5);
-        out.assign(vec4(select(f.found.and(g2l.greaterThan(1e-4)), float(1), float(0)), featherShade(f.u, f.v, f.h, pxF), 0, 0));
+        // the rest groom is the raw attribute (the cavity already brings it to this stage; a varying of its own would be the 17th)
+        const f = feathersAt(bpV, cc.z, gr, restN, fw);
+        out.assign(vec4(select(f.found, float(1), float(0)), f.shade, 0, 0));
       });
     }).Else(() => {
       const cellF = cb.w;

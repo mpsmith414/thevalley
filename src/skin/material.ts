@@ -1,10 +1,10 @@
 import { MeshPhysicalNodeMaterial, Vector3, Vector4, Color } from 'three/webgpu';
 import {
-  abs, attribute, bumpMap, color, cross, dot, float, Fn, fract, fwidth, If, int, length, max, mix, mx_noise_float, mx_worley_noise_float,
-  normalize, select, sin, smoothstep, step, uniform, uniformArray, varying, vec3,
+  abs, attribute, bumpMap, color, float, Fn, fract, fwidth, If, int, length, max, mix, mx_noise_float, mx_worley_noise_float,
+  select, sin, smoothstep, step, uniform, uniformArray, varying, vec3,
 } from 'three/tsl';
 import { COVERINGS, MAX_REGIONS, type Covering } from '../recipe/schema';
-import { drawsFeathersAt, featherAt, featherCellNode, featherShade } from './coat';
+import { drawsFeathersAt, featherCellNode, feathersAt } from './coat';
 import { COVERING_LOOK, type RegionPack } from './patterns';
 
 type F = ReturnType<typeof float>;
@@ -165,13 +165,8 @@ export function createSkinMaterial(pack: RegionPack) {
     const fw = length(fwidth(r.bp)).toVar(); // derivatives before the branch (uniform control flow)
     const shade = mix(float(1), float(UNDERFUR), k).toVar();
     If(r.feathers.greaterThan(0.5).and(k.greaterThan(0)), () => {
-      const cell = featherCellNode(r.furLength).toVar();
-      const n = normalize(r.rn);
-      const g = r.groom.sub(n.mul(dot(r.groom, n))).toVar();
-      const gl = length(g).toVar();
-      const gs = g.div(max(gl, 1e-4)).toVar();
-      const ft = featherAt(r.bp, cell, gs, cross(n, gs));
-      const s = select(ft.found.and(gl.greaterThan(1e-4)), featherShade(ft.u, ft.v, ft.h, fw.div(cell).mul(0.5)), float(FEATHER_GAP));
+      const ft = feathersAt(r.bp, featherCellNode(r.furLength).toVar(), r.groom, r.rn, fw);
+      const s = select(ft.found, ft.shade, float(FEATHER_GAP));
       shade.assign(mix(float(1), s, k));
     });
     return shade;

@@ -1,5 +1,5 @@
 import type { Node } from 'three/webgpu';
-import { abs, clamp, dot, float, floor, fract, hash, int, max, mix, select, sin, smoothstep, uint, vec3 } from 'three/tsl';
+import { abs, clamp, cross as crossN, dot, float, floor, fract, hash, int, length, max, mix, normalize, select, sin, smoothstep, uint, vec3 } from 'three/tsl';
 import { inferCoat } from '../recipe/hints';
 import { COATS, type Coat, type Region } from '../recipe/schema';
 import { add, cross, dot as dot3, len, scale, sub, v3, type Vec3 } from '../util/vec';
@@ -132,11 +132,15 @@ export function featherAtCPU(p: Vec3, groom: Vec3, normal: Vec3, cell: number): 
 }
 
 /**
- * The feather lattice in TSL (the twin of `featherAtCPU`: change them together), for `p` a rest position in metres, `gs`
- * the rest groom along the surface (unit) and `b` = normal × gs. Returns vars: found (bool), u, v, h (the feather's hash),
- * w (its half-width at u, in cells). Call it inside a `Fn`.
+ * The feather lattice in TSL (the twin of `featherAtCPU`: change them together), for `p` a rest position in metres and the
+ * rest groom and normal there. Returns vars: found (bool: false with no groom along the surface, or in a hole), u, v, h
+ * (the feather's hash), w (its half-width at u, in cells). Call it inside a `Fn`.
  */
-export function featherAt(p: C, cell: F, gs: C, b: C) {
+export function featherAt(p: C, cell: F, groom: C, normal: C) {
+  const n = normalize(normal).toVar();
+  const gp = groom.sub(n.mul(dot(groom, n))).toVar();
+  const gl = length(gp).toVar();
+  const gs = gp.div(max(gl, 1e-4)).toVar(), b = crossN(n, gs).toVar();
   const P = p.div(cell).add(OFFSET).toVar();
   const base = floor(P.sub(gs.mul(REACH)).sub(0.5)).toVar();
   const front = float(1e9).toVar(), u = float(0).toVar(), v = float(0).toVar(), h = float(0).toVar();
@@ -155,7 +159,17 @@ export function featherAt(p: C, cell: F, gs: C, b: C) {
     h.assign(select(take, hm, h));
   }
   const w = sin(u.mul(0.85).add(0.15).mul(Math.PI)).mul(FEATHER.width);
-  return { found: front.lessThan(1e8), u, v, h, w };
+  return { found: front.lessThan(1e8).and(gl.greaterThanEqual(1e-4)), u, v, h, w };
+}
+
+/**
+ * The feathers at rest position `p` as drawn (the skin and the feather shell both call this, so the shell's feathers lie
+ * exactly over the skin's): whether one covers it, and its shade (`featherShade`). `fw` is `length(fwidth(p))`, taken by
+ * the caller outside any branch. Call it inside a `Fn`.
+ */
+export function feathersAt(p: C, cell: F, groom: C, normal: C, fw: F) {
+  const f = featherAt(p, cell, groom, normal);
+  return { found: f.found, shade: featherShade(f.u, f.v, f.h, fw.div(cell).mul(0.5)) };
 }
 
 /** Each feather's own shade, ± this. */
