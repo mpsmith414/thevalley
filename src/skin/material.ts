@@ -1,9 +1,10 @@
 import { MeshPhysicalNodeMaterial, Vector3, Vector4, Color } from 'three/webgpu';
 import {
-  abs, attribute, bumpMap, color, float, fract, int, max, mix, mx_noise_float, mx_worley_noise_float, select, sin, smoothstep, step, uniform,
-  uniformArray, varying, vec3,
+  abs, attribute, bumpMap, color, cross, dot, float, Fn, fract, fwidth, If, int, length, max, mix, mx_noise_float, mx_worley_noise_float,
+  normalize, select, sin, smoothstep, step, uniform, uniformArray, varying, vec3,
 } from 'three/tsl';
 import { COVERINGS, MAX_REGIONS, type Covering } from '../recipe/schema';
+import { drawsFeathersAt, featherAt, featherCellNode, featherShade } from './coat';
 import { COVERING_LOOK, type RegionPack } from './patterns';
 
 type F = ReturnType<typeof float>;
@@ -21,7 +22,8 @@ const isRelief = (cov: F, kind: ReturnType<typeof reliefKind>) =>
 
 /**
  * Region settings as six vec4 arrays (WebGPU allows 12 uniform buffers per shader stage):
- *  colA = base rgb, hasBelly · colB = belly rgb, patKind · colC = pattern rgb, patScale
+ *  colA = base rgb, hasBelly + 2 × feathers (1 where the region draws feathers: `drawsFeathersAt`) · colB = belly rgb, patKind
+ *  · colC = pattern rgb, patScale
  *  parA = patAmount, patAlong, furLength, fluff · parB = covering, roughness, sheen, clearcoat · parC = bump
  *  (parC[0].yzw = the nose rgb, parC[1].yzw = the inner-ear rgb: lanes otherwise unused)
  */
@@ -34,7 +36,7 @@ export function packUniforms(pack: RegionPack) {
   // named, so equal materials (two animals of one species, the fur shells) get equal shader code and share a GPU pipeline
   const arr = (name: string, v: Vector4[]) => uniformArray(v, 'vec4').setName(name) as V4;
   return {
-    colA: arr('skinColA', pack.base.map((h, i) => rgb(h, pack.hasBelly[i]))),
+    colA: arr('skinColA', pack.base.map((h, i) => rgb(h, pack.hasBelly[i] + (drawsFeathersAt(pack.coat[i]) ? 2 : 0)))),
     colB: arr('skinColB', pack.belly.map((h, i) => rgb(h, pack.patKind[i]))),
     colC: arr('skinColC', pack.patColor.map((h, i) => rgb(h, pack.patScale[i]))),
     parA: arr('skinParA', pack.patAmount.map((a, i) => new Vector4(a, pack.patAlong[i], pack.furLength[i], pack.fluff[i]))),
@@ -69,6 +71,7 @@ export function regionNodes(pack: RegionPack) {
   const bp = bp4.xyz;
   const rn = attribute('normal', 'vec3'); // the rest normal: the vertex stage skins `normal`, so read it here as the raw attribute
 
+  const feathers = step(1.5, colA.w), hasBelly = colA.w.sub(feathers.mul(2));
   const kind = colB.w;
   const scale = colC.w;
   const amount = parA.x as unknown as F;
@@ -88,7 +91,7 @@ export function regionNodes(pack: RegionPack) {
           select(kind.lessThan(3.5), rings, gradient))))) as unknown as F;
 
   // a lighter underside where the rest-pose surface faces down
-  const bellyAmt = float(1).sub(smoothstep(-0.75, -0.3, rn.y)).mul(colA.w).mul(info.w);
+  const bellyAmt = float(1).sub(smoothstep(-0.75, -0.3, rn.y)).mul(hasBelly).mul(info.w);
   const mottle = mx_noise_float(bp.mul(18)).mul(0.06).add(0.97);
   const base = mix(colA.xyz, colB.xyz, bellyAmt);
   const colorNode = mix(base, colC.xyz, mask.mul(float(1).sub(bellyAmt.mul(0.6)))).mul(mottle).mul(tint) as unknown as C;
@@ -108,7 +111,7 @@ export function regionNodes(pack: RegionPack) {
   const nose = (U.parC.element(0) as unknown as { yzw: C }).yzw, earInner = (U.parC.element(1) as unknown as { yzw: C }).yzw;
 
   return {
-    tint, i, bp, pt, colorNode, height, mask, feature, nose, earInner,
+    tint, i, bp, rn, pt, colorNode, height, mask, feature, nose, earInner, feathers: feathers as unknown as F,
     groom: groom4.xyz as unknown as C, cavity: groom4.w as unknown as F,
     furLength: parA.z as unknown as F, fluff: parA.w as unknown as F,
     roughness: parB.y as unknown as F, sheen: parB.z as unknown as F, clearcoat: parB.w as unknown as F,
@@ -123,6 +126,8 @@ export function furCover(r: ReturnType<typeof regionNodes>): F {
 
 /** The skin under fur, × the hair colour: dense underfur seen between the strands, never bare skin. */
 const UNDERFUR = 0.6;
+/** A gap between feathers (where none covers the skin), × the feather colour. */
+const FEATHER_GAP = 0.7;
 
 const LIPS = color(new Color('#3a2220')), GUMS = color(new Color('#9a4a48')), GUM_TONE = 0.2;
 /** The nose's finish: roughness, and a thin, soft clear coat (moist, not glassy). */
@@ -153,7 +158,25 @@ export function createSkinMaterial(pack: RegionPack) {
   // or with the fur off, the skin is the coat and keeps the hair's own shade), the skin is the hair colour, darkened
   const underfur = uniform(0).onObjectUpdate(({ object }) => (object?.userData.underfur as number | undefined) ?? 0);
   const furred = select(r.furLength.greaterThan(0), furCover(r), float(0)).mul(underfur);
-  const col = markedColor(r).mul(mix(float(1), float(UNDERFUR), furred)) as unknown as C;
+  // under feathers the skin is the same feathers the lowest fur shell draws (seen where that shell is off its edge, or
+  // missing): the lattice is searched only there
+  const cover = Fn(() => {
+    const k = furred.toVar();
+    const fw = length(fwidth(r.bp)).toVar(); // derivatives before the branch (uniform control flow)
+    const shade = mix(float(1), float(UNDERFUR), k).toVar();
+    If(r.feathers.greaterThan(0.5).and(k.greaterThan(0)), () => {
+      const cell = featherCellNode(r.furLength).toVar();
+      const n = normalize(r.rn);
+      const g = r.groom.sub(n.mul(dot(r.groom, n))).toVar();
+      const gl = length(g).toVar();
+      const gs = g.div(max(gl, 1e-4)).toVar();
+      const ft = featherAt(r.bp, cell, gs, cross(n, gs));
+      const s = select(ft.found.and(gl.greaterThan(1e-4)), featherShade(ft.u, ft.v, ft.h, fw.div(cell).mul(0.5)), float(FEATHER_GAP));
+      shade.assign(mix(float(1), s, k));
+    });
+    return shade;
+  })() as unknown as F;
+  const col = markedColor(r).mul(cover) as unknown as C;
   const m = new MeshPhysicalNodeMaterial();
   m.colorNode = col;
   m.aoNode = r.cavity; // ambient light darkens in armpits, groins, along the belly line and behind the ears

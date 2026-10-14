@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { COATS, type Region } from '../../src/recipe/schema';
-import { COAT_LOOK, regionCoat, strandCell } from '../../src/skin/coat';
+import { COAT_LOOK, FEATHER, drawsFeathers, regionCoat, strandCell } from '../../src/skin/coat';
 
 const region = (r: Partial<Region>): Region => ({ id: 'r', covering: 'fur', color: '#806040', belly: null, furLength: 0.02, fluff: 0.3, coat: null, pattern: null, ...r });
 
@@ -45,5 +45,19 @@ describe('COAT_LOOK', () => {
       expect(l.density).toBeGreaterThan(0);
       expect(l.guardLen).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe('feathers', () => {
+  it('smooth feathers draw as feathers; downy ones (and every hair coat) as strands', () => {
+    expect(drawsFeathers('smooth')).toBe(true);
+    for (const c of COATS.filter((c) => c !== 'smooth')) expect(drawsFeathers(c), c).toBe(false);
+    expect(drawsFeathers(null)).toBe(false);
+  });
+
+  it('keeps the vane shape in one place: longer than wide, a thin shaft', () => {
+    expect(FEATHER.span).toBe(1.8);
+    expect(FEATHER.shaft).toBe(0.04);
+    expect(FEATHER.span).toBeGreaterThan(2 * FEATHER.width);
   });
 });

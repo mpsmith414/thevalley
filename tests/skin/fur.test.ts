@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { COATS } from '../../src/recipe/schema';
-import { furMaterial, furShellOffsets, packCoat, shellTop } from '../../src/skin/fur';
-import { COAT_LOOK, strandCell } from '../../src/skin/coat';
+import { SkinnedMesh, BufferGeometry, MeshStandardMaterial, Skeleton } from 'three/webgpu';
+import { createFurShells, furMaterial, furShellOffsets, packCoat, shellTop } from '../../src/skin/fur';
+import { COAT_LOOK, featherCell, strandCell } from '../../src/skin/coat';
 import { FurLightingModel } from '../../src/skin/fur-light';
 import { packRegions } from '../../src/skin/patterns';
 import { blob, quadruped } from '../fixtures/recipes';
+
+/** The quadruped with its fur turned to smooth feathers (and, with `tail`, a scaly tail kept). */
+const feathered = { ...quadruped, skin: { ...quadruped.skin, regions: quadruped.skin.regions.map((r) => (r.covering === 'fur' ? { ...r, covering: 'feathers' as const, coat: 'smooth' as const } : r)) } };
 
 describe('furShellOffsets', () => {
   it('rises to the fur length, packed closer near the skin', () => {
@@ -66,5 +70,28 @@ describe('packCoat', () => {
     expect(shellTop(packRegions(quadruped, ['body', 'tail']))).toBe(COAT_LOOK.soft.guardLen);
     const woolly = { ...quadruped, skin: { ...quadruped.skin, regions: quadruped.skin.regions.map((r) => ({ ...r, coat: r.covering === 'fur' ? ('woolly' as const) : null })) } };
     expect(shellTop(packRegions(woolly, ['body', 'tail']))).toBe(1);
+  });
+});
+
+describe('feather mode', () => {
+  it('packs the feather flag and the feather cell beside the sheen, for smooth feathers only', () => {
+    const v = packCoat(packRegions(feathered, ['body', 'tail']));
+    expect(v[2].toArray()).toEqual([COAT_LOOK.smooth.sheen, 1, featherCell(0.02), 0]);
+    expect(v[5].y).toBe(0); // scales
+    expect(packCoat(packRegions(quadruped, ['body', 'tail']))[2].y).toBe(0); // fur
+  });
+
+  it('a coat of only feathers gets only the lowest shell (the feathers draw on no other)', () => {
+    const base = new SkinnedMesh<BufferGeometry, MeshStandardMaterial>(new BufferGeometry(), new MeshStandardMaterial());
+    base.bind(new Skeleton([]));
+    const m = furMaterial(packRegions(feathered, ['body', 'tail']))!;
+    for (const count of [8, 16, 24]) {
+      const shells = createFurShells(base, m, count);
+      expect(shells.length).toBe(1);
+      expect(shells[0].userData.shellT).toBe(furShellOffsets(count)[0]);
+      expect(shells[0].userData.shellPrev).toBe(0); // the shell the feather branch draws on
+    }
+    // fur anywhere on the body keeps every shell
+    expect(createFurShells(base, furMaterial(packRegions(quadruped, ['body', 'tail']))!, 16).length).toBe(16);
   });
 });

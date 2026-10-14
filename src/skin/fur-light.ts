@@ -55,26 +55,29 @@ function smooth(a: number, b: number, x: number) {
   return k * k * (3 - 2 * k);
 }
 
-/** The strand shading in TSL (the twin of `strandShadeCPU`: change them together). */
-export function strandShade(T: C, N: C, L: C, V: C, t: F, sheen: F) {
+/** The strand shading in TSL (the twin of `strandShadeCPU`: change them together). `exp1` may vary per pixel (feathers). */
+export function strandShade(T: C, N: C, L: C, V: C, t: F, sheen: F, exp1: F | number = STRAND.exp1) {
   const H = normalize(L.add(V));
   const NL = dot(N, L).toVar();
   const lit = smoothstep(-0.1, 0, NL);
   // (√(1 − (T·H)²))^e as (1 − (T·H)²)^(e/2)
-  const lobe = (shift: number, e: number) => {
+  const lobe = (shift: number, e: F | number) => {
     const d = dot(normalize(T.add(N.mul(shift))), H);
-    return pow(max(float(1).sub(d.mul(d)), 1e-6), e / 2).mul(lit).mul(sheen);
+    return pow(max(float(1).sub(d.mul(d)), 1e-6), typeof e === 'number' ? e / 2 : e.div(2)).mul(lit).mul(sheen);
   };
   return {
     diffuse: max(0, NL.add(WRAP).div(1 + WRAP)),
-    spec1: lobe(STRAND.shift1, STRAND.exp1),
+    spec1: lobe(STRAND.shift1, exp1),
     spec2: lobe(STRAND.shift2, STRAND.exp2),
     back: float(1).sub(t).mul(pow(max(dot(V, L).negate(), 0), 4)).mul(max(float(1).sub(abs(NL)), 0)).mul(sheen).mul(BACK),
   };
 }
 
-/** What the fur material hands its lighting model: the strand tangent (view space), the shell height and the sheen. */
-export type StrandInputs = { tangent: C; t: F; sheen: F };
+/**
+ * What the fur material hands its lighting model: the strand tangent (view space), the shell height, the sheen and the
+ * primary lobe's sharpness (`STRAND.exp1` when not given).
+ */
+export type StrandInputs = { tangent: C; t: F; sheen: F; exp1?: F };
 
 /**
  * The lighting model the fur material uses: three's physical model (`CrownLightingModel` in impostor.ts is the pattern),
@@ -90,7 +93,7 @@ export class FurLightingModel extends PhysicalLightingModel {
     if (!probe(ok, "PhysicalLightingModel.direct's input is not { lightDirection, lightColor, reflectedLight }, so fur is lit without strand lighting (fur-light.ts)")) return super.direct(input, builder);
     const { lightDirection, lightColor, reflectedLight } = input as unknown as { lightDirection: C; lightColor: C; reflectedLight: { directDiffuse: C; directSpecular: C } };
     const hair = diffuseColor.rgb as unknown as C;
-    const s = strandShade(this.strand.tangent, normalView as unknown as C, lightDirection, positionViewDirection as unknown as C, this.strand.t, this.strand.sheen);
+    const s = strandShade(this.strand.tangent, normalView as unknown as C, lightDirection, positionViewDirection as unknown as C, this.strand.t, this.strand.sheen, this.strand.exp1);
     const light = lightColor.mul(1 / Math.PI); // radiance the way three's Lambert scales it, so the coat sits beside the skin
     reflectedLight.directDiffuse.addAssign(light.mul(hair).mul(s.diffuse));
     const rim = mix(hair, vec3(...WARM), WARM_MIX);
