@@ -260,12 +260,59 @@ under 3 s each). "Before" is the old uniform-grid builder.
 
 The tool also prints where each build's time goes (sampling, meshing, weighting, simplifying, normals, skinning).
 
+### Fur and feathers
+
+Fur and feathers are drawn as shells: copies of the body pushed out along the normal, each cutting the strands at its
+height. Lifeform Polish 3b rebuilt them (schema v3 adds a `coat` word per fur or feather region; the designer picks it,
+and anything missing is inferred from the region's covering and length).
+
+- **Bake** (`src/builder/groom.ts`, `cavity.ts`): every vertex gets a hair direction and a cavity value, baked with the
+  body for each level of detail and kept in its cache. The direction blends the bones' flows by skin weight (tail-wards
+  on the body, down the legs and tail, back from the face), sags a little on steep sides, and is smoothed over the mesh.
+  The cavity marches five steps out along the normal through the body's distance field: armpits, groins, the belly line
+  and behind the ears come out darker. Both travel in one vertex attribute, so three's skinning bends the hair with the
+  pose.
+- **Coats** (`src/skin/coat.ts`). One word per region sets how the hair draws:
+
+  | Coat | Looks like | Used on |
+  |---|---|---|
+  | `sleek` | short, glossy, lying flat | deer, the fox's snout and ears |
+  | `soft` | medium, a little lifted, some guard hairs | fox, rabbit, the deer's tail, the wolf's legs |
+  | `shaggy` | long, clumped, hanging, many guard hairs | wolf, the fox's brush |
+  | `woolly` | dense, upright, crimped | (sheep-like drawings) |
+  | `bristly` | sparse, stiff, upright | (boar-like drawings) |
+  | `smooth` | feathers lying flat in overlapping rows | duck, hawk |
+  | `downy` | fluffy feathers, drawn as fine strands | (chicks, an owl's chest) |
+- **Shells** (`src/skin/fur.ts`): 16 on High near an animal (8 a level further out, none far away; the lab draws 24).
+  Each shell slides along the hair direction as it rises, so strands lean over towards the tail. Strands sit in a 3D
+  lattice scaled to the fur length (a deer's 12 mm coat gets ~1.1 mm strands) and draw as the short segment a leaning
+  hair travels between two shells, so they read as lines, not dots. Guard hairs come from a coarser lattice and stand
+  past the underfur; clumps pull strand tips together; crimp waves them; long coats droop. Edges are a hard alpha cut
+  (see the HANDOFF on alpha to coverage).
+- **Feathers:** a `smooth` coat draws one feather shell just off the skin: overlapping vanes with a shaft, each rooted
+  upstream so its tip lies over the base of the one behind, the way roof tiles do. The skin under it shows the same
+  feathers, and bars and spots are painted per pixel on them.
+- **Light** (`src/skin/fur-light.ts`): hair is lit as strands, not a surface: two highlights along the hair (a whitish
+  one towards the root, a broader one tinted by the hair towards the tip), a wrapped diffuse so the shadow edge is soft,
+  and a warm rim on the outer shells when the sun is behind the animal. Ambient light is darkened by the cavity.
+  Shadows on the fur are looked up about a fur length out from the body, so the body's own shadow edge doesn't put out
+  the rim, while ridges and trees still shade the coat.
+
+Measured at the fur checkpoint (owner's PC, 1920×1080, High, Chrome WebGPU):
+
+- River Bend (`__valley.perf()`, 3 runs): 15.1 ms median (15.0 before 3b). No animal is close enough there to draw fur.
+- With an animal close up at noon (render only, 180 frames, 3 runs): a fox a third of the screen wide 10.3 ms with fur,
+  8.1 ms without (about 2.2 ms of fur); a lying deer 9.9 ms against 7.3 ms (about 2.6 ms). Each shell costs about
+  0.12 ms there; 12 shells instead of 16 would save about 0.5 ms.
+- Body builds (`npx tsx tools/perf.ts`, all three levels of detail): every body under 3 s; the frog is slowest at 2.6 s
+  (the groom and cavity bake added about 0.15 s to it).
+
 ### Status
 
 Built and checked on the owner's PC (RTX 3060 Ti, WebGPU):
 
-- Body builds (all three levels of detail, main thread, `npx tsx tools/perf.ts`): 0.25–2.5 s per body since Lifeform
-  Polish 3a (table above). The frog is slowest at 2.5 s; the target is under 3 s. Built bodies are cached, so a body
+- Body builds (all three levels of detail, main thread, `npx tsx tools/perf.ts`): 0.25–2.6 s per body since Lifeform
+  Polish 3a (table above; 3b's fur bake adds a little). The frog is slowest at 2.6 s; the target is under 3 s. Built bodies are cached, so a body
   is built once per browser.
 - Planted feet slide 0 cm while walking, trotting, galloping, changing speed and circling.
 - Frame cost at 1920×1080 on the high tier (one walking animal, stage, fur, shadows; simulation + render + GPU finish): wolf 7.3 ms, fox 10.5 ms, rabbit 11 ms, deer 10.3 ms, frog 6.1 ms. 60 fps needs under 16.7 ms.

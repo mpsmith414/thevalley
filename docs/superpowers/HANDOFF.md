@@ -1,4 +1,4 @@
-# Handoff: where Creature Ecosystem stands (2026-10-13, 3b paused after Task 6; next: finish the fur, then 6)
+# Handoff: where Creature Ecosystem stands (2026-10-14, 3b fur built and waiting on the owner's OK; next: merge, then 6)
 
 Read this first in a new session, then the specs it points to.
 
@@ -12,6 +12,9 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
 - Sub-project 2 design and plan: `docs/superpowers/specs/2026-10-07-valley-design.md`, `docs/superpowers/plans/2026-10-07-valley.md`
 - Sub-project 3a design and plan: `docs/superpowers/specs/2026-10-09-lifeform-polish-shapes-faces-design.md`,
   `docs/superpowers/plans/2026-10-09-lifeform-polish-shapes-faces.md` (build ledger: `.superpowers/sdd/progress.md`)
+- Sub-project 3b design and plan: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md`,
+  `docs/superpowers/plans/2026-10-10-lifeform-polish-fur-motion-post.md` (build ledger:
+  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md`)
 - How it works, how to run it, controls, performance and status: `README.md`
 
 ## Where things are
@@ -34,6 +37,20 @@ A semi-realistic 3D living valley watched like a nature documentary, for the own
   simplification (LOD0–2 from one chain), a `feature` vertex attribute (nose, inner ear, lips/mouth, hoof colours), a
   jaw bone, eyelids, face motion (call, chew, lap, yawn, lids, ears), a body cache in IndexedDB and a builder worker
   pool, and the native cast's hints and retune. README "Bodies and faces" has the details and numbers.
+- **Sub-project 3b Part 1, the fur (plan Tasks 1–9 plus the fur checkpoint), is built on `feat/lifeform-polish-3b`,
+  NOT merged: it waits on the owner's OK.** Tasks 1–6 are already on `main` (fast-forward to `fcfd649`); the branch adds
+  Tasks 7–9 (strand lighting and cavity shading, feather mode, the cast's coats and the fur tune) and the checkpoint's
+  docs. What the fur is and its numbers: README "Fur and feathers". What to look at (all in `.shots/`, gitignored):
+  - `compare3b-fur-face.png`, `compare3b-fur-34.png`, `compare3b-fur-side.png`: each row before (`b3-*`) | after
+    (`a3-*`), rows deer, rabbit, fox, wolf, duck, hawk, trout, frog, then the test bodies quadruped, snake, hexapod,
+    blob, biped, bird. The face sheet shows the change best: the studs and spikes are gone.
+  - `a3-fox-backlit.png` (and `-close`): the fox three-quarter with a 10° sun behind it.
+  - `valley3b-fur-animals.png`: deer, fox (two) and duck up close in the valley at noon.
+  - `after3b-drawings.png` (drawing | face | three-quarter | side) and `after3b-drawing-<n>-face/34/side.png`: the four
+    test drawings through the designer once more, with coats.
+  - `fur3b-walk-fox.gif` (close) and `fur3b-walk-deer.gif` (about 10 m): strand edges in motion.
+  Checks at the checkpoint: 712 tests pass (1 skipped), `npx tsc --noEmit` clean, `npm run build` OK; River Bend
+  15.1 ms median (15.0 before 3b); every body builds in under 3 s (frog 2.6 s).
 - `.env` (gitignored) holds the owner's key. They use a **multi-workspace key**, so `ANTHROPIC_WORKSPACE_ID` is also set and sent as the `anthropic-workspace-id` header.
 - The designer asks Claude for **plain JSON** against the schema (written into the cached instructions). The recipe schema is too big for constrained structured outputs ("compiled grammar is too large"). The server validates leniently, normalises (it infers missing part roles from ids, among other repairs) and retries once.
 - Owner's verdict on the lab: a first pass. **Shapes and faces bother them most.** That was sub-project 3a (above).
@@ -107,13 +124,43 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
     The eyelids (`src/skin/eyes.ts`) use only public API (a `DoubleSide` material, a per-object `onObjectUpdate`
     tint) and share the skinning patch (item 1) with the body.
 
+Added by 3b's fur (Tasks 6–9):
+
+12. **The groom rides three's tangent skinning** (`src/render/creature.ts` `lodGeometry`, *probed*: `skinsTangent()` in
+    `src/render/probe.ts`): the hair direction and cavity (one vec4) are bound on the geometry as the attribute
+    `tangent`, because r186's `skinning` Fn assigns the skinned tangent to `tangentLocal` when the geometry has one. The
+    fur shader reads `tangentLocal` (posed) for the slide and the raw attribute (rest) for the lattice. If three stops
+    skinning tangents, the fur keeps its rest direction on a bent body.
+13. **`PhysicalLightingModel.direct` input shape for the fur** (`src/skin/fur-light.ts` `FurLightingModel`, *probed* like
+    item 5's `CrownLightingModel`): reads `{ lightDirection, lightColor, reflectedLight }`; if the shape changes, fur
+    falls back to three's plain lighting.
+14. **`NodeMaterial.receivedShadowPositionNode`** (`src/skin/fur.ts`, *probed*): the fur looks its received shadows up
+    about a fur length out along the normal, read by r186's `ShadowBaseNode.setupShadowPosition`. If three drops it, the
+    body's own shadow edge puts out the backlit rim (nothing breaks).
+15. **The fur shader uses 16 of WebGPU's 16 inter-stage variables** (not a three internal, a hard limit; no guard or
+    probe): any new varying in `fur.ts` fails to compile. Free one first (Task 9 found `bpV = varying(r.bp)` duplicates
+    the bodyPos varying). The skin shader uses 10.
+16. **r186 TSL re-declares vertex values in the fragment once the fragment runs a `Fn`** (found in Task 8): `.toVar()`
+    on a vertex-stage value, or a `select(...)` that reads one, made three emit the vertex var (and its attribute) in the
+    fragment too, costing varyings. `fur.ts` uses plain expressions and `mix(...)` there on purpose; keep it that way
+    while the shader is at the varying limit.
+17. **Alpha to coverage is off on the fur shells** (`fur.ts`, `m.alphaToCoverage = false`; a plain `alphaTest` 0.5):
+    with it on (r186, Chrome on D3D12 here) every partly covered pixel came out darker, towards neutral grey, instead of
+    a mix of strand and background: dark outlines round strands close up and a salt-and-pepper coat at a few metres.
+    Root cause not found in three or Dawn. The renderer stays `alpha: false` (with A2C the page showed through the
+    canvas); `renderer.ts`'s comment still names A2C as the reason. Retry A2C on a three upgrade.
+18. **`hashCPU` copies three's TSL `hash`** (`src/skin/coat.ts`, no probe): the CPU twin of r186's PCG `hash` (from
+    three's `Hash.js`) that the feather tests use. If three changes its hash, the tests still pass but check a feather
+    lattice the GPU no longer draws (the picture is still fine: the GPU uses three's own).
+
 ## Lifeform Polish 3a: what the owner checked, and known issues
 
 - **The sheets** (`.shots/compare-faces.png`, `compare-34.png`, `compare-sides.png`: each row is before | after; rows
   deer, rabbit, fox, wolf, duck, hawk, trout, frog, then the test bodies quadruped, snake, hexapod, blob, biped, bird;
   `valley-animals.png`: deer, fox and duck up close in the valley at noon; the four drawings' `after-drawing-<n>-face/34/side`).
   The owner OKed them on 2026-10-10 and 3a was merged.
-- **Fur looks spiky at close range** (face portraits): unchanged by 3a, it is the fur shells; 3b's fur rework.
+- **Fur looks spiky at close range** (face portraits): unchanged by 3a, it is the fur shells; fixed by 3b's fur
+  rework (`compare3b-fur-face.png`).
 - **LOD0 is capped at 1.3× the old triangle count** (the frog was 1.5×; the cap also trims the hawk −16 %, bird −9 %,
   duck −3 %). Eyelids are hidden at LOD2, so a distant sleeping animal shows open eyes (barely visible at that range).
 - **Build times are 5–15× the old builder** (0.25–2.5 s per body, the frog 2.5 s of a 3 s limit). The body cache and
@@ -132,6 +179,36 @@ console (`src/render/probe.ts`, or the patch's own warning) when three's interna
   Longneck (turtle). The designer filled the new hints itself (muscle, feet, nose, brow, an inner-ear colour for the
   fluffball). Sheet: `.shots/after-drawings.png` (drawing | face | three-quarter | side). The `-face` shot frames the
   head bone, so for a creature whose head is most of its body (Puffle) it is far too close.
+
+## Lifeform Polish 3b fur: known issues
+
+From the build ledger's look notes and the checkpoint's shots and measurements. None is a blocker in the builder's view;
+the owner decides on the sheets.
+
+- **Fur costs about 2.2–2.6 ms per animal close up** (16 shells on High; a fox a third of the screen wide, or a lying
+  deer, at noon, render only). River Bend has no animal near enough to draw fur, so its number (15.1 ms) says nothing
+  about fur. Several furry animals close to the camera at once on the TV could add up; the lever is
+  `QUALITY.high.furShells` 16 → 12 in `src/render/quality.ts` (about 0.5 ms back per close animal).
+- **Strand edges are a hard cut** (alpha to coverage off: r186 item 17). In the walk clips the coat barely changes frame
+  to frame beyond the motion itself (mean change on the torso 1.5 grey levels with fur against 1.3 without for the
+  close fox, 0.7 against 0.4 for the deer at ~10 m); no crawl was visible at 1:1. Worth a look live on the TV.
+- **Backlit rim is subtle.** With a 10° sun straight behind the fox the camera side stays nearly as bright as when
+  front-lit (torso about 15 % darker), so the warm rim on the outline is faint; at the lab's 44° sun it is hard to see.
+- **Strands cut at region midlines** (elbows, macro range only); **upright tufts on the quadruped test body's ear rim**
+  (read like lynx tufts); **stacked shell slices** show on long coats at 1:1 macro (inherent to shells).
+- **Duck flank a little busy** (the scalloped feather rows read slightly knitted at three-quarter range); feather
+  regions' marks can be painted over by the per-pixel feather pattern.
+- **Rabbit flank** shows soft darker blotches at side range (the clump pattern or the cavity).
+- **The deer** reads as smooth hide at every range: right for `sleek`, but flat next to the other coats.
+- **The wolf reads pale grey** with the strand lighting: its recipe colour (#6e685e) under this light; b3 looked darker
+  mostly because of the old alpha-to-coverage greying.
+- **The lab draws 24 shells, the valley 16**, so lab portraits are a little denser than in the valley.
+- **Console:** three's "Return statement used in an inline Fn()" warning (from `fur.ts`'s expression-bodied `Fn`s);
+  harmless.
+- **Designer run (2026-10-14, Sonnet, 16 calls, all 200, about 3.5 min):** the coats came out right with no prompt
+  change: Puffle Bun (fluffball) body fur `soft`; Crownbug (six-legged lizard) none; Puffback Wiggler (snake) its
+  orange and pink puffs fur `soft`; Dotty Longneck (turtle) none. The snake's three blue dots don't show on its puffs,
+  and bright fur colours read paler than the drawing (the skin under them does too: lighting, not fur).
 
 ## Backlog
 
@@ -263,13 +340,43 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 - `portrait`: the camera restore is not in try/finally, it leaves the loop paused, and `-34`/`-side` aim at
   root y + rest height; `tools/perf.ts` does not flag bodies over 3 s.
 
+## 3b fur backlog
+
+From the build ledger's deferred minors for Tasks 6–9 (`progress.md`). None blocks the merge.
+
+**Fur shader** (`src/skin/fur.ts`, `src/render/creature.ts`, `src/render/renderer.ts`)
+- `createCreatureObject` has six positional optionals (the lab passes `undefined, undefined, 24`): an options object.
+- The `furCoat` layout (`EYE_BASE`, `PER_REGION`) is named inline; `MAX_EYES` is 4 (more eyes just get the coat).
+- Clumped strand segments can be clipped by their cell (only the own and next cell are searched; untested beyond that).
+- Mixed feather/fur coats rasterise and discard the feather regions on every shell above the first, and pull the fur
+  at their border low.
+- `bpV = varying(r.bp)` duplicates the bodyPos varying: reading `r.bp` directly frees one of the 16 inter-stage slots.
+- The expression-bodied `Fn` at `fur.ts` ~320 (`() => c.assign(...)`) prints three's "Return statement used in an
+  inline Fn()" warning: give it braces.
+- Marks can be painted over by the per-pixel feather pattern (the mix order at `fur.ts` ~317–321).
+- Noisy `as unknown as` casts (`material.ts` ~98–106, `fur.ts` ~317); the `renderer.ts` comment on `alpha: false` still
+  names alpha-to-coverage fur, which is now off.
+
+**Strand lighting** (`src/skin/fur-light.ts`, `src/skin/material.ts`)
+- `SHADOW_LIFT`'s comment says "a fur length out from the body", but the lift is the length × (1 + t); the
+  `receivedShadowPositionNode` probe checks only that the property exists, and `fur.test` only that the node is set.
+- `isRelief`'s `reduce` has no initial value; its covering-index mapping and the per-mesh `underfur` flag reaching the
+  colour are untested.
+
+**Feathers** (`src/skin/coat.ts`)
+- `featherAt` returns an unused `w`; rare holes (0.006 %) sit just off the test's plane offset; the "is deterministic"
+  test asserts little; `hashCPU` copies three's hash (r186 item 18): owning the PCG would end that reliance.
+- No unit coverage for `across`, `whole` or the per-pixel feather pattern (Task 9's additions to `regionNodes`).
+
 ## Roadmap
 
 1. Creature Lab: built
 2. The Valley: built and merged
 3. **Lifeform Polish:** 3a (shapes and faces) built and merged (2026-10-10);
    **3b (fur, motion, post-processing): in progress** on `feat/lifeform-polish-3b`. Tasks 1–6 of 20 are merged to
-   `main` (the owner's OK, 2026-10-12, fast-forward to `fcfd649`).
+   `main` (the owner's OK, 2026-10-12, fast-forward to `fcfd649`); Part 1 (the fur: Tasks 7–9 and the fur checkpoint)
+   is built on the branch and waits on the owner's OK. Part 2 (Tasks 10–20: motion, post-processing, the remaining
+   sheets) resumes after sub-project 4.
 4. The Living Ecosystem
 5. Views and Eyes
 6. Bring It to Life (phone)
@@ -278,7 +385,7 @@ From the build ledger's minors and follow-ups (`.superpowers/sdd/progress.md`). 
 
 **Build order (agreed with the owner 2026-10-13; also in the vision doc's roadmap):**
 
-1. **Finish 3b's fur**: plan Tasks 7–9, then a fur checkpoint (below), then merge on the owner's OK.
+1. **Finish 3b's fur**: plan Tasks 7–9 and the fur checkpoint are built (2026-10-14); merge on the owner's OK.
 2. **6 Bring It to Life.** Released creatures go through one small, saved creature list that 4 will extend, not
    replace. Phone mic and live camera need HTTPS on the home network (decide how in its brainstorm).
 3. **4 The Living Ecosystem.** The simulation reports "moments" as they happen from day one, for the Director.
@@ -291,39 +398,26 @@ The owner is most excited about 6 and 8, and wants every skipped part built afte
 brainstorm → spec → plan → build autonomously on a feature branch → screenshots → merge only on the owner's OK. In the
 3b brainstorm the owner said to go with the recommendations without more questions and expects high quality.
 
-**Next: finish 3b's fur (Tasks 7–9), then start the sub-project 6 brainstorm.**
+**Next: the owner reviews the fur sheets; merge on OK; then the sub-project 6 (Bring It to Life) brainstorm. 3b Part 2
+(Tasks 10–20) resumes after sub-project 4.**
 
-- 3b spec: `docs/superpowers/specs/2026-10-10-lifeform-polish-fur-motion-post-design.md`; plan (20 tasks):
-  `docs/superpowers/plans/2026-10-10-lifeform-polish-fur-motion-post.md`.
+- What to look at: "Where things are" above (the `compare3b-fur-*` sheets, the backlit fox, the valley animals, the
+  drawings, the walk GIFs); what is known to be off: "Lifeform Polish 3b fur: known issues".
 - Build ledger, briefs, reports and rulings (gitignored, local only):
-  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md`. Read it first. It lists every completed
-  task with commits, the controller's rulings (R1–R6), deferred minors and look notes for Task 9. The Task 7 brief is
-  already extracted there (`task-7-brief.md`); the shared instruction files for implementers and reviewers are
-  `implementer-instructions.md` and `reviewer-instructions.md` in the same folder.
-- Done and reviewed: 1 clip/GIF tools and the before record (`.shots/b3-*`; River Bend baseline 15.0 ms median, frog
-  build 2.48 s), 2 the `groom` vec4 replaces `restNormal`, 3 groom (hair direction) bake, 4 cavity (SDF AO) bake, 5
-  recipe schema v3 with `coat`, 6 the fur shell rewrite (`.shots/t6-compare.png`: the studs and spikes are gone).
-  Key ruling R6: the groom array is bound on the geometry as the attribute `tangent`, so three r186's skinning bends it
-  (`tangentLocal` in the fur shader; probed in `src/render/probe.ts`). The renderer is now `alpha: false`.
-- **Not yet checked on `main`:** fur runs 16 shells on High (was 12) and its frame cost is unmeasured until Task 9. If
-  River Bend drops frames on the TV, set `QUALITY.high.furShells` back to 12 (`src/render/quality.ts`).
-- Next up: Task 7 strand lighting and cavity shading, Task 8 feather mode, Task 9 the cast's coats, the fur tune and the
-  fur frame budget (≤ 0.5 ms over the baseline). Then the **fur checkpoint** (not a plan task; do it on the same
-  branch):
-  - the fur parts of Task 20: final portraits `a3-<id>` for the 8 natives and 6 fixtures, and the before | after sheets
-    `compare3b-fur-face/34/side.png`;
-  - Task 19, the designer run of the four test drawings (it tests the `coat` words; about $1–1.50 with the owner's key);
-  - a short "Fur" note in the README, and this handoff updated;
-  - `npm test`, `npx tsc --noEmit`, `npm run build`, and the River Bend number.
-  Then ask the owner to merge. Tasks 10–20 (motion, post-processing, the remaining sheets and docs) wait until after
-  sub-project 4.
-- To resume, start a new chat with: "Read docs/superpowers/HANDOFF.md, then resume the Lifeform Polish 3b build at
-  Task 7 (subagent-driven, from the ledger) through the fur checkpoint."
+  `.superpowers/sdd/2026-10-10-lifeform-polish-fur-motion-post/progress.md`. It lists every task with commits, the
+  controller's rulings (R1–R12) and the deferred minors; `checkpoint-report.md` there has the checkpoint's measurements
+  in full. Key rulings for later work: R6 (the groom bound as `tangent`), R10 (alpha to coverage off on the fur), R11
+  (the backlit rim weighted by shell height), R12 (River Bend does not measure fur; measure with an animal close up).
+- Fur frame cost decision: `QUALITY.high.furShells` stays 16. If the TV drops frames with animals close, set it to 12
+  (`src/render/quality.ts`; about 0.5 ms back per close animal).
+- When Part 2 resumes: Task 10 is next (body mechanics; brief to extract from the plan). Rulings R2 (the settle spring
+  lives on `rig.mech`) and R4 (the take-off clip) already apply to it. Its sheets, valley tour, README "motion and the
+  picture" and the full 3b handoff are Task 20's remaining steps.
 
 ## Dev tips that save time
 
 - The preview tool reads `.claude/launch.json` from the session's original folder. Start the session in `CreatureEcosystem2` (the `valley` or `lab` configuration, port 5180), or run `npm run dev` yourself.
-- The app window is often hidden, which freezes animation frames, CSS transitions and the screenshot tool. Use the dev hooks instead: in the valley `__valley.step(frames)`, `__valley.shot(name)`, `__valley.screen(name)`, `__valley.tour(prefix)`, `__valley.perf()`, `__valley.timings`; in the lab `__lab.step`, `__lab.shot`, `__lab.screen`, `__lab.portrait(recipe, prefix)` (the standard `-face`, `-34` and `-side` shots used for the 3a sheets; recipes in `__lab.CAST` and `__lab.fixtures`) and `__lab.face(cmd)` (blink, yawn, chew, alert, back). The drawing test set exposes `__drawings.rows` and `runOne(row)`; its recipes are not exposed, so 3a captured them by intercepting the gallery save of each row's "Open in lab".
+- The app window is often hidden, which freezes animation frames, CSS transitions and the screenshot tool. Use the dev hooks instead: in the valley `__valley.step(frames)`, `__valley.shot(name)`, `__valley.screen(name)`, `__valley.tour(prefix)`, `__valley.perf()`, `__valley.timings`; in the lab `__lab.step`, `__lab.shot`, `__lab.screen`, `__lab.portrait(recipe, prefix)` (the standard `-face`, `-34` and `-side` shots used for the 3a sheets; recipes in `__lab.CAST` and `__lab.fixtures`) and `__lab.face(cmd)` (blink, yawn, chew, alert, back). The drawing test set exposes `__drawings.rows` and `runOne(row)`; its recipes are not exposed, so 3a and 3b captured them by intercepting the gallery save of each row's "Open in lab" (patch `IDBObjectStore.prototype.put` to keep `value.recipe` and throw, then call each row's `open.onclick()`). `__lab.clip(recipe, name, prefix, frames, every, warm)` records a motion clip as numbered shots; `python tools/gif.py OUT.gif IN... --fps N --width W` makes a GIF.
 - Live frame times (stalls, hitches): `__valley.frames.start()`, then play, then `__valley.frames.stop()` gives the real
   frames' intervals and working ms and lists the slow ones with the valley hour. In a hidden window call
   `__valley.frames.pump()` first: the live loop then runs from a timer that waits for the GPU after each frame (so GPU
