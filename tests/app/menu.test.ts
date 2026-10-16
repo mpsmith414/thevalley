@@ -3,14 +3,14 @@ import { SPEEDS, TIMES, menuModel, speedId, type MenuState } from '../../src/app
 import { PRESETS } from '../../src/world/clock';
 
 const state = (over: Partial<MenuState> = {}): MenuState => ({
-  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, ...over,
+  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, bring: false, dailyLimit: 10, today: 3, ...over,
 });
 const row = (s: MenuState, id: string) => menuModel(s).find((r) => r.id === id)!;
 const selected = (s: MenuState, id: string) => row(s, id).items.filter((i) => i.selected).map((i) => i.id);
 
 describe('menuModel', () => {
   it('lists the rows in the spec order', () => {
-    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'time', 'speed', 'quality', 'volume', 'more']);
+    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'time', 'speed', 'quality', 'volume', 'bring', 'limit', 'more']);
     expect(row(state(), 'more').items.map((i) => i.id)).toEqual(['lab', 'controls']);
   });
 
@@ -57,5 +57,21 @@ describe('menuModel', () => {
     expect(muted.items[2]).toMatchObject({ label: 'Unmute', selected: true });
     expect(muted.level).toBe(8); // the level stays (dimmed): − or + unmutes at it
     expect(muted.off).toBe(true);
+  });
+
+  it('has Add a creature (marked while the join card is showing, unmarked when it is off) and Creatures', () => {
+    const b = row(state(), 'bring');
+    expect(b.items.map((i) => [i.id, i.label])).toEqual([['add', 'Add a creature'], ['creatures', 'Creatures']]);
+    expect(selected(state(), 'bring')).toEqual([]);
+    expect(selected(state({ bring: true }), 'bring')).toEqual(['add']);
+  });
+
+  it('offers the daily limit 5, 10, 20 or 50 with the one in use marked and the count so far', () => {
+    const l = row(state({ dailyLimit: 20, today: 7 }), 'limit');
+    expect(l.title).toBe('Creatures a day');
+    expect(l.items.map((i) => i.label)).toEqual(['5', '10', '20', '50']);
+    expect(selected(state({ dailyLimit: 20 }), 'limit')).toEqual(['20']);
+    expect(l.note).toBe('7 made today');
+    expect(row(state({ dailyLimit: 5, today: 0 }), 'limit').note).toBe('0 made today');
   });
 });

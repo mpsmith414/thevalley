@@ -1,6 +1,6 @@
-import { NeutralToneMapping, PerspectiveCamera, Scene, type WebGPURenderer } from 'three/webgpu';
+import { NeutralToneMapping, PerspectiveCamera, Scene, type Object3D, type WebGPURenderer } from 'three/webgpu';
 import { BuilderClient } from '../builder/client';
-import { FreeFly, intentFrom, toggleDown, type FlyIntent } from '../camera/freefly';
+import { FreeFly, intentFrom, surfaceAt, toggleDown, type FlyIntent } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { compileTogether } from '../render/compile';
 import { startQuality, type Tier } from '../render/quality';
@@ -30,7 +30,22 @@ import { IMPOSTOR_LAYER, bakeImpostors, createImpostorLayer } from '../plants/im
 import { GROUND_COVER_LAYER, createGroundCover, loadFlowerCards } from '../plants/grass';
 import { createSoundscape, silentSoundscape, type Soundscape } from '../audio/soundscape';
 import { isLake, listenerPlace } from '../audio/place';
+import { createBring } from '../bring/bring';
+import { joinCard } from '../bring/card';
+import { createStudio } from '../bring/studio';
+import { ArrivalHold, PUSH } from '../bring/arrival-hold';
+import { pushView, type ArrivalShot } from '../bring/arrival';
+import { FollowCam } from '../bring/follow-cam';
+import { showTitle } from '../bring/welcome';
+import { comeBack, HOLD_CAP, keepMade, placeHomeless, releaseMade, sendExploring, visit, type ReleaseDeps } from '../bring/release';
+import { connectWorkshop, sendEnd, TRY_AGAIN, Workshop, workshopView } from '../bring/workshop';
+import { CreatureList } from '../creatures/list';
+import { api } from '../designer/api';
+import { newId } from '../lab/gallery';
+import type { Viewpoint } from '../valley/types';
+import { designCreature, tweakCreature } from '../designer/loop';
 import { openLoading, toast } from './loading';
+import type { Made } from '../bring/workshop';
 import type { Loop } from './dev';
 import { showLabel, type SpeedId } from './menu';
 import { menuControl, setSpeed } from './menu-control';
@@ -140,11 +155,21 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const cascades = (animals: number) => [1 | NEAR | animals | (MID_TREES_IN_CASCADE_0 ? MID_TREE : 0), 1 | NEAR | animals | MID, 1 | MID | IMP, 1 | MID | IMP];
   sky.cascadeLayers(cascades(0));
 
-  // ---------- the resident animals ----------
+  // ---------- the resident animals, and the families released into the valley ----------
   say('Waking the animals…');
   const residents = new Residents(valley, VALLEY, builder, tier, scene);
+  const views = VALLEY.viewpoints;
+  const start0 = viewpointPose(views[views.length - 1], valley); // Valley Overview, where the camera starts
+  // the creature list is the lab's gallery database: creatures released there (with no home yet, Ruling P3) get one in
+  // front of the start view now; without the list (no IndexedDB, or an older lab tab holding it at version 1, which
+  // would stop the upgrade until it is closed) the valley opens with its natives and nothing can be released
+  const list = await CreatureList.open().catch((e) => (console.error('the creature list could not be opened (an older lab tab open? close it and reload)', e), null));
+  const startView = { eye: start0.pos, forward: { x: -Math.sin(start0.yaw), z: -Math.cos(start0.yaw) } };
+  const released = list
+    ? await list.released().then((items) => placeHomeless(items, { list, valley, camera: () => startView })).catch((e) => (console.error('the released creatures could not be read', e), []))
+    : [];
   // the animals are optional: if a body will not build, the valley opens without (some of) them
-  await residents.spawn().catch((e) => console.error('the animals could not be made', e));
+  await residents.spawn(released).catch((e) => console.error('the animals could not be made', e));
   performance.mark('valley-animals');
   /**
    * The animals' shaders (about 3 s of compiling, beside the plants') build in the background once the valley is up, and the animals pop in
@@ -158,14 +183,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     sky.cascadeLayers(cascades(CREATURE));
     // their shadow pipelines too, which `compileAsync` cannot make: on the next frame, before it is drawn, one render of only
     // the animals from a stand-in camera (its own shadow passes; the frame's real render then draws over it)
-    const shadowEye = camera.clone();
-    shadowEye.layers.set(CREATURE_LAYER);
-    warm = () => {
-      shadowEye.copy(camera);
-      shadowEye.layers.set(CREATURE_LAYER);
-      sky.redrawShadows(); // even if the key light is out
-      residents.warmShadows(camera, () => renderer.render(scene, shadowEye));
-    };
+    warmShadows();
     performance.mark('valley-animals-shown');
   };
   let warm: (() => void) | null = null; // a one-off job for the start of the next frame's render (see `wakeAnimals`)
@@ -185,12 +203,26 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // ---------- the camera: free-fly, with gliding viewpoints ----------
   const input = new Input();
   let waiting = true; // the start screen is up: the controls wait for it (see `release`)
-  const views = VALLEY.viewpoints;
-  const start0 = viewpointPose(views[views.length - 1], valley); // Valley Overview
   const fly = new FreeFly(start0.pos, start0.yaw, start0.pitch);
   let current = views.length - 1; // the viewpoint we are at or flying to
-  let glide: { g: Glide; t: number } | null = null;
+  /** A glide under way: to a viewpoint (its name shows on arrival) or to a release framing (`done` once there or taken over). */
+  let glide: { g: Glide; t: number; label: string | null; done?: () => void } | null = null;
+  /** The glide is over (arrived, taken over or replaced): tell whoever waits for it. */
+  const endGlide = () => {
+    const done = glide?.done;
+    glide = null;
+    done?.();
+  };
   let wasToggle = false;
+  /** The arrival's welcome title, shown with the chime once the first of the family is in the picture (arrival v2). */
+  let title: string | null = null;
+  /** The camera's hold on an arrival (Ruling R6; glide, push-in, follow); the next phone's turn waits for it (Ruling R17). */
+  const arrival = new ArrivalHold({ onSeen: (since) => {
+    console.info(`arrival: the first of the family is in the picture ${since.toFixed(1)} s after the glide`);
+    sound.chime();
+    if (title) showTitle(ui, title);
+    title = null;
+  } });
   const setPose = (p: { pos: { x: number; y: number; z: number }; yaw: number; pitch: number }) => {
     fly.pos = { ...p.pos };
     fly.yaw = p.yaw;
@@ -203,24 +235,160 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const goTo = (n: number) => {
     current = index(n);
     fly.walk = false; // a viewpoint is up in the air, so don't drop back to walking height on arrival
-    glide = { g: new Glide(fly, views[current], valley), t: 0 };
+    endGlide();
+    arrival.end();
+    glide = { g: new Glide(fly, views[current], valley), t: 0, label: views[current].name };
     return views[current].name;
   };
   /** Jump straight to viewpoint `n` (1-8): eye and target are metres above the ground (or the water). */
   const view = (n: number) => {
     current = index(n);
     fly.walk = false;
-    glide = null;
+    endGlide();
+    arrival.end();
     setPose(viewpointPose(views[current], valley));
     fly.apply(camera);
     return views[current].name;
   };
   fly.apply(camera);
 
+  // ---------- the release camera (spec §3.4, arrival v2): a glide to a wide, clear framing, a push-in while the family
+  // walks in, then a chase camera behind the lead as the family walks on into the valley ----------
+  /** Seconds of camera time (the drive's own clock, so `step` moves it too), and when the last release glide ended. */
+  let camTime = 0, arrivedAt = 0;
+  /** The arrival's framings, and its chase camera once the follow starts. */
+  let shot: ArrivalShot | null = null, follow: FollowCam | null = null;
+  /** Glide to a framing (no label on arrival); resolves once there, or when the player takes the camera (or another glide starts). */
+  const glideTo = (v: Viewpoint) => new Promise<void>((done) => {
+    endGlide();
+    arrival.end();
+    fly.walk = false;
+    glide = { g: new Glide(fly, v, valley), t: 0, label: null, done: () => ((arrivedAt = camTime), done()) };
+  });
+  /** An arrival begins: the glide to its wide framing (its first phase). */
+  const arriveAt = (id: string, s: ArrivalShot) => {
+    const there = glideTo(s.wide);
+    arrival.begin(id);
+    shot = s;
+    follow = null;
+    title = null;
+    return there;
+  };
+  /** The family is in: push in and follow (not if the player took the camera, or another glide replaced this one). */
+  const holdFor = (id: string, text: string) => {
+    if (glide || !arrival.start(id, camTime - arrivedAt)) return;
+    title = text;
+  };
+  /** A family that could not come: its arrival ends (the camera and the next turn go free). */
+  const cancelArrival = (id: string) => {
+    if (arrival.id === id) arrival.end();
+  };
+  /** The lead of family `id` (the first of it, the one the others walk on behind). */
+  const lead = (id: string) => residents.familyOf(id)[0];
+  const look = {
+    /** Is one of family `id` in the picture (by the residents' update bands)? */
+    inView: (id: string) => residents.familyOf(id).some((a) => a.band !== 'paused'),
+    /** Has its lead reached its spot (walking on, or living its life)? */
+    onward: (id: string) => {
+      const a = lead(id);
+      return !!a && (!a.errand || !!a.errand.onward);
+    },
+  };
+  /** A released family's bodies, compiled detached from the valley but lit by it, before anyone sees them. */
+  const compileFamily = (root: Object3D) => {
+    const eye = camera.clone();
+    eye.layers.enable(CREATURE_LAYER);
+    return compileTogether(renderer, root, eye, scene);
+  };
+  /** On the next frame, one render of only the animals (one of each species) from a stand-in camera, for their shadow passes. */
+  const warmShadows = () => {
+    const shadowEye = camera.clone();
+    warm = () => {
+      shadowEye.copy(camera);
+      shadowEye.layers.set(CREATURE_LAYER);
+      sky.redrawShadows(); // even if the key light is out
+      residents.warmShadows(camera, () => renderer.render(scene, shadowEye));
+    };
+  };
+  const releaseDeps: ReleaseDeps | null = list && {
+    list, residents, valley, glideTo, arriveAt, hold: holdFor, cancel: cancelArrival, compile: compileFamily, warm: warmShadows, now: () => Date.now(), newId,
+    camera: () => ({ eye: { ...fly.pos }, forward: { x: -Math.sin(fly.yaw), z: -Math.cos(fly.yaw) } }),
+  };
+
   // ---------- the pause menu: Start or Esc opens and closes it, B goes back; the world runs on behind it ----------
-  const menu = menuControl({ ui, clock, sound, choice: quality.choice, tier, light, waiting: () => waiting });
+  // the phones: the valley hosts them (it registers once the start screen is through, in the loading code at the end)
+  const bring = createBring(joinCard(ui));
+  // the workshop: when a phone's turn comes the valley dims and the studio makes the creature (spec §3.2-3.5)
+  const shop = workshopView(ui, (parent) => createStudio(parent, tier));
+  const workshop = new Workshop({
+    design: designCreature, tweak: tweakCreature, api, build: (r) => builder.build(r), studio: shop.studio,
+    send: (t, m) => bring.send(t, m), ui: shop, now: () => performance.now(),
+  });
+  type Outcome = 'released' | 'kept' | 'failed';
+  /** Tell the phone how its turn ended (`failed`, with Try again, when nothing could be saved); once more if it did not go. */
+  const tell = (token: string, o: Outcome) => sendEnd((t, m) => bring.send(t, m), token, o === 'failed' ? { type: 'failed', message: TRY_AGAIN, retry: true } : { type: o });
+  /** Releases and Come backs under way, from the stage closing to the camera's hold on the arrival (the join card waits, Ruling R21). */
+  let arriving = 0;
+  const arrive = async <T>(f: () => Promise<T>): Promise<T> => {
+    arriving++;
+    try {
+      return await f();
+    } finally {
+      arriving--;
+    }
+  };
+  const hooks = {
+    /**
+     * Release: the stage fades out (0.6 s) while the creature is saved and its family compiled, the camera glides to the
+     * arrival and the family walks in (spec §3.4). A family that cannot come leaves the creature kept: "let's try again".
+     */
+    onRelease: (made: Made): Promise<Outcome> => arrive(async () => {
+      shop.close();
+      let outcome: Outcome = 'failed';
+      try {
+        if (!releaseDeps) throw new Error('no creature list');
+        outcome = (await releaseMade(made, releaseDeps)).valley ? 'released' : 'kept';
+      } catch (e) {
+        console.error('release: the creature could not be saved', e);
+      }
+      if (outcome !== 'released') toast(ui, TRY_AGAIN, 3000);
+      await tell(made.token, outcome);
+      return outcome;
+    }),
+    /** Ruling R17: a new turn waits until the arrival's camera hold is over (HOLD_CAP s at most, even with no frames drawn). */
+    ready: () => Promise.race([arrival.idle(), new Promise<void>((go) => setTimeout(go, HOLD_CAP * 1000))]),
+    /** The workshop takes the screen: no menu over it, and the mouse let go so Esc reaches the page (it is Back here). */
+    opening: () => {
+      menu.close();
+      if (document.pointerLockElement) document.exitPointerLock();
+    },
+    /** Back/Escape, the relay's cancel or a restarted relay with a creature made: kept, for the lab. */
+    onKept: async (made: Made): Promise<Outcome> => {
+      let outcome: Outcome = 'kept';
+      try {
+        if (!list) throw new Error('no creature list');
+        await keepMade(made, { list, now: () => Date.now(), newId });
+      } catch (e) {
+        console.error('workshop: the creature could not be kept', e);
+        outcome = 'failed';
+      }
+      await tell(made.token, outcome);
+      return outcome;
+    },
+  };
+  const linked = connectWorkshop(bring, workshop, hooks);
+  /** Back/Escape while the workshop shows: stop it (kept if something was made), or close a "try again". */
+  const back = () => (workshop.busy ? void linked.back() : shop.close());
+  // the menu stays shut while the workshop shows, and while a turn waits to open it (Ruling R17), so B cannot cancel it
+  const menu = menuControl({ ui, clock, sound, choice: quality.choice, tier, light, bring, waiting: () => waiting, busy: () => shop.showing || linked.waiting,
+    creatures: releaseDeps ? {
+      all: () => releaseDeps.list.all(), visit: (id) => visit(id, releaseDeps), explore: (id) => sendExploring(id, releaseDeps),
+      comeBack: (id) => arrive(() => comeBack(id, releaseDeps)), say: (text) => showLabel(ui, text),
+    } : undefined,
+  });
   input.onPress = (b, repeat) => {
     if (waiting) return; // the start screen comes first
+    if (shop.showing) return void (b === 'b' && !repeat && back()); // the workshop has the controls
     if (menu.press(b, repeat) || repeat) return; // a held arrow key must not restart the glide
     if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
     else if (b === 'right') goTo(current + 2);
@@ -229,7 +397,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || waiting) return;
     if (/^[1-8]$/.test(e.key)) {
-      if (!menu.open) goTo(+e.key);
+      if (!menu.open && !shop.showing) goTo(+e.key);
     } else if (e.key === 'm' || e.key === 'M') {
       menu.toggleMute();
       toast(ui, sound.muted ? 'Sound off' : 'Sound on', 1200);
@@ -241,26 +409,47 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const STILL: FlyIntent = { move: { x: 0, y: 0, z: 0 }, look: { yaw: 0, pitch: 0 }, fast: false, toggleWalk: false };
   /** One frame of camera control: gamepad and keys in, a glide or a free-fly step out (camera input waits while the menu is open). */
   const drive = (dt: number) => {
-    const open = !!menu.open;
+    const open = !!menu.open || shop.showing; // the camera holds still behind the menu and the workshop
     input.poll(dt, open);
     if (waiting) return;
     const pad = input.pad(), held = (k: string) => input.held(k), mouse = input.mouse();
     const intent = open ? STILL : intentFrom(pad, held, mouse, dt, wasToggle);
     wasToggle = toggleDown(pad, held);
+    camTime += dt;
+    const sticks = pad.lx !== 0 || pad.ly !== 0 || pad.rx !== 0 || pad.ry !== 0 || ['w', 'a', 's', 'd'].some(held);
+    // the arrival's clock and phases run from its glide's start; the stick or the mouse ends it at once, from any phase
+    const phase = arrival.active ? arrival.frame(dt, look, !open && (sticks || mouse.dx !== 0 || mouse.dy !== 0)) : null;
+    if (!phase) follow = null;
     if (glide) {
-      const stirred = !open && (pad.lx !== 0 || pad.ly !== 0 || pad.rx !== 0 || pad.ry !== 0 || ['w', 'a', 's', 'd'].some(held));
-      if (!stirred) {
+      if (open || !sticks) {
         glide.t += dt;
         const s = glide.g.sample(glide.t);
         setPose(s);
         if (s.done) {
-          glide = null;
-          if (!open) showLabel(ui, views[current].name); // arrived (no label over the menu)
+          const { label } = glide;
+          endGlide();
+          if (label && !open) showLabel(ui, label); // arrived (no label over the menu)
         }
         fly.apply(camera);
         return;
       }
-      glide = null; // the camera stays where the glide left it
+      endGlide(); // the camera stays where the glide left it
+    }
+    // the arrival after its glide: still while the family compiles, then the push-in, then the chase behind the lead
+    if (phase) {
+      const id = arrival.id!, a = lead(id);
+      if (phase === 'push' && shot) setPose(viewpointPose(pushView(shot, arrival.time / PUSH), valley));
+      else if (phase === 'follow' && a) {
+        const p = a.obj.root.position, target = { x: p.x, y: p.y, z: p.z };
+        if (!follow) {
+          const c = shot?.close.look ?? { x: p.x, z: p.z };
+          follow = new FollowCam(fly.pos, { x: c.x, y: surfaceAt(valley, c.x, c.z) + 1, z: c.z }, target, a.recipe.life.sizeM);
+        }
+        setPose(follow.update(dt, target, valley));
+      } else if (phase === 'follow') arrival.end(); // the family has gone (sent exploring): nothing to follow
+      fly.vel = { x: 0, y: 0, z: 0 };
+      fly.apply(camera);
+      return;
     }
     fly.update(dt, intent, valley);
     fly.apply(camera);
@@ -307,6 +496,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     veg.update(camera, dt);
     cover.update(camera);
     residents.update(dt, camera, clock.hour);
+    shop.turn(dt);
+    bring.setStage(shop.showing || arriving > 0 || arrival.active); // Ruling R21: the join card waits for the stage and the arrival
     light(dt);
     hear(dt);
     if (warm) {
@@ -345,7 +536,9 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     later = null;
   };
   return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
-    wind, veg, plants, bake, impostors, cover, residents, compileRest, audio, sound, listener, release, label, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open };
+    wind, veg, plants, bake, impostors, cover, residents, compileRest, audio, sound, listener, release, label, bring, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open,
+    builder, shop, workshop, hooks, list,
+    arrival };
 }
 export type World = Awaited<ReturnType<typeof start>>;
 
@@ -363,6 +556,7 @@ function run(w: World, pace: Pacing) {
     if (loop.heavy > 0) while (performance.now() - t0 < loop.heavy); // dev: a forced heavy frame
     if (!loop.paused) w.tick(dt);
     if (canvas.width > 0) w.renderer.render(w.scene, w.camera);
+    w.shop.render(); // the workshop's stage, on its own canvas
     if (!loop.paused && canvas.width > 0) pace.frame(dt, t0); // real frames only
     loop.onDrawn?.(now, performance.now() - t0);
   });
@@ -406,6 +600,7 @@ if (world) {
   const animals = w.compileRest().catch((e) => console.error('the plants or the animals could not compile', e));
   if (w.audio) await openStart(ui, w.audio); // one press wakes the sound (skipped when the browser already lets it play)
   w.release();
+  void w.bring.start(); // the phones can join now; this waits for no one and never delays the valley
   // Auto measures only now the start screen has gone and the animals' shaders are built (after a 1 s settle): loading
   // stalls must not count against the computer
   void animals.then(() => pace.startAuto());

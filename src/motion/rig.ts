@@ -6,6 +6,7 @@ import { add, dot, len, lerp, norm, scale, sub, v3, type Vec3 } from '../util/ve
 import { chooseGait, phasesFor, STRIDE, type GaitName } from './gait';
 import { fabrik } from './ik';
 import { findLimbs, type Limb } from './limbs';
+import { moveTraits } from './medium';
 import { SecondaryMotion } from './secondary';
 
 export type Ground = {
@@ -123,10 +124,10 @@ export class CreatureRig {
       };
     });
     this.legLength = this.legs.length ? Math.max(...this.legs.map((l) => l.lengths.reduce((s, x) => s + x, 0))) : this.bodyLength * 0.3;
-    const hab = recipe.mind.habitat;
-    this.canFly = limbs.some((l) => l.kind === 'wing') && (recipe.motion.gait === 'fly' || recipe.motion.gait === 'hover' || hab.includes('air'));
-    this.swimmer = recipe.motion.gait === 'swim' || (this.legs.length === 0 && hab.includes('water'));
-    this.floater = !this.swimmer && this.legs.length > 0 && hab.includes('water');
+    const traits = moveTraits(recipe, limbs.filter((l) => l.kind === 'wing').length, this.legs.length);
+    this.canFly = traits.canFly;
+    this.swimmer = traits.swimmer;
+    this.floater = traits.floater;
     this.secondary = new SecondaryMotion(this, limbs);
   }
 

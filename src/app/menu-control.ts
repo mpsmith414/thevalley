@@ -1,4 +1,7 @@
 import type { Soundscape } from '../audio/soundscape';
+import { DEFAULT_LIMIT } from '../bring/protocol';
+import { fillCreatures, type CreaturesDeps } from '../bring/creatures-menu';
+import { getCap, setCap, type CapNow } from '../bring/host';
 import type { QualityChoice, Tier } from '../render/quality';
 import type { Button } from '../shared/input';
 import { remember } from '../shared/settings';
@@ -22,8 +25,16 @@ export type MenuDeps = {
   tier: Tier;
   /** Relight the world (`Infinity` snaps it, after a jump). */
   light(dt: number): void;
+  /** The join card's toggle ("Add a creature"): marked while the card is showing, switches it off or on. */
+  bring: { readonly cardShown: boolean; toggle(): boolean };
+  /** The daily creature limit and today's count, from the server (null when it cannot say). */
+  cap?: { get(): Promise<CapNow | null>; set(limit: number): Promise<CapNow | null> };
   /** Is the start screen still up? It comes first. */
   waiting(): boolean;
+  /** Does something else have the screen (the workshop)? Then Esc is its Back and the menu stays shut. */
+  busy?(): boolean;
+  /** The Creatures page's list and what its buttons do (the menu closes itself for Visit and Come back). */
+  creatures?: Omit<CreaturesDeps, 'close'>;
 };
 
 /**
@@ -32,7 +43,17 @@ export type MenuDeps = {
  */
 export function menuControl(d: MenuDeps) {
   let menu: Menu | null = null;
-  const state = (): MenuState => ({ speed: d.clock.speed, paused: d.clock.paused, quality: d.choice, tier: d.tier, volume: d.sound.volume, muted: d.sound.muted });
+  const cap = d.cap ?? { get: () => getCap(), set: (n: number) => setCap(n) };
+  let today: CapNow = { count: 0, limit: DEFAULT_LIMIT }; // the last the server said
+  const state = (): MenuState => ({
+    speed: d.clock.speed, paused: d.clock.paused, quality: d.choice, tier: d.tier, volume: d.sound.volume, muted: d.sound.muted,
+    bring: d.bring.cardShown, dailyLimit: today.limit, today: today.count,
+  });
+  /** Take the server's word for the count and limit (a null answer changes nothing) and redraw if the menu is up. */
+  const learn = (c: CapNow | null) => {
+    if (c) today = c;
+    menu?.update(state());
+  };
   const close = () => {
     menu?.close();
     menu = null;
@@ -42,7 +63,7 @@ export function menuControl(d: MenuDeps) {
     menu?.update(state());
   };
   const show = () => {
-    if (menu || d.waiting()) return;
+    if (menu || d.waiting() || d.busy?.()) return;
     if (document.pointerLockElement) document.exitPointerLock(); // hand the mouse back for the buttons
     menu = openMenu(d.ui, state(), {
       resume: close,
@@ -69,14 +90,25 @@ export function menuControl(d: MenuDeps) {
         menu?.update(state());
       },
       mute: toggleMute,
+      bring: () => {
+        d.bring.toggle();
+        menu?.update(state());
+      },
+      limit: (n) => {
+        today = { ...today, limit: n }; // show the choice at once; the server's answer follows
+        menu?.update(state());
+        void cap.set(n).then((c) => (c ? learn(c) : cap.get().then(learn)));
+      },
       lab: () => (location.href = '/lab.html'),
+      creatures: d.creatures && ((page, nav) => void fillCreatures(page, { ...d.creatures!, close }, nav)),
     });
+    void cap.get().then(learn); // today's count may have moved since the menu was last up
   };
   const toggle = () => (menu ? close() : show());
 
   // Esc toggles the menu (like Start). `Input` maps Esc to B, so it is caught first, in the capture phase, and goes no further.
   window.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || d.waiting()) return; // the start screen's own handler takes it
+    if (e.key !== 'Escape' || d.waiting() || d.busy?.()) return; // the start screen's own handler takes it, or the workshop's Back
     e.preventDefault();
     e.stopImmediatePropagation();
     if (!e.repeat) toggle();

@@ -1,12 +1,17 @@
 import { openDB, type IDBPDatabase } from 'idb';
+import type { Maker } from '../bring/protocol';
 import type { CastMember } from '../cast';
 import type { PassRecord } from '../designer/loop';
 import type { ImageIn, KidCards } from '../designer/types';
 import { normalizeRecipe, RecipeError } from '../recipe/normalize';
 import type { Recipe } from '../recipe/schema';
 import { hash } from '../util/hash';
+import type { HomeRange } from '../valley/types';
 
-/** One saved creature: its recipe, cards, the drawing it came from and a thumbnail. */
+/** A creature living in the valley: its saved home (placed by the valley), its family's seeds, and when it was released. */
+export type ValleyRecord = { status: 'released' | 'exploring'; home?: HomeRange; seeds: [number, number, number]; releasedAt: number };
+
+/** One saved creature: its recipe, cards, the drawing it came from and a thumbnail; `valley` once released, `maker` when a phone made it. */
 export type GalleryItem = {
   id: string;
   recipe: Recipe;
@@ -17,6 +22,8 @@ export type GalleryItem = {
   history: Omit<PassRecord, 'render'>[];
   createdAt: number;
   native: boolean;
+  valley?: ValleyRecord;
+  maker?: Maker;
 };
 
 const STORE = 'creatures';
@@ -35,11 +42,18 @@ function upgraded(item: GalleryItem): GalleryItem {
 export class Gallery {
   private constructor(private db: IDBPDatabase) {}
 
-  static async open(name = 'creature-lab'): Promise<Gallery> {
-    const db = await openDB(name, 1, {
-      upgrade(d) {
-        d.createObjectStore(STORE, { keyPath: 'id' });
+  /**
+   * Open (or upgrade) the database. Another tab holding an older version open stops an upgrade until it lets go:
+   * `blocked` says so (the open waits on). This page lets go at once when a newer version wants the database.
+   */
+  static async open(name = 'creature-lab', opts: { blocked?: () => void } = {}): Promise<Gallery> {
+    const db: IDBPDatabase = await openDB(name, 2, {
+      // version 2 only adds optional fields (`valley`, `maker`) to items, so a version-1 store needs no migration
+      upgrade(d, old) {
+        if (old < 1) d.createObjectStore(STORE, { keyPath: 'id' });
       },
+      blocked: () => opts.blocked?.(),
+      blocking: () => db.close(),
     });
     return new Gallery(db);
   }

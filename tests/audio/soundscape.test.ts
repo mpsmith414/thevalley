@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EASE, ease, silentSoundscape, toMuted, toVolume } from '../../src/audio/soundscape';
+import { CHIME_NOTES, EASE, ease, silentSoundscape, toMuted, toVolume } from '../../src/audio/soundscape';
 
 describe('ease', () => {
   it('moves towards the target with a 0.8 s time constant', () => {
@@ -8,6 +8,14 @@ describe('ease', () => {
     expect(ease(1, 0, 100)).toBeCloseTo(0, 10);
     // two half steps land where one whole step does
     expect(ease(ease(0.2, 0.9, 0.05), 0.9, 0.05)).toBeCloseTo(ease(0.2, 0.9, 0.1), 12);
+  });
+});
+
+describe('the arrival chime', () => {
+  it('is three rising notes (arrival v2: a short rising chime)', () => {
+    expect(CHIME_NOTES).toHaveLength(3);
+    expect(CHIME_NOTES[0]).toBeLessThan(CHIME_NOTES[1]);
+    expect(CHIME_NOTES[1]).toBeLessThan(CHIME_NOTES[2]);
   });
 });
 
@@ -29,6 +37,7 @@ describe('remembered volume and mute', () => {
     const s = silentSoundscape();
     await s.ready;
     s.update({} as never, 0.1);
+    s.chime(); // silence
     expect(Object.values(s.gains()).every((g) => g === 0)).toBe(true);
     expect(s.sources().owl).toBe('off');
   });

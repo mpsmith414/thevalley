@@ -1,5 +1,12 @@
 import { Vector3 } from 'three/webgpu';
+import type { HostSend } from '../bring/protocol';
+import { Workshop } from '../bring/workshop';
 import { surfaceAt } from '../camera/freefly';
+import { CAST } from '../cast';
+import { DesignerResting, type DesignerApi } from '../designer/api';
+import { designCreature, tweakCreature } from '../designer/loop';
+import type { ImageIn, KidCards } from '../designer/types';
+import type { Recipe } from '../recipe/schema';
 import { viewpointPose } from '../camera/viewpoints';
 import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
@@ -105,8 +112,8 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: url });
     return name;
   };
-  /** The whole screen (3D view plus the UI on top) saved as .shots/<name>.png. */
-  const screen = async (name: string) => {
+  /** The whole screen (3D view plus the UI on top) saved as .shots/<name>.png; `fonts` embeds the page's web font (slower). */
+  const screen = async (name: string, fonts = false) => {
     const { toCanvas } = await import('html-to-image');
     pace.reset();
     tick(0);
@@ -123,7 +130,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 0);
     let uiCanvas: HTMLCanvasElement;
     try {
-      uiCanvas = await toCanvas(ui, { width: cw, height: ch, pixelRatio: canvas.width / cw, skipFonts: true });
+      uiCanvas = await toCanvas(ui, { width: cw, height: ch, pixelRatio: canvas.width / cw, skipFonts: !fonts });
     } finally {
       window.requestAnimationFrame = raf;
     }
@@ -280,5 +287,173 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
         return Object.fromEntries(marks.map((m) => [m.name.slice(7), Math.round(m.startTime)]));
       },
     },
+    __bring: bringHooks(w, screen),
   });
+}
+
+// ---------- the workshop without the designer: a stand-in turn, one call at a time ----------
+type Scenario = 'ok' | 'fail' | 'declined';
+/** A kid's creature made from the fox: purple, with a sunshine-yellow tail tip (what the stand-in drawing shows). */
+function sparkleFox(): { recipe: Recipe; cards: KidCards } {
+  const r = structuredClone(CAST.find((c) => c.recipe.id === 'fox')!.recipe);
+  const colours: Record<string, [string, string | null]> = {
+    body: ['#8a5cd6', '#efe4ff'], snout: ['#8a5cd6', '#f5edff'], ears: ['#4a2c86', null], socks: ['#3a2366', null], brush: ['#7d4fcc', '#c6a8f0'], tip: ['#ffd23a', null],
+  };
+  for (const g of r.skin.regions) if (colours[g.id]) [g.color, g.belly] = colours[g.id];
+  r.skin.eyes.color = '#3aa05a';
+  return {
+    recipe: { ...r, id: 'sparkle-fox', name: 'Sparkle Fox', seed: 77 },
+    cards: { name: 'Sparkle Fox', eats: 'strawberries 🍓', speed: 'zooms about 💨', mood: 'giggly 😄', special: 'a sunshine-yellow tail tip' },
+  };
+}
+/** A crayon drawing of it, as a phone would send it (PNG on white). */
+function doodle(): ImageIn {
+  const c = document.createElement('canvas');
+  c.width = 900;
+  c.height = 700;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  g.lineCap = g.lineJoin = 'round';
+  const crayon = (colour: string, width: number, path: () => void, fill?: string) => {
+    g.beginPath();
+    path();
+    if (fill) {
+      g.fillStyle = fill;
+      g.fill();
+    }
+    g.strokeStyle = colour;
+    g.lineWidth = width;
+    g.stroke();
+  };
+  crayon('#4caf50', 10, () => {
+    for (let x = 30; x < 880; x += 26) {
+      g.moveTo(x, 640);
+      g.lineTo(x + 10, 600 - (x % 3) * 8);
+    }
+  });
+  crayon('#f2b705', 8, () => g.arc(790, 110, 56, 0, Math.PI * 2), '#ffe066');
+  crayon('#5b2a9e', 9, () => g.ellipse(420, 400, 190, 105, -0.05, 0, Math.PI * 2), '#a57be8');
+  for (const x of [300, 360, 480, 540]) {
+    crayon('#3a2366', 14, () => {
+      g.moveTo(x, 470);
+      g.lineTo(x - 6, 610);
+      g.lineTo(x + 26, 612);
+    });
+  }
+  crayon('#5b2a9e', 9, () => {
+    g.moveTo(240, 380);
+    g.quadraticCurveTo(110, 300, 90, 170);
+    g.quadraticCurveTo(170, 230, 250, 330);
+  }, '#9a6be0');
+  crayon('#d9a400', 9, () => {
+    g.moveTo(90, 170);
+    g.quadraticCurveTo(80, 120, 110, 95);
+    g.quadraticCurveTo(125, 150, 128, 205);
+  }, '#ffd23a');
+  crayon('#5b2a9e', 9, () => g.ellipse(640, 270, 92, 80, 0, 0, Math.PI * 2), '#a57be8');
+  for (const [a, b] of [[585, 205], [665, 195]]) {
+    crayon('#3a2366', 8, () => {
+      g.moveTo(a, b + 10);
+      g.lineTo(a + 18, b - 80);
+      g.lineTo(a + 52, b + 4);
+    }, '#4a2c86');
+  }
+  crayon('#222', 6, () => g.arc(615, 255, 13, 0, Math.PI * 2), '#3aa05a');
+  crayon('#222', 6, () => g.arc(675, 252, 13, 0, Math.PI * 2), '#3aa05a');
+  crayon('#222', 7, () => g.arc(690, 300, 24, 0.3, 2.4));
+  crayon('#222', 5, () => g.arc(728, 285, 10, 0, Math.PI * 2), '#222');
+  return { base64: c.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''), mediaType: 'image/png' };
+}
+
+/**
+ * Dev: `__bring` drives the workshop on the valley's screen with a stand-in designer (no API is spent): `fake(scenario)`
+ * starts a turn whose every designer call and build waits for `next()` (or `{ auto: ms }` each), `until(call)` waits for
+ * one to be waiting, then `tweak`, `release`, `back`, `state()`, and `screen(name)` saves the whole screen with the stage.
+ */
+function bringHooks(w: World, screen: (name: string, fonts?: boolean) => Promise<string>) {
+  const { recipe, cards } = sparkleFox();
+  type Run = {
+    ws: Workshop; sent: HostSend[]; waiting: { call: string; go: () => void } | null; auto: number | null; scenario: Scenario;
+    /** How the release (or a Back) ended, once it has: `released`, `kept` or `failed`. */
+    outcome: string | null;
+  };
+  let run: Run | null = null;
+  const gate = (call: string) => new Promise<void>((go) => {
+    const r = run;
+    if (!r) return go();
+    if (r.auto !== null) return void setTimeout(go, r.auto);
+    r.waiting = { call, go: () => ((r.waiting = null), go()) };
+  });
+  const api: DesignerApi = {
+    read: async () => {
+      await gate('read');
+      if (run?.scenario === 'fail') throw new DesignerResting('fake');
+      if (run?.scenario === 'declined') return { status: 'declined', message: 'Let’s draw a friendly creature instead!' };
+      return { status: 'ok', recipe, checklist: ['4 legs', 'a big tail'], view: { angle: 'side', facing: 'left' }, cards, fixes: [] };
+    },
+    lookAgain: async (q) => {
+      await gate(`look ${q.pass}`);
+      return q.pass === 1
+        ? { status: 'ok', verdict: 'edits', edits: [{ op: 'set', path: 'parts.ear.length', valueJson: '0.13' }, { op: 'set', path: 'parts.ear.r0', valueJson: '0.05' }], note: 'The ears should be bigger…' }
+        : { status: 'ok', verdict: 'matches', edits: [], note: 'That looks just right!' };
+    },
+    tweak: async (q) => {
+      await gate('tweak');
+      const fluffier = (id: string, len: number, fluff: number) => [
+        { op: 'set' as const, path: `skin.regions.${id}.furLength`, valueJson: String(len) },
+        { op: 'set' as const, path: `skin.regions.${id}.fluff`, valueJson: String(fluff) },
+      ];
+      return { status: 'ok', note: 'Now it’s extra fluffy!', cards: { ...q.cards, special: 'the fluffiest tail in the valley' }, edits: [...fluffier('body', 0.04, 0.8), ...fluffier('brush', 0.07, 1)] };
+    },
+  };
+  return {
+    /** Start a stand-in turn (Mia's purple fox drawing): `ok`, `fail` (the designer rests) or `declined`; `words` sends no drawing. */
+    fake(scenario: Scenario = 'ok', opts: { auto?: number; words?: boolean } = {}) {
+      const sent: HostSend[] = [];
+      const ws = new Workshop({
+        design: designCreature, tweak: tweakCreature, api, studio: w.shop.studio, ui: w.shop, now: () => performance.now(),
+        build: async (r) => (await gate('build'), w.builder.build(r)),
+        send: async (_t, m) => (sent.push(m), true),
+      });
+      run = { ws, sent, waiting: null, auto: opts.auto ?? null, scenario, outcome: null };
+      void ws.turn('fake', { name: 'Mia', badge: '🦊' }, { image: opts.words ? null : doodle(), words: 'A purple fox with a sunshine tail' });
+      return 'started';
+    },
+    /** Let the waiting call go; returns its name. */
+    next() {
+      const c = run?.waiting;
+      c?.go();
+      return c?.call ?? null;
+    },
+    /** Wait (up to `ms`) until `call` is waiting; `'preview'` waits for the reveal (or a tweak's answer), `'closed'` for the screen to clear. */
+    async until(call: string, ms = 30000) {
+      const end = performance.now() + ms;
+      const there = () => (call === 'preview' ? !!run?.sent.some((m) => m.type === 'preview' || m.type === 'tweaked')
+        : call === 'closed' ? !w.shop.showing : run?.waiting?.call === call);
+      while (!there() && performance.now() < end) await new Promise((r) => setTimeout(r, 50));
+      return there();
+    },
+    tweak: (words = 'Fluffier!') => void run?.ws.tweak('fake', words),
+    /** Release the made creature into the valley, as the phone's button does (the real release: saved, glide, arrival). */
+    release() {
+      const r = run, made = r?.ws.release('fake');
+      if (made) void w.hooks.onRelease(made).then((o) => (r!.outcome = o));
+      return made?.cards.name ?? null;
+    },
+    back: async () => (run ? ((await run.ws.cancel('fake'))?.cards.name ?? null) : null),
+    state: () => ({
+      showing: w.shop.showing, busy: run?.ws.busy ?? false, waiting: run?.waiting?.call ?? null,
+      sent: run?.sent.map((m) => (m.type === 'step' ? `step ${m.step.kind}` : m.type)) ?? [], outcome: run?.outcome ?? null,
+    }),
+    /** The whole screen, the stage included, as .shots/<name>.png. */
+    async screen(name: string) {
+      w.shop.still(true);
+      try {
+        return await screen(name, true); // in Nunito: the TV's words wrap as they do on the page
+      } finally {
+        w.shop.still(false);
+      }
+    },
+  };
 }

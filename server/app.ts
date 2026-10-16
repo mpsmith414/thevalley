@@ -1,3 +1,4 @@
+import { networkInterfaces } from 'node:os';
 import Anthropic from '@anthropic-ai/sdk';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -8,7 +9,11 @@ import {
   LookAgainCheck, LookAgainRequestSchema, ReadCheck, ReadRequestSchema, TweakCheck, TweakRequestSchema,
   type LookAgainRequest, type LookAgainResult, type ReadResult, type TweakRequest, type TweakResult,
 } from '../src/designer/types';
+import { DailyCap, LIMITS } from './cap';
 import { Declined, type DesignerModel } from './model';
+import { lanHost } from './net';
+import type { Relay } from './relay';
+import { relayRoutes } from './relay-routes';
 
 const MAX_BODY = 12 * 1024 * 1024;
 
@@ -48,7 +53,10 @@ async function twice<S extends z.ZodType, T>(call: () => Promise<unknown>, schem
   throw new Invalid(String(last));
 }
 
-export function createApp(model: DesignerModel): Hono {
+/** `opts.cap` limits how many creatures `/api/read` will read per day; without it reads are uncapped. `opts.relay` mounts
+ * the phone relay's routes; `opts.host` is the address phones reach this PC at (default: its first LAN address; `server/index.ts` adds the `PHONE_HOST` override). */
+export function createApp(model: DesignerModel, opts?: { cap?: DailyCap; relay?: Relay; host?: () => string; heartbeatMs?: number }): Hono {
+  const cap = opts?.cap;
   const app = new Hono();
   app.use('/api/*', bodyLimit({ maxSize: MAX_BODY, onError: (c) => c.json({ error: 'too big' }, 413) }));
 
@@ -73,6 +81,8 @@ export function createApp(model: DesignerModel): Hono {
   app.post('/api/read', async (c) => {
     const req = ReadRequestSchema.safeParse(await c.req.json().catch(() => null));
     if (!req.success || (!req.data.image && !req.data.words.trim())) return c.json({ error: 'bad request' }, 400);
+    // a read that then fails still cost a call, so it counts
+    if (cap && !cap.take()) return c.json({ error: 'resting' }, 429);
     return handle(c, () =>
       twice(() => model.read(req.data), ReadCheck, (w): ReadResult => {
         if (w.status !== 'ok') return { status: w.status, message: w.message || 'Let’s try another drawing!' };
@@ -82,6 +92,18 @@ export function createApp(model: DesignerModel): Hono {
       }),
     );
   });
+
+  if (cap) {
+    app.get('/api/cap', (c) => c.json(cap.state()));
+    app.post('/api/cap', async (c) => {
+      const body = (await c.req.json().catch(() => null)) as { limit?: unknown } | null;
+      const limit = body?.limit;
+      if (!(LIMITS as readonly unknown[]).includes(limit)) return c.json({ error: 'bad request' }, 400);
+      return c.json(cap.setLimit(limit as number));
+    });
+  }
+
+  if (opts?.relay) relayRoutes(app, opts.relay, cap ?? new DailyCap({}), { host: opts.host ?? (() => lanHost(networkInterfaces())), heartbeatMs: opts.heartbeatMs });
 
   app.post('/api/look-again', async (c) => {
     const req = LookAgainRequestSchema.safeParse(await c.req.json().catch(() => null));

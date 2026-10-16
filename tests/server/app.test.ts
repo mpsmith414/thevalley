@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../server/app';
+import { DailyCap } from '../../server/cap';
 import { Declined, type DesignerModel } from '../../server/model';
 import { SYSTEM_PROMPT } from '../../server/prompts';
 import { COATS } from '../../src/recipe/schema';
@@ -101,6 +102,51 @@ describe('designer service', () => {
     const body = await res.json();
     expect(body.status).toBe('ok');
     expect(body.cards.name).toBe('Big Bob');
+  });
+});
+
+describe('the daily cap', () => {
+  const today = () => new Date(2026, 9, 14, 12, 0);
+
+  it('answers 429 "resting" without calling the model once the day is full', async () => {
+    const cap = new DailyCap({ now: today });
+    cap.setLimit(5);
+    for (let i = 0; i < 5; i++) cap.take();
+    const m = fake({ read: [goodRead] });
+    const res = await post(createApp(m, { cap }), '/api/read', { image, words: '' });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: 'resting' });
+    expect(m.calls).toBe(0);
+  });
+
+  it('counts each read, even one that then fails, but not a bad request', async () => {
+    const cap = new DailyCap({ now: today });
+    const app = createApp(fake({ read: [goodRead, {}, {}] }), { cap });
+    await post(app, '/api/read', { image, words: '' });
+    expect(cap.state().count).toBe(1);
+    expect((await post(app, '/api/read', { image, words: '' })).status).toBe(422);
+    expect(cap.state().count).toBe(2);
+    expect((await post(app, '/api/read', { image: null, words: ' ' })).status).toBe(400);
+    expect(cap.state().count).toBe(2);
+  });
+
+  it('is uncapped when no cap is passed', async () => {
+    const app = createApp(fake({ read: [goodRead] }));
+    expect((await post(app, '/api/read', { image, words: '' })).status).toBe(200);
+    expect((await app.request('/api/cap')).status).toBe(404);
+  });
+
+  it('reads and sets the limit over /api/cap', async () => {
+    const cap = new DailyCap({ now: today });
+    const app = createApp(fake({}), { cap });
+    expect(await (await app.request('/api/cap')).json()).toEqual({ day: '2026-10-14', count: 0, limit: 10 });
+    const res = await post(app, '/api/cap', { limit: 20 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ day: '2026-10-14', count: 0, limit: 20 });
+    expect((await (await app.request('/api/cap')).json()).limit).toBe(20);
+    expect((await post(app, '/api/cap', { limit: 7 })).status).toBe(400);
+    expect((await post(app, '/api/cap', 'nope')).status).toBe(400);
+    expect(cap.state().limit).toBe(20);
   });
 });
 

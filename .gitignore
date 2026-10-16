@@ -2,3 +2,9 @@ node_modules
 dist
 .env
 .shots
+data/
+
+# Local working docs and tool config (not published)
+docs/superpowers/
+.superpowers/
+.claude/

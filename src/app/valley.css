@@ -72,17 +72,17 @@ body { background: #b9c8cf; color: #14405c; }
 .menu.closing { opacity: 0; pointer-events: none; }
 @keyframes menu-in { from { opacity: 0; } }
 .menu-panel {
-  display: grid; gap: 14px; max-width: 100%; max-height: 100%; box-sizing: border-box; overflow: auto; padding: 30px 44px 38px;
+  display: grid; gap: 10px; max-width: 100%; max-height: 100%; box-sizing: border-box; overflow: auto; padding: 24px 44px 28px;
   border-radius: 40px; background: linear-gradient(#bfe6faf5, #d9efd0f5); box-shadow: 0 12px 48px #0006; color: #14405c;
 }
 .menu-panel[hidden] { display: none; }
 .menu-heading { margin: 0 0 6px; font-size: 1.45em; font-weight: 900; text-align: center; }
-.menu-row { display: grid; grid-template-columns: 7.2em auto; align-items: center; column-gap: 24px; }
+.menu-row { display: grid; grid-template-columns: 8.6em auto; align-items: center; column-gap: 24px; }
 .menu-title { font-weight: 900; }
 .menu-items { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .menu-note { grid-column: 2; margin-top: 6px; font-size: max(28px, 0.85em); font-weight: 700; color: #14405cc8; }
 .menu-btn {
-  min-height: 2.3em; min-width: 2.3em; padding: 0.3em 0.9em; border: 0; border-radius: 999px; background: #fff; color: #14405c;
+  min-height: 2.1em; min-width: 2.3em; padding: 0.3em 0.9em; border: 0; border-radius: 999px; background: #fff; color: #14405c;
   font: inherit; font-weight: 800; line-height: 1.1; white-space: nowrap; cursor: pointer; box-shadow: 0 3px 10px #14405c30;
   transition: transform 0.1s ease, background 0.15s;
 }
@@ -106,7 +106,22 @@ body { background: #b9c8cf; color: #14405c; }
 .menu-table thead th { font-weight: 900; border-bottom-width: 3px; }
 .menu-table tbody th { font-weight: 800; }
 .menu-table td { font-weight: 700; }
+.menu-empty { margin: 8px 0 14px; text-align: center; font-size: 1.1em; font-weight: 800; }
 .menu-back { justify-self: center; margin-top: 10px; min-width: 7em; }
+/* the Creatures page: a row per creature (badge, name, maker, its buttons); the panel scrolls when there are many */
+.menu-creatures { min-width: min(100%, 22em); }
+.menu-creatures-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.menu-creature {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 22px; padding: 10px 18px;
+  border-radius: 28px; background: #ffffff70;
+}
+.menu-creature .menu-items { flex-wrap: nowrap; justify-content: flex-end; }
+.menu-creature-badge { font-size: 1.6em; line-height: 1; }
+.menu-creature-who { display: grid; min-width: 0; }
+.menu-creature-who b { font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-creature-who small { font-size: max(26px, 0.75em); font-weight: 700; color: #14405cc8; }
+.menu-creature.exploring { background: #ffffff40; }
+.menu-creature.exploring .menu-creature-badge { opacity: 0.6; }
 /* a short screen (720p): tighter rows so the whole menu fits without scrolling */
 @media (max-height: 800px) {
   .menu-panel { gap: 6px; padding: 16px 36px 22px; }

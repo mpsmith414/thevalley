@@ -14,6 +14,9 @@ const AHEAD = 0.25;
 /** Each layer's loudness at full mix (the recordings are levelled to about -20 dBFS RMS), and the owl's at full night. */
 const TRIM: Record<Layer, number> = { wind: 0.5, birds: 0.5, night: 0.35, lake: 0.8, river: 0.7, forest: 0.45 };
 const OWL = 0.35;
+/** The arrival chime: three soft rising sine notes (G5, C6, E6; Hz), one every CHIME_GAP s, each ringing about CHIME_NOTE s, at this peak level. */
+export const CHIME_NOTES = [784, 1047, 1319];
+const CHIME_GAP = 0.18, CHIME_NOTE = 0.4, CHIME = 0.18;
 /** Seconds between owl calls at night. */
 const OWL_GAP = [25, 70] as const;
 const VOLUME_KEY = 'valley.volume', MUTED_KEY = 'valley.muted';
@@ -42,6 +45,8 @@ export type Soundscape = {
   setVolume(v: number): void;
   /** Silence everything, or bring it back (remembered). */
   mute(on: boolean): void;
+  /** A short soft two-note bell (a creature has arrived), through the master volume: silent when muted. */
+  chime(): void;
 };
 
 /** `synth: true` skips the files (every layer synthesised). */
@@ -246,6 +251,21 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
     })(),
   ]).then(() => {}, (e) => console.warn('sound: a layer failed to start', e)); // never rejects
 
+  /** The arrival chime: a quick soft attack, then each note rings away like a small bell (through the master gain: silent when muted). */
+  const chime = () => {
+    const t0 = ctx.currentTime + 0.02;
+    CHIME_NOTES.forEach((f, i) => {
+      const o = ctx.createOscillator(), env = ctx.createGain(), t = t0 + i * CHIME_GAP;
+      o.frequency.value = f;
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(CHIME, t + 0.025);
+      env.gain.setTargetAtTime(0, t + 0.04, CHIME_NOTE / 3);
+      o.connect(env).connect(master);
+      o.start(t);
+      o.stop(t + CHIME_NOTE * 2.5);
+    });
+  };
+
   let nextChirp = 0, nextOwl = between(rng, 5, OWL_GAP[1]);
   return {
     ready,
@@ -284,6 +304,7 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
       remember(MUTED_KEY, muted);
       setMaster();
     },
+    chime,
   };
 }
 
@@ -310,5 +331,6 @@ export function silentSoundscape(): Soundscape {
       muted = on;
       remember(MUTED_KEY, muted);
     },
+    chime() {},
   };
 }

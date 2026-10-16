@@ -19,6 +19,7 @@ import { createStage, stageHabitat } from '../render/stage';
 import { mulberry32 } from '../util/rng';
 import { FocusRing } from '../shared/focus';
 import { clipGround, driveClip, type ClipName } from './clips';
+import { CreatureList } from '../creatures/list';
 import { Gallery, newId, type GalleryItem } from './gallery';
 import { Input, type Button } from '../shared/input';
 import { remember, stored } from '../shared/settings';
@@ -105,8 +106,10 @@ const shell = createShell(ui, {
   gallery: () => void openGalleryPanel(),
   change: () => current && openTweak(shell.layer, current.cards.name, (w) => void change(w)),
 });
-const gallery = await Gallery.open();
+// a tab still running an older lab holds the database at version 1 until it is closed (the open waits for it)
+const gallery = await Gallery.open(undefined, { blocked: () => shell.toast('Please close the other Creature Lab tabs, then I can open your creatures.', 60000) });
 await gallery.seedNatives(CAST);
+const creatures = new CreatureList(gallery);
 let model: string | null = await designerModel();
 let skeletonOn = false;
 
@@ -225,6 +228,12 @@ async function openGalleryPanel() {
   await openGallery(shell.layer, gallery, {
     pick: (item) => void showItem(item),
     thumb: async (item) => renderView(snapshotCtx, await builder.build(item.recipe), item.recipe, { angle: 'threeQuarter', facing: 'right' }, 256),
+    // the valley gives it a home the next time it loads (it is released without one here)
+    release: async (item) => {
+      const released = await creatures.release(item.id, undefined, Date.now());
+      if (current?.id === item.id) current = released;
+      shell.toast('Off to the valley! 🌿');
+    },
     toast: (t) => shell.toast(t),
   });
   focus.reset();

@@ -7,10 +7,12 @@ import { openPanel } from './shell';
 export type GalleryHandlers = {
   pick(item: GalleryItem): void;
   thumb(item: GalleryItem): Promise<ImageIn>;
+  /** Let a made creature live in the valley. */
+  release(item: GalleryItem): Promise<void>;
   toast(text: string): void;
 };
 
-/** Every creature, made and native: pick one to show it, delete made ones, back them up. */
+/** Every creature, made and native: pick one to show it, release made ones into the valley, delete them, back them up. */
 export async function openGallery(layer: HTMLElement, gallery: Gallery, on: GalleryHandlers) {
   const grid = h('div', { class: 'grid' });
   const picker = h('input', { type: 'file', accept: 'application/json', hidden: true });
@@ -48,6 +50,11 @@ export async function openGallery(layer: HTMLElement, gallery: Gallery, on: Gall
       const tile = h('button', { class: 'tile', 'data-focus': true, onclick: () => (p.close(), on.pick(item)) }, img, h('span', { class: 'label' }, item.cards.name));
       const cell = h('div', { class: 'cell' }, tile);
       if (!item.native) {
+        cell.append(
+          item.valley
+            ? h('span', { class: 'in-valley' }, 'In the valley 🌿')
+            : h('button', { class: 'release', 'data-focus': true, onclick: () => void release(item) }, 'Release into the valley'),
+        );
         cell.append(h('button', { class: 'del', 'data-focus': true, 'aria-label': `Delete ${item.cards.name}`, onclick: () => confirmDelete(item) }, '🗑'));
       }
       grid.append(cell);
@@ -55,8 +62,17 @@ export async function openGallery(layer: HTMLElement, gallery: Gallery, on: Gall
       else
         void on.thumb(item).then(async (t) => {
           img.src = imageUrl(t);
-          await gallery.save({ ...item, thumb: t });
+          // re-read so a release made while the picture was drawing is not overwritten
+          await gallery.save({ ...((await gallery.get(item.id)) ?? item), thumb: t });
         });
+    }
+  }
+
+  async function release(item: GalleryItem) {
+    try {
+      await on.release(item);
+    } finally {
+      await render();
     }
   }
 

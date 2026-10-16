@@ -52,10 +52,23 @@ function builderHashDefine(): Plugin {
   };
 }
 
+/**
+ * Dev: the API restarted mid-stream (`--watch` after a server edit). Vite's proxy answers 502 only while no headers are
+ * out and otherwise leaves the response open for good, so the valley's and the phones' event streams would never see the
+ * restart (the TV kept a dead join code). Ending it lets them reconnect: the valley registers afresh, phones rejoin.
+ */
+export function endBrokenStream(res: unknown): void {
+  const r = res as { req?: unknown; headersSent?: boolean; writableEnded?: boolean; end?: () => void };
+  if (r && 'req' in r && r.headersSent && !r.writableEnded) r.end?.();
+}
+
 export default defineConfig({
   plugins: [shots(), builderHashDefine()],
-  server: { port: 5180, strictPort: true, proxy: { '/api': 'http://localhost:8787' } },
+  server: {
+    port: 5180, strictPort: true,
+    proxy: { '/api': { target: 'http://localhost:8787', changeOrigin: false, configure: (proxy) => void proxy.on('error', (_e, _req, res) => endBrokenStream(res)) } },
+  },
   worker: { format: 'es' },
-  build: { target: 'es2023', chunkSizeWarningLimit: 1500, rollupOptions: { input: { valley: 'index.html', lab: 'lab.html', drawings: 'drawings.html' } } },
+  build: { target: 'es2023', chunkSizeWarningLimit: 1500, rollupOptions: { input: { valley: 'index.html', lab: 'lab.html', drawings: 'drawings.html', phone: 'phone.html' } } },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] },
 });
