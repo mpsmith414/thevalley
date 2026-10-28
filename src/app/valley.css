@@ -122,6 +122,11 @@ body { background: #b9c8cf; color: #14405c; }
 .menu-creature-who small { font-size: max(26px, 0.75em); font-weight: 700; color: #14405cc8; }
 .menu-creature.exploring { background: #ffffff40; }
 .menu-creature.exploring .menu-creature-badge { opacity: 0.6; }
+/* the Valley page: three buttons in a column, and the "start again?" question in their place */
+.menu-valley-options { flex-direction: column; align-items: stretch; }
+.menu-valley-ask { display: grid; gap: 10px; max-width: 18em; justify-items: center; text-align: center; }
+.menu-valley-ask .menu-items { justify-content: center; }
+.menu-valley-options[hidden], .menu-valley-ask[hidden], .menu-valley .menu-back[hidden] { display: none; }
 /* a short screen (720p): tighter rows so the whole menu fits without scrolling */
 @media (max-height: 800px) {
   .menu-panel { gap: 6px; padding: 16px 36px 22px; }
@@ -142,7 +147,16 @@ body { background: #b9c8cf; color: #14405c; }
 }
 .label-pill.out { opacity: 0; transform: translate(-50%, 10px); }
 @keyframes label-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+/* ---------- moment captions: one quiet line at the bottom centre, above the join card when it shows (--caption-lift, set by captionView) ---------- */
+.caption {
+  position: absolute; left: 50%; bottom: calc(5vh + var(--caption-lift, 0px)); transform: translate(-50%, 8px); max-width: min(62vw, 1100px);
+  display: flex; align-items: center; gap: 22px; padding: 12px 30px; border-radius: 999px; pointer-events: none;
+  background: #ffffffc8; color: #14405c; font-size: 26px; font-weight: 800; line-height: 1.2; box-shadow: 0 4px 18px #0002;
+  opacity: 0; transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.caption.in { opacity: 1; transform: translate(-50%, 0); }
+.caption-hint { flex: none; padding: 4px 16px; border-radius: 999px; background: #5fae4a; color: #fff; font-size: 0.8em; font-weight: 900; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
-  .menu, .menu-btn, .label-pill { transition: none !important; animation: none !important; }
+  .menu, .menu-btn, .label-pill, .caption { transition: none !important; animation: none !important; }
   .menu-btn.focused, .menu-btn:focus-visible { transform: none; }
 }

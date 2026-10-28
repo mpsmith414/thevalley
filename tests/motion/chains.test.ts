@@ -12,6 +12,20 @@ describe('springStep', () => {
     expect(s.pos).toBeCloseTo(1, 3);
     expect(peak).toBeLessThan(1.5);
   });
+
+  it('stays steady at a time-lapse step, the stiffest springs too, as if stepped finely', () => {
+    let s: Spring = { pos: 0, vel: 0 }, fine: Spring = { pos: 0, vel: 0 }, peak = 0;
+    for (let i = 0; i < 40; i++) {
+      s = springStep(s, 1, 120, 14, 16 / 60); // Fastest at 60 frames a second
+      for (let k = 0; k < 8; k++) fine = springStep(fine, 1, 120, 14, 2 / 60);
+      peak = Math.max(peak, Math.abs(s.pos));
+    }
+    expect(peak).toBeLessThan(1.5);
+    expect(s.pos).toBeCloseTo(fine.pos, 9);
+    const one = springStep({ pos: 0, vel: 0 }, 1, 120, 14, 1 / 60); // a frame at 60 fps: one plain step, as before
+    expect(one.vel).toBe(120 / 60);
+    expect(one.pos).toBe(one.vel / 60);
+  });
 });
 
 describe('undulation', () => {

@@ -8,7 +8,7 @@ import { createRenderer } from '../render/renderer';
 import { Input } from '../shared/input';
 import { remember, stored } from '../shared/settings';
 import { CAST } from '../cast';
-import { CREATURE_LAYER, Residents } from '../residents/residents';
+import { CREATURE_LAYER, Residents, speciesDefs } from '../residents/residents';
 import { loadValley } from '../valley/cache';
 import { VALLEY } from '../valley/layout';
 import { DEFAULT_GRID } from '../valley/types';
@@ -37,7 +37,7 @@ import { ArrivalHold, PUSH } from '../bring/arrival-hold';
 import { pushView, type ArrivalShot } from '../bring/arrival';
 import { FollowCam } from '../bring/follow-cam';
 import { showTitle } from '../bring/welcome';
-import { comeBack, HOLD_CAP, keepMade, placeHomeless, releaseMade, sendExploring, visit, type ReleaseDeps } from '../bring/release';
+import { comeBack, HOLD_CAP, keepMade, placeHomeless, releaseMade, sendExploring, visit, visitView, type ReleaseDeps } from '../bring/release';
 import { connectWorkshop, sendEnd, TRY_AGAIN, Workshop, workshopView } from '../bring/workshop';
 import { CreatureList } from '../creatures/list';
 import { api } from '../designer/api';
@@ -47,14 +47,23 @@ import { designCreature, tweakCreature } from '../designer/loop';
 import { openLoading, toast } from './loading';
 import type { Made } from '../bring/workshop';
 import type { Loop } from './dev';
-import { showLabel, type SpeedId } from './menu';
+import { HOMES } from '../sim/homes';
+import { SAVE_VERSION, ValleySaves, backupName, makeBackup, reconcile, restoreBackup, type SaveFile } from '../sim/save';
+import { SPEEDS, showLabel, speedId, type SpeedId, type ValleyPage } from './menu';
+import { h } from '../shared/dom';
 import { menuControl, setSpeed } from './menu-control';
+import { ReleaseTimeHold, animalRate, stepSpeed } from './time';
 import { gpuDone, pacing, type Pacing } from './pacing';
 import { openStart } from './start';
+import { CaptionQueue, captionView } from './captions';
 import './valley.css';
 
 /** The lake's mirror shows the forest only within this many metres of the shore (beyond, the lake is a sliver on screen). */
 const MIRROR_PLANTS = 400;
+/** A Fly there follows its animal this long (s) at the most, if the player does not take the camera first. */
+const FOLLOW_S = 30;
+/** The valley's life is saved this often (real milliseconds), and when the page is hidden or closed. */
+const AUTOSAVE_MS = 60_000;
 /** Seconds from the page opening to the performance mark `name` (one decimal). */
 const seconds = (name: string) => ((performance.getEntriesByName(name)[0]?.startTime ?? NaN) / 1000).toFixed(1);
 /** Metres from (x, z) to the nearest point of the lake's outline. */
@@ -116,6 +125,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // ---------- time of day: the clock drives the sun, moon, sky, light and fog ----------
   const clock = new ValleyClock();
   setSpeed(clock, stored<SpeedId>('valley.speed', 'normal'));
+  const timeHold = new ReleaseTimeHold(clock);
   const sky = createSky(scene, renderer, tier, tex);
   // the water (after the sky: it mirrors the sky's environment map)
   const lake = createLake(data, tex, tier, scene), river = createRiver(data, tex, tier, scene);
@@ -157,7 +167,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
 
   // ---------- the resident animals, and the families released into the valley ----------
   say('Waking the animals…');
-  const residents = new Residents(valley, VALLEY, builder, tier, scene);
+  const residents = new Residents(valley, VALLEY, HOMES, builder, tier, scene);
   const views = VALLEY.viewpoints;
   const start0 = viewpointPose(views[views.length - 1], valley); // Valley Overview, where the camera starts
   // the creature list is the lab's gallery database: creatures released there (with no home yet, Ruling P3) get one in
@@ -168,9 +178,37 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const released = list
     ? await list.released().then((items) => placeHomeless(items, { list, valley, camera: () => startView })).catch((e) => (console.error('the released creatures could not be read', e), []))
     : [];
+  // the saved valley (IndexedDB, optional like the list): the clock and the animals carry on where they were, unless the save
+  // is of another valley or cannot be carried on; then, and with no save, the valley starts afresh
+  const saves = await ValleySaves.open().catch((e) => (console.warn('the valley cannot be saved here', e), null));
+  const saved = (await saves?.load().catch((e) => (console.warn('the saved valley could not be read', e), null))) ?? null;
+  let carried = false;
+  if (saved && saved.sim.seed === VALLEY.seed) {
+    try {
+      await residents.spawn(released, reconcile(saved.sim, speciesDefs(HOMES, released), valley));
+      ({ hours: clock.hours, speed: clock.speed, paused: clock.paused } = saved.clock);
+      carried = true;
+    } catch (e) {
+      console.error('the saved valley could not be carried on; the valley starts afresh', e);
+      residents.clear(); // any bodies it joined before the throw: the fresh spawn makes its own
+    }
+  }
   // the animals are optional: if a body will not build, the valley opens without (some of) them
-  await residents.spawn(released).catch((e) => console.error('the animals could not be made', e));
+  if (!carried) await residents.spawn(released).catch((e) => console.error('the animals could not be made', e));
   performance.mark('valley-animals');
+  /** The valley's life as it is now. While an arrival holds the clock at Normal, the player's own speed is what is kept. */
+  const life = (): SaveFile => ({
+    kind: 'valley-save', version: SAVE_VERSION, savedAt: Date.now(),
+    clock: { hours: clock.hours, ...(timeHold.remembered ?? { speed: clock.speed, paused: clock.paused }) }, sim: residents.sim.state(),
+  });
+  /** Off while the valley is being started again or a backup restored: the page reloads next, and must not write the old state back. */
+  let saving = true;
+  const autosave = () => {
+    if (saves && residents.sim && saving) saves.save(life()).catch((e) => console.warn('the valley could not be saved', e));
+  };
+  setInterval(autosave, AUTOSAVE_MS);
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && autosave());
+  window.addEventListener('pagehide', autosave);
   /**
    * The animals' shaders (about 3 s of compiling, beside the plants') build in the background once the valley is up, and the animals pop in
    * when they are ready: until then neither the camera nor the shadows see their layer, so nothing compiles mid-frame.
@@ -206,12 +244,15 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const fly = new FreeFly(start0.pos, start0.yaw, start0.pitch);
   let current = views.length - 1; // the viewpoint we are at or flying to
   /** A glide under way: to a viewpoint (its name shows on arrival) or to a release framing (`done` once there or taken over). */
-  let glide: { g: Glide; t: number; label: string | null; done?: () => void } | null = null;
-  /** The glide is over (arrived, taken over or replaced): tell whoever waits for it. */
-  const endGlide = () => {
+  let glide: { g: Glide; t: number; label: string | null; done?: (arrived: boolean) => void } | null = null;
+  /** A Fly there's follow: the animal's id, seconds followed, and the chase camera (made once the glide arrives). */
+  let watch: { id: string; time: number; cam: FollowCam | null } | null = null;
+  /** The glide is over (`arrived`, or taken over or replaced): tell whoever waits for it. Any other glide or jump ends a Fly there's follow too. */
+  const endGlide = (arrived = false) => {
     const done = glide?.done;
     glide = null;
-    done?.();
+    watch = null;
+    done?.(arrived);
   };
   let wasToggle = false;
   /** The arrival's welcome title, shown with the chime once the first of the family is in the picture (arrival v2). */
@@ -267,6 +308,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   });
   /** An arrival begins: the glide to its wide framing (its first phase). */
   const arriveAt = (id: string, s: ArrivalShot) => {
+    timeHold.hold(); // an arrival plays at Normal speed
     const there = glideTo(s.wide);
     arrival.begin(id);
     shot = s;
@@ -291,7 +333,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     /** Has its lead reached its spot (walking on, or living its life)? */
     onward: (id: string) => {
       const a = lead(id);
-      return !!a && (!a.errand || !!a.errand.onward);
+      return !!a && residents.arriving(a) !== 'in';
     },
   };
   /** A released family's bodies, compiled detached from the valley but lit by it, before anyone sees them. */
@@ -380,16 +422,74 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   /** Back/Escape while the workshop shows: stop it (kept if something was made), or close a "try again". */
   const back = () => (workshop.busy ? void linked.back() : shop.close());
   // the menu stays shut while the workshop shows, and while a turn waits to open it (Ruling R17), so B cannot cancel it
-  const menu = menuControl({ ui, clock, sound, choice: quality.choice, tier, light, bring, waiting: () => waiting, busy: () => shop.showing || linked.waiting,
+  /** The Valley page: start again (clear the save, reload), back up (to a file), restore (from a file, reload); needs the save and the list. */
+  const valleyPage = (saves: ValleySaves, list: CreatureList): ValleyPage => ({
+    startAgain: () => {
+      saving = false;
+      saves.clear().then(() => location.reload(), (e) => {
+        console.error('the valley could not start again', e);
+        saving = true;
+        toast(ui, 'The valley could not start again.', 3000);
+      });
+    },
+    backUp: () => {
+      // what is saved is up to a minute old: save the valley as it is now, then back that up
+      (residents.sim ? saves.save(life()) : Promise.resolve()).then(() => makeBackup(saves, list)).then((blob) => {
+        const link = h('a', { href: URL.createObjectURL(blob), download: backupName(new Date()) });
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+        toast(ui, 'Backup saved to your downloads 💾');
+      }, (e) => {
+        console.error('the valley could not be backed up', e);
+        toast(ui, 'The valley could not be backed up.', 3000);
+      });
+    },
+    restore: (file) => {
+      saving = false; // the restored save is what the reload must find
+      restoreBackup(file, saves, list).then(() => location.reload(), (e) => {
+        console.error('the backup could not be restored', e);
+        saving = true;
+        toast(ui, 'That file is not a valley backup.', 3000);
+      });
+    },
+  });
+  // ---------- the moment captions: the simulation's good moments, one at a time, with Fly there ----------
+  let captionsOn = stored<unknown>('valley.captions', 'on') !== 'off';
+  const queue = new CaptionQueue(), caption = captionView(ui);
+  let realTime = 0; // real seconds the valley has run (the drive's dt, so `step` moves it too)
+  residents.sim?.moments.on((m) => queue.offer(m, realTime));
+  const menu = menuControl({ ui, clock, sound, captions: { get: () => captionsOn, set: (on) => ((captionsOn = on), remember('valley.captions', on ? 'on' : 'off')) }, valley: saves && list ? valleyPage(saves, list) : undefined, speedPicked: () => timeHold.playerChanged(), choice: quality.choice, tier, light, bring, waiting: () => waiting, busy: () => shop.showing || linked.waiting,
     creatures: releaseDeps ? {
       all: () => releaseDeps.list.all(), visit: (id) => visit(id, releaseDeps), explore: (id) => sendExploring(id, releaseDeps),
       comeBack: (id) => arrive(() => comeBack(id, releaseDeps)), say: (text) => showLabel(ui, text),
     } : undefined,
   });
+  /** The clock a step faster or slower (d-pad up/down, `]` `[`): kept for next time, with its name and note shown. */
+  const stepClock = (dir: 1 | -1) => {
+    const id = stepSpeed(speedId(clock.speed, clock.paused), dir), s = SPEEDS.find((x) => x.id === id)!;
+    timeHold.playerChanged();
+    setSpeed(clock, id);
+    remember('valley.speed', id);
+    toast(ui, `${s.label} · ${s.note}`, 1600);
+  };
+  /** Fly there: glide to the caption's animal (or where it happened, if it has gone), then follow it (see `drive`). */
+  const flyThere = () => {
+    const m = queue.showing;
+    if (!m) return;
+    const a = residents.animal(m.follow), eye = { x: fly.pos.x, z: fly.pos.z };
+    const to = a ? visitView(a.rig.position, a.rig.altitude, a.home, eye)
+      : visitView(m.at, 0, { species: '', count: 0, center: m.at, radius: 0, medium: 'land', prefer: [] }, eye);
+    endGlide();
+    arrival.end();
+    fly.walk = false;
+    glide = { g: new Glide(fly, to, valley), t: 0, label: null, done: (arrived) => void (arrived && (watch = { id: m.follow, time: 0, cam: null })) };
+  };
   input.onPress = (b, repeat) => {
     if (waiting) return; // the start screen comes first
     if (shop.showing) return void (b === 'b' && !repeat && back()); // the workshop has the controls
     if (menu.press(b, repeat) || repeat) return; // a held arrow key must not restart the glide
+    if (b === 'up' || b === 'down') return stepClock(b === 'up' ? 1 : -1);
+    if (b === 'x') return flyThere();
     if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
     else if (b === 'right') goTo(current + 2);
   };
@@ -398,6 +498,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || waiting) return;
     if (/^[1-8]$/.test(e.key)) {
       if (!menu.open && !shop.showing) goTo(+e.key);
+    } else if (e.key === ']' || e.key === '[') {
+      if (!menu.open && !shop.showing) stepClock(e.key === ']' ? 1 : -1);
+    } else if (e.key === 'f' || e.key === 'F') {
+      if (!menu.open && !shop.showing) flyThere();
     } else if (e.key === 'm' || e.key === 'M') {
       menu.toggleMute();
       toast(ui, sound.muted ? 'Sound off' : 'Sound on', 1200);
@@ -418,7 +522,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     camTime += dt;
     const sticks = pad.lx !== 0 || pad.ly !== 0 || pad.rx !== 0 || pad.ry !== 0 || ['w', 'a', 's', 'd'].some(held);
     // the arrival's clock and phases run from its glide's start; the stick or the mouse ends it at once, from any phase
-    const phase = arrival.active ? arrival.frame(dt, look, !open && (sticks || mouse.dx !== 0 || mouse.dy !== 0)) : null;
+    const taken = !open && (sticks || mouse.dx !== 0 || mouse.dy !== 0);
+    const phase = arrival.active ? arrival.frame(dt, look, taken) : null;
     if (!phase) follow = null;
     if (glide) {
       if (open || !sticks) {
@@ -427,7 +532,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
         setPose(s);
         if (s.done) {
           const { label } = glide;
-          endGlide();
+          endGlide(true);
           if (label && !open) showLabel(ui, label); // arrived (no label over the menu)
         }
         fly.apply(camera);
@@ -450,6 +555,20 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
       fly.vel = { x: 0, y: 0, z: 0 };
       fly.apply(camera);
       return;
+    }
+    // a Fly there's follow: behind the animal until the player takes the camera, 30 s pass or the animal has gone
+    if (watch) {
+      const a = residents.animal(watch.id);
+      watch.time += dt;
+      if (!a || taken || watch.time >= FOLLOW_S) watch = null;
+      else {
+        const p = a.obj.root.position, target = { x: p.x, y: p.y, z: p.z };
+        watch.cam ??= new FollowCam(fly.pos, { x: p.x, y: p.y + 0.5, z: p.z }, target, a.recipe.life.sizeM);
+        setPose(watch.cam.update(dt, target, valley));
+        fly.vel = { x: 0, y: 0, z: 0 };
+        fly.apply(camera);
+        return;
+      }
     }
     fly.update(dt, intent, valley);
     fly.apply(camera);
@@ -495,8 +614,13 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     setWind(windU, wind);
     veg.update(camera, dt);
     cover.update(camera);
-    residents.update(dt, camera, clock.hour);
+    if (arriving === 0 && !arrival.active) timeHold.release(); // the arrival is over: the player's speed comes back
+    residents.update(dt * animalRate(clock), dt, camera, clock.hours); // the animals live at the clock's speed (none when paused)
     shop.turn(dt);
+    realTime += dt;
+    // captions wait while something else has the screen (the menu, the workshop, a release arriving, the start screen) or are off
+    const away = !captionsOn || waiting || !!menu.open || shop.showing || arriving > 0 || arrival.active;
+    caption.show(queue.update(realTime, away), input.using === 'pad' ? 'X Fly there' : 'F Fly there');
     bring.setStage(shop.showing || arriving > 0 || arrival.active); // Ruling R21: the join card waits for the stage and the arrival
     light(dt);
     hear(dt);

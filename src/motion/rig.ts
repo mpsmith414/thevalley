@@ -2,11 +2,13 @@ import { Euler, Quaternion, Vector3, type Bone } from 'three/webgpu';
 import type { BodyData } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { CreatureObject } from '../render/creature';
+import { newMotion, steer } from '../sim/mover';
+import { traitsFor, type Traits } from '../sim/traits';
 import { add, dot, len, lerp, norm, scale, sub, v3, type Vec3 } from '../util/vec';
 import { chooseGait, phasesFor, STRIDE, type GaitName } from './gait';
 import { fabrik } from './ik';
 import { findLimbs, type Limb } from './limbs';
-import { moveTraits } from './medium';
+import { mediumOf } from './medium';
 import { SecondaryMotion } from './secondary';
 
 export type Ground = {
@@ -38,13 +40,16 @@ const X = new Vector3(1, 0, 0);
 export const toV = (v: Vec3) => new Vector3(v.x, v.y, v.z);
 export const fromV = (v: Vector3): Vec3 => ({ x: v.x, y: v.y, z: v.z });
 const smooth = (t: number) => t * t * (3 - 2 * t);
-const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const approach = (cur: number, target: number, rate: number, dt: number) => cur + (target - cur) * Math.min(1, rate * dt);
+
+/** Where the simulation has put an animal and how it is moving, for a driven rig to show. */
+export type DrivenPose = { x: number; z: number; yaw: number; speed: number; turnRate: number; altitude: number; flying: boolean };
 
 /**
  * Drives a creature's bones every frame: moves and turns its body (on land, in the air or in water),
  * cycles its legs through a gait, plants feet on the real ground and bends each leg to reach them.
- * Actions steer it through the intent fields (look, headDown, sleep, calling, wantFly, mouth, ears).
+ * Actions steer it through the intent fields (look, headDown, sleep, calling, wantFly, mouth, ears). In the valley the
+ * simulation moves it instead (`drive`), and the rig only shows the gait, legs and the rest.
  */
 export class CreatureRig {
   readonly legs: Leg[];
@@ -56,6 +61,8 @@ export class CreatureRig {
   readonly swimmer: boolean;
   /** Walks on land but floats and paddles on water (ducks). */
   readonly floater: boolean;
+  /** Speeds, size and what it can do, as the simulation sees it (built once, with this rig's speed cap). */
+  readonly traits: Traits;
   /** World position of the creature's ground origin, and its heading (radians; 0 faces +z). */
   readonly position = new Vector3();
   yaw = 0;
@@ -87,7 +94,13 @@ export class CreatureRig {
   /** Flying height above the ground (m); null for the lab's low hop, a couple of body lengths up. */
   cruise: number | null = null;
   inWater = false;
+  /** Moved by the simulation through `drive` rather than steering itself toward `target`. */
+  driven = false;
   private climb = 0;
+  /** The rig's own fields as the simulation's motion, for `steer`. */
+  private readonly motion = newMotion(0, 0, 0);
+  /** Altitude at the last driven update, for the climb that pitches a driven flier. */
+  private drivenAltitude = 0;
 
   constructor(
     readonly obj: CreatureObject,
@@ -124,10 +137,10 @@ export class CreatureRig {
       };
     });
     this.legLength = this.legs.length ? Math.max(...this.legs.map((l) => l.lengths.reduce((s, x) => s + x, 0))) : this.bodyLength * 0.3;
-    const traits = moveTraits(recipe, limbs.filter((l) => l.kind === 'wing').length, this.legs.length);
-    this.canFly = traits.canFly;
-    this.swimmer = traits.swimmer;
-    this.floater = traits.floater;
+    this.traits = traitsFor(recipe, mediumOf(recipe), speedCap);
+    this.canFly = this.traits.canFly;
+    this.swimmer = this.traits.swimmer;
+    this.floater = this.traits.floater;
     this.secondary = new SecondaryMotion(this, limbs);
   }
 
@@ -138,7 +151,7 @@ export class CreatureRig {
     this.speedFrac = Math.max(0, Math.min(1, frac));
   }
   get topSpeed() {
-    return Math.min(this.recipe.life.topSpeed, this.flying ? this.speedCap * 1.6 : this.speedCap);
+    return this.flying ? this.traits.flySpeed : this.traits.topSpeed;
   }
   /** Close enough to the current target (or no target). */
   arrived(within = 0.3) {
@@ -155,7 +168,14 @@ export class CreatureRig {
     this.headDownNow = approach(this.headDownNow, this.headDown, 3, dt);
     this.sleepNow = approach(this.sleepNow, this.sleep, 1.5, dt);
     this.callNow = approach(this.callNow, this.calling, 6, dt);
-    this.locomotion(dt);
+    if (this.driven) {
+      if (dt > 0) {
+        // no time, no climb to read (a paused frame keeps the pitch it had)
+        this.climb = (this.altitude - this.drivenAltitude) / Math.max(dt, 1e-6);
+        this.drivenAltitude = this.altitude;
+      }
+    } else this.locomotion(dt);
+    this.distance += this.speed * dt;
     this.inWater = this.ground.isWater(this.position.x, this.position.z);
     const legLen = this.legLength;
     const speedFrac = this.speed / Math.max(1e-6, this.topSpeed);
@@ -264,43 +284,57 @@ export class CreatureRig {
     });
   }
 
+  /** Steers itself toward `target`: the simulation's own step, on a motion view of the rig's fields. */
   private locomotion(dt: number) {
-    // take off and land
-    if (this.canFly && this.wantFly && !this.flying && this.sleepNow < 0.1) this.flying = true;
-    if (this.flying) {
-      const cruise = this.wantFly ? (this.cruise ?? 2.2 + this.bodyLength * 2) : 0;
-      const before = this.altitude;
-      this.altitude += Math.max(-1.2, Math.min(1.5, (cruise - this.altitude) * 1.2)) * dt;
-      this.climb = (this.altitude - before) / Math.max(dt, 1e-6);
-      if (!this.wantFly && this.altitude < 0.03) {
-        this.flying = false;
-        this.altitude = 0;
-        this.climb = 0;
-        this.legs.forEach((l) => (l.planted = null));
-      }
+    const m = this.motion, wasFlying = this.flying;
+    m.x = this.position.x;
+    m.z = this.position.z;
+    m.yaw = this.yaw;
+    m.speed = this.speed;
+    m.turnRate = this.turnRate;
+    m.altitude = this.altitude;
+    m.flying = this.flying;
+    m.cruise = this.cruise;
+    m.target = this.target;
+    m.speedFrac = this.speedFrac;
+    m.wantFly = this.wantFly;
+    m.climb = this.climb;
+    steer(m, this.traits, dt, this.sleepNow > 0.1);
+    this.position.x = m.x;
+    this.position.z = m.z;
+    this.yaw = m.yaw;
+    this.speed = m.speed;
+    this.turnRate = m.turnRate;
+    this.altitude = m.altitude;
+    this.flying = m.flying;
+    this.climb = m.climb;
+    if (wasFlying && !this.flying) this.landed();
+  }
+
+  /**
+   * Follow the simulation: stand where it says, facing and moving as it says (smoothed between its ticks by the caller).
+   * From now on `update` leaves the steering alone and does the gait, legs, feet and secondary motion. `snap`: it has moved
+   * unseen since its last update (back in view), so its height now is no climb (a flier is not pitched by the jump).
+   */
+  drive(p: DrivenPose, snap = false) {
+    if (!this.driven || snap) {
+      this.drivenAltitude = p.altitude;
+      this.climb = 0;
     }
-    let want = 0;
-    const lying = this.sleepNow > 0.1;
-    if (this.target && !lying) {
-      const to = this.target.clone().sub(this.position).setY(0);
-      const d = to.length();
-      if (d > 0.05) {
-        const heading = Math.atan2(to.x, to.z);
-        const diff = wrapAngle(heading - this.yaw);
-        const maxTurn = Math.min(4, Math.max(0.8, 2.5 / this.bodyLength)) * (this.flying ? 0.5 : 1);
-        this.turnRate = Math.max(-maxTurn, Math.min(maxTurn, diff * 3));
-        this.yaw = wrapAngle(this.yaw + this.turnRate * dt);
-        // slow for sharp turns and when arriving (fliers keep gliding)
-        const arrive = this.flying && this.wantFly ? 1 : Math.min(1, d / 0.6);
-        want = this.speedFrac * this.topSpeed * Math.max(0.15, Math.cos(Math.min(Math.PI / 2, Math.abs(diff)))) * arrive;
-      } else this.turnRate = 0;
-    } else this.turnRate *= Math.max(0, 1 - dt * 6);
-    if (this.flying && this.altitude > 0.3) want = Math.max(want, this.recipe.motion.gait === 'hover' ? 0 : 1.2);
-    const accel = this.topSpeed * 1.5;
-    this.speed += Math.max(-accel * dt, Math.min(accel * dt, want - this.speed));
-    this.position.x += Math.sin(this.yaw) * this.speed * dt;
-    this.position.z += Math.cos(this.yaw) * this.speed * dt;
-    this.distance += this.speed * dt;
+    if (this.flying && !p.flying) this.landed();
+    this.position.x = p.x;
+    this.position.z = p.z;
+    this.yaw = p.yaw;
+    this.speed = p.speed;
+    this.turnRate = p.turnRate;
+    this.altitude = p.altitude;
+    this.flying = p.flying;
+    this.driven = true;
+  }
+
+  /** Just touched down: the feet find new ground. */
+  private landed() {
+    this.legs.forEach((l) => (l.planted = null));
   }
 
   /** In the air or in water the legs fold back out of the way (and paddle a little when floating). */

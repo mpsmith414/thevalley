@@ -45,6 +45,8 @@ export class Input {
   onPress: (b: Button, repeat?: boolean) => void = () => {};
   /** Set by the gamepad hook in dev checks to stand in for a real controller. */
   padStub: PadState | null = null;
+  /** Which the player used last: the controller (a button or a stick) or the keyboard (a key), for hints that name a button. */
+  using: 'pad' | 'keys' = 'keys';
 
   constructor(target: EventTarget = window) {
     target.addEventListener('keydown', (ev) => {
@@ -52,6 +54,7 @@ export class Input {
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (typing && e.key !== 'Escape') return;
       this.keys.add(e.key.toLowerCase());
+      this.using = 'keys';
       const b = KEYS[e.key];
       if (b) {
         e.preventDefault();
@@ -88,7 +91,9 @@ export class Input {
   /** Call once per frame; returns how far to orbit (radians) and zoom (factor change) this frame. */
   poll(dt: number, menuOpen: boolean): { orbitX: number; orbitY: number; zoom: number } {
     const pad = this.padStub ?? readPad(navigator.getGamepads?.()[0] ?? null);
-    for (const b of edges(this.prev, pad)) this.onPress(b);
+    const pressed = edges(this.prev, pad);
+    if (pressed.length || pad.lx || pad.ly || pad.rx || pad.ry) this.using = 'pad';
+    for (const b of pressed) this.onPress(b);
     // a held stick in a menu repeats like a d-pad
     const now = performance.now();
     if (menuOpen && (Math.abs(pad.lx) > 0.6 || Math.abs(pad.ly) > 0.6) && now > this.repeatAt) {

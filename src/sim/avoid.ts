@@ -1,4 +1,4 @@
-import type { Pt } from '../valley/types';
+import type { Pt } from './types';
 
 /** How far ahead an animal looks for trunks in its way (m), and the gap it keeps from the bark. */
 const LOOK_AHEAD = 6, MARGIN = 0.3;

@@ -3,15 +3,16 @@ import { SPEEDS, TIMES, menuModel, speedId, type MenuState } from '../../src/app
 import { PRESETS } from '../../src/world/clock';
 
 const state = (over: Partial<MenuState> = {}): MenuState => ({
-  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, bring: false, dailyLimit: 10, today: 3, ...over,
+  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, bring: false, dailyLimit: 10, today: 3, captions: true, ...over,
 });
 const row = (s: MenuState, id: string) => menuModel(s).find((r) => r.id === id)!;
 const selected = (s: MenuState, id: string) => row(s, id).items.filter((i) => i.selected).map((i) => i.id);
 
 describe('menuModel', () => {
   it('lists the rows in the spec order', () => {
-    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'time', 'speed', 'quality', 'volume', 'bring', 'limit', 'more']);
-    expect(row(state(), 'more').items.map((i) => i.id)).toEqual(['lab', 'controls']);
+    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'time', 'speed', 'quality', 'volume', 'captions', 'bring', 'limit', 'more']);
+    expect(row(state(), 'more').items.map((i) => i.id)).toEqual(['lab', 'controls', 'valley']);
+    expect(row(state(), 'more').items.map((i) => i.label)).toEqual(['Creature Lab', 'Controls', 'Valley']);
   });
 
   it('jumps to dawn, noon, golden hour and night', () => {
@@ -19,17 +20,19 @@ describe('menuModel', () => {
     expect(TIMES.map((t) => t.hour)).toEqual([PRESETS.dawn, PRESETS.noon, PRESETS.golden, PRESETS.night]);
   });
 
-  it('maps the clock speeds to 0, 1/120, 1/60 and 1/15 valley hours per second', () => {
-    expect(SPEEDS.map((s) => [s.id, s.speed])).toEqual([['paused', 0], ['slow', 1 / 120], ['normal', 1 / 60], ['fast', 1 / 15]]);
-    expect(row(state(), 'speed').items.map((i) => i.label)).toEqual(['Paused', 'Slow', 'Normal', 'Fast']);
-    // a day lasts 48, 24 and 6 real minutes
-    expect(SPEEDS.slice(1).map((s) => 24 / s.speed / 60)).toEqual([48, 24, 6]);
+  it('maps the clock speeds to 0, 1/120, 1/60, 1/15 and 4/15 valley hours per second', () => {
+    expect(SPEEDS.map((s) => [s.id, s.speed])).toEqual([['paused', 0], ['slow', 1 / 120], ['normal', 1 / 60], ['fast', 1 / 15], ['fastest', 4 / 15]]);
+    expect(row(state(), 'speed').items.map((i) => i.label)).toEqual(['Paused', 'Slow', 'Normal', 'Fast', 'Fastest']);
+    // a day lasts 48, 24 and 6 real minutes, and 90 seconds at Fastest
+    expect(SPEEDS.slice(1).map((s) => 24 / s.speed / 60)).toEqual([48, 24, 6, 1.5]);
   });
 
   it('marks the clock speed in use (paused wins over the speed)', () => {
     expect(selected(state(), 'speed')).toEqual(['normal']);
     expect(selected(state({ speed: 1 / 15 }), 'speed')).toEqual(['fast']);
     expect(selected(state({ speed: 1 / 120 }), 'speed')).toEqual(['slow']);
+    expect(selected(state({ speed: 4 / 15 }), 'speed')).toEqual(['fastest']);
+    expect(row(state(), 'speed').items).toHaveLength(5);
     expect(selected(state({ paused: true }), 'speed')).toEqual(['paused']);
     expect(speedId(1 / 60, false)).toBe('normal');
     expect(speedId(0.02, false)).toBe('normal'); // an odd speed reads as the nearest
@@ -64,6 +67,14 @@ describe('menuModel', () => {
     expect(b.items.map((i) => [i.id, i.label])).toEqual([['add', 'Add a creature'], ['creatures', 'Creatures']]);
     expect(selected(state(), 'bring')).toEqual([]);
     expect(selected(state({ bring: true }), 'bring')).toEqual(['add']);
+  });
+
+  it('has Moment captions On or Off, On by default', () => {
+    const c = row(state(), 'captions');
+    expect(c.title).toBe('Moment captions');
+    expect(c.items.map((i) => [i.id, i.label])).toEqual([['on', 'On'], ['off', 'Off']]);
+    expect(selected(state(), 'captions')).toEqual(['on']);
+    expect(selected(state({ captions: false }), 'captions')).toEqual(['off']);
   });
 
   it('offers the daily limit 5, 10, 20 or 50 with the one in use marked and the count so far', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avoid } from '../../src/residents/avoid';
+import { avoid } from '../../src/sim/avoid';
 
 const pos = { x: 0, z: 0 }, target = { x: 10, z: 0 };
 

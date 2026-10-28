@@ -6,7 +6,7 @@ import type { QualityChoice, Tier } from '../render/quality';
 import type { Button } from '../shared/input';
 import { remember } from '../shared/settings';
 import type { ValleyClock } from '../world/clock';
-import { SPEEDS, openMenu, showLabel, type Menu, type MenuState, type SpeedId } from './menu';
+import { SPEEDS, openMenu, showLabel, type Menu, type MenuState, type SpeedId, type ValleyPage } from './menu';
 
 /** Set the clock to a speed from the menu (Paused stops it and keeps the speed it had). */
 export function setSpeed(clock: ValleyClock, id: SpeedId) {
@@ -29,12 +29,18 @@ export type MenuDeps = {
   bring: { readonly cardShown: boolean; toggle(): boolean };
   /** The daily creature limit and today's count, from the server (null when it cannot say). */
   cap?: { get(): Promise<CapNow | null>; set(limit: number): Promise<CapNow | null> };
+  /** The moment captions' switch: whether they are on, and turning them on or off (remembered by the caller). */
+  captions: { get(): boolean; set(on: boolean): void };
   /** Is the start screen still up? It comes first. */
   waiting(): boolean;
+  /** The player picked a clock speed from the menu. */
+  speedPicked?(): void;
   /** Does something else have the screen (the workshop)? Then Esc is its Back and the menu stays shut. */
   busy?(): boolean;
   /** The Creatures page's list and what its buttons do (the menu closes itself for Visit and Come back). */
   creatures?: Omit<CreaturesDeps, 'close'>;
+  /** The Valley page's buttons (start again, back up, restore); without them the page says the valley cannot be saved here. */
+  valley?: ValleyPage;
 };
 
 /**
@@ -47,7 +53,7 @@ export function menuControl(d: MenuDeps) {
   let today: CapNow = { count: 0, limit: DEFAULT_LIMIT }; // the last the server said
   const state = (): MenuState => ({
     speed: d.clock.speed, paused: d.clock.paused, quality: d.choice, tier: d.tier, volume: d.sound.volume, muted: d.sound.muted,
-    bring: d.bring.cardShown, dailyLimit: today.limit, today: today.count,
+    bring: d.bring.cardShown, dailyLimit: today.limit, today: today.count, captions: d.captions.get(),
   });
   /** Take the server's word for the count and limit (a null answer changes nothing) and redraw if the menu is up. */
   const learn = (c: CapNow | null) => {
@@ -74,6 +80,7 @@ export function menuControl(d: MenuDeps) {
         showLabel(d.ui, label);
       },
       speed: (id) => {
+        d.speedPicked?.();
         setSpeed(d.clock, id);
         remember('valley.speed', id);
         menu?.update(state());
@@ -90,6 +97,10 @@ export function menuControl(d: MenuDeps) {
         menu?.update(state());
       },
       mute: toggleMute,
+      captions: (on) => {
+        d.captions.set(on);
+        menu?.update(state());
+      },
       bring: () => {
         d.bring.toggle();
         menu?.update(state());
@@ -100,6 +111,7 @@ export function menuControl(d: MenuDeps) {
         void cap.set(n).then((c) => (c ? learn(c) : cap.get().then(learn)));
       },
       lab: () => (location.href = '/lab.html'),
+      valley: d.valley,
       creatures: d.creatures && ((page, nav) => void fillCreatures(page, { ...d.creatures!, close }, nav)),
     });
     void cap.get().then(learn); // today's count may have moved since the menu was last up

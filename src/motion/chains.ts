@@ -2,8 +2,17 @@
 
 export type Spring = { pos: number; vel: number };
 
-/** One step of a damped spring towards target (semi-implicit Euler, stable for small dt). */
+/** A spring steps at most this long (s) at once: semi-implicit Euler is steady for the stiffest springs here up to about 0.1 s. */
+const SPRING_DT = 1 / 30;
+
+/** One step of a damped spring towards target (semi-implicit Euler, in short steps so it stays steady at any dt). */
 export function springStep(s: Spring, target: number, stiffness: number, damping: number, dt: number): Spring {
+  if (dt > SPRING_DT) {
+    // a long step (a time-lapse frame) in short ones: the stiff springs would blow up otherwise
+    const n = Math.ceil(dt / SPRING_DT);
+    for (let i = 0; i < n; i++) s = springStep(s, target, stiffness, damping, dt / n);
+    return s;
+  }
   const vel = s.vel + (stiffness * (target - s.pos) - damping * s.vel) * dt;
   return { pos: s.pos + vel * dt, vel };
 }

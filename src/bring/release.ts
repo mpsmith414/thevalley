@@ -2,7 +2,7 @@
 import type { Object3D } from 'three/webgpu';
 import { familySeeds, type CreatureList } from '../creatures/list';
 import type { GalleryItem } from '../lab/gallery';
-import type { Family, Residents } from '../residents/residents';
+import { familyName, type Family, type Residents } from '../residents/residents';
 import type { Vec3 } from '../util/vec';
 import type { Viewpoint } from '../valley/types';
 import type { Valley } from '../valley/valley';
@@ -21,7 +21,7 @@ const FAMILY = 3;
 
 export type ReleaseDeps = {
   list: CreatureList;
-  residents: Pick<Residents, 'addSpecies' | 'removeSpecies' | 'familyOf'>;
+  residents: Pick<Residents, 'addSpecies' | 'removeSpecies' | 'familyOf' | 'leaving'>;
   valley: Valley;
   /** Where the camera is and which way it faces (level). */
   camera(): { eye: Vec3; forward: { x: number; z: number } };
@@ -78,7 +78,7 @@ async function arrive(family: Family, deps: ReleaseDeps): Promise<void> {
 
 /** The family is in: the camera pushes in and follows it, and its title shows (with the chime) once it is seen. */
 function welcome(family: Family, deps: ReleaseDeps, back = false) {
-  const name = family.cards?.name || 'A new friend';
+  const name = familyName(family);
   deps.hold(family.id, back ? `${name} is back!` : `${name} has come to the valley!`);
 }
 
@@ -112,9 +112,9 @@ export async function keepMade(made: Made, deps: Pick<ReleaseDeps, 'list' | 'now
   return item;
 }
 
-/** Glide to the family (false if none of it is in the valley: never released, gone exploring or walking out). */
+/** Glide to the family (false if none of it is in the valley: never released, gone exploring or walking out, or all caught). */
 export function visit(id: string, deps: Pick<ReleaseDeps, 'residents' | 'camera' | 'glideTo'>): boolean {
-  const members = deps.residents.familyOf(id).filter((a) => !a.errand?.out);
+  const members = deps.residents.familyOf(id).filter((a) => !deps.residents.leaving(a));
   if (!members.length) return false;
   const n = members.length;
   const c = { x: members.reduce((s, a) => s + a.rig.position.x, 0) / n, z: members.reduce((s, a) => s + a.rig.position.z, 0) / n };

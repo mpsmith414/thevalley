@@ -14,13 +14,14 @@ export const TIMES = [
   { id: 'night', label: 'Night', hour: PRESETS.night },
 ] as const;
 
-export type SpeedId = 'paused' | 'slow' | 'normal' | 'fast';
+export type SpeedId = 'paused' | 'slow' | 'normal' | 'fast' | 'fastest';
 /** The clock speeds, in valley hours per real second (Paused stops the clock and keeps its speed). */
 export const SPEEDS: readonly { id: SpeedId; label: string; speed: number; note: string }[] = [
   { id: 'paused', label: 'Paused', speed: 0, note: 'The sun and moon stand still.' },
   { id: 'slow', label: 'Slow', speed: 1 / 120, note: 'A whole day takes 48 minutes.' },
   { id: 'normal', label: 'Normal', speed: 1 / 60, note: 'A whole day takes 24 minutes.' },
   { id: 'fast', label: 'Fast', speed: 1 / 15, note: 'A whole day takes 6 minutes.' },
+  { id: 'fastest', label: 'Fastest', speed: 4 / 15, note: 'A whole day takes 90 seconds.' },
 ];
 /** The speed setting a clock is at: Paused, or the nearest of the others. */
 export const speedId = (speed: number, paused: boolean): SpeedId => {
@@ -35,15 +36,15 @@ export const tierLabel = (t: Tier) => TIER_LABEL[t];
 /**
  * What the menu shows: the clock, the quality setting (and the tier running now), the sound, whether the join card is
  * showing (it shows by itself while phones are connected; the menu's row can switch it off or on), and the daily creature
- * limit with today's count.
+ * limit with today's count, and whether the moment captions are on.
  */
 export type MenuState = {
   speed: number; paused: boolean; quality: QualityChoice; tier: Tier; volume: number; muted: boolean;
-  bring: boolean; dailyLimit: number; today: number;
+  bring: boolean; dailyLimit: number; today: number; captions: boolean;
 };
 export type MenuItem = { id: string; label: string; hint?: string; selected?: boolean; disabled?: boolean; aria?: string };
 export type MenuRow = {
-  id: 'resume' | 'time' | 'speed' | 'quality' | 'volume' | 'bring' | 'limit' | 'more'; title?: string; items: MenuItem[]; note?: string;
+  id: 'resume' | 'time' | 'speed' | 'quality' | 'volume' | 'captions' | 'bring' | 'limit' | 'more'; title?: string; items: MenuItem[]; note?: string;
   /** Volume only: the level out of 10, and whether it is muted (the level then shows dimmed). */
   level?: number; off?: boolean;
 };
@@ -64,11 +65,19 @@ export function menuModel(s: MenuState): MenuRow[] {
       { id: 'up', label: '+', aria: 'Louder', disabled: level >= 10 },
       { id: 'mute', label: s.muted ? 'Unmute' : 'Mute', selected: s.muted },
     ] },
+    { id: 'captions', title: 'Moment captions', items: [{ id: 'on', label: 'On', selected: s.captions }, { id: 'off', label: 'Off', selected: !s.captions }] },
     { id: 'bring', items: [{ id: 'add', label: 'Add a creature', selected: s.bring }, { id: 'creatures', label: 'Creatures' }] },
     { id: 'limit', title: 'Creatures a day', items: LIMITS.map((l) => ({ id: String(l), label: String(l), selected: l === s.dailyLimit })), note: `${s.today} made today` },
-    { id: 'more', items: [{ id: 'lab', label: 'Creature Lab' }, { id: 'controls', label: 'Controls' }] },
+    { id: 'more', items: [{ id: 'lab', label: 'Creature Lab' }, { id: 'controls', label: 'Controls' }, { id: 'valley', label: 'Valley' }] },
   ];
 }
+
+/** What the Valley page's buttons do: start the valley again (the page has asked, and been told yes), back it up to a file, restore a backup file. */
+export type ValleyPage = { startAgain(): void; backUp(): void; restore(file: File): void };
+/** The Valley page's confirm step before the valley goes back to its first morning. */
+export const START_AGAIN_ASK = 'Everything goes back to the first morning. Your creatures stay.';
+/** Shown on the Valley page when the valley cannot be saved here (no IndexedDB), so there is nothing to start again or back up. */
+export const NO_VALLEY_SAVE = 'The valley cannot be saved in this browser.';
 
 /** What the menu's buttons do. */
 export type MenuHandlers = {
@@ -79,6 +88,8 @@ export type MenuHandlers = {
   /** Change the volume by `delta` (±0.1). */
   volume(delta: number): void;
   mute(): void;
+  /** Moment captions on or off. */
+  captions(on: boolean): void;
   /** "Add a creature": show or hide the join card. */
   bring(): void;
   /** Choose the daily creature limit (one of `LIMITS`). */
@@ -86,6 +97,8 @@ export type MenuHandlers = {
   lab(): void;
   /** Fill the Creatures page as it opens (with Back, and the focus ring's place); without it the page says there are none. */
   creatures?(page: HTMLElement, nav: PageNav): void;
+  /** The Valley page's buttons; without it the page says the valley cannot be saved here. */
+  valley?: ValleyPage;
 };
 
 /** The controls, as the valley binds them: what it does, the controller, the keyboard and mouse. */
@@ -97,9 +110,11 @@ export const CONTROLS: readonly [string, string, string][] = [
   ['Walk on the ground', 'Y', 'G'],
   ['Fly to the next place', 'D-pad ◀ ▶', 'Arrow keys ◀ ▶'],
   ['Fly to place 1 to 8', '', 'Keys 1 to 8'],
+  ['Clock faster / slower', 'D-pad ▲ ▼', '] / [ or Arrow keys ▲ ▼'],
   ['Menu', 'Start', 'Esc or N'],
   ['Choose in the menu', 'D-pad and A', 'Arrow keys and Enter'],
   ['Back', 'B', 'Backspace'],
+  ["Fly to a caption's moment", 'X', 'F'],
   ['Sound on / off', '', 'M'],
 ];
 
@@ -123,9 +138,39 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     on.creatures ? null : h('p', { class: 'menu-empty' }, NO_CREATURES),
     h('button', { class: 'menu-btn menu-back', type: 'button', 'data-focus': true, 'data-key': 'back', onclick: () => showPage(null) }, 'Back'),
   );
-  const pages = { controls, creatures };
+  // the Valley page: start again (with a confirm step on the same page), back up, restore (a hidden file picker the button opens)
+  const picker = h('input', { type: 'file', accept: '.json,application/json', hidden: true, 'aria-hidden': 'true', tabindex: -1 });
+  const valleyBtn = (key: string, label: string, onclick: () => void) =>
+    h('button', { class: 'menu-btn', type: 'button', 'data-focus': true, 'data-key': key, onclick }, label);
+  const valleyBack = h('button', { class: 'menu-btn menu-back', type: 'button', 'data-focus': true, 'data-key': 'back', onclick: () => showPage(null) }, 'Back');
+  const valleyOptions = h('div', { class: 'menu-items menu-valley-options' },
+    valleyBtn('valley:again', 'Start the valley again', () => confirmAgain(true)),
+    valleyBtn('valley:backup', 'Back up the valley', () => on.valley?.backUp()),
+    // the picker opens from this very click (a key press or a mouse click is the gesture the browser wants)
+    valleyBtn('valley:restore', 'Restore a backup', () => picker.click()),
+  );
+  const valleyAsk = h('div', { class: 'menu-valley-ask', hidden: true },
+    h('p', { class: 'menu-empty' }, START_AGAIN_ASK),
+    h('div', { class: 'menu-items' }, valleyBtn('valley:yes', 'Yes, start again', () => on.valley?.startAgain()), valleyBtn('valley:no', 'No', () => confirmAgain(false))));
+  picker.addEventListener('change', () => {
+    const file = picker.files?.[0];
+    picker.value = ''; // the same file can be picked again
+    if (file) on.valley?.restore(file);
+  });
+  const valley = h('section', { class: 'menu-panel menu-valley', role: 'dialog', 'aria-label': 'Valley', hidden: true },
+    h('h2', { class: 'menu-heading' }, 'Valley'),
+    ...(on.valley ? [valleyOptions, valleyAsk, picker] : [h('p', { class: 'menu-empty' }, NO_VALLEY_SAVE)]),
+    valleyBack);
+  /** Ask "start again?" (or take the question back): the page's buttons give way to Yes and No, the focus on No. */
+  const confirmAgain = (ask: boolean) => {
+    valleyOptions.hidden = ask;
+    valleyBack.hidden = ask;
+    valleyAsk.hidden = !ask;
+    ring.focus(valley.querySelector<HTMLElement>(ask ? '[data-key="valley:no"]' : '[data-key="valley:again"]'));
+  };
+  const pages = { controls, creatures, valley };
   let page: keyof typeof pages | null = null;
-  const screen = h('div', { class: 'menu' }, main, controls, creatures);
+  const screen = h('div', { class: 'menu' }, main, controls, creatures, valley);
   root.append(screen);
   const ring = new FocusRing(() => (page ? pages[page] : main));
   // a click or Tab moves the ring too, so the controller and the mouse agree on what is focused
@@ -141,12 +186,14 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     else if (row === 'volume') {
       if (id === 'mute') on.mute();
       else if (!current.find((r) => r.id === 'volume')!.items.find((i) => i.id === id)!.disabled) on.volume(id === 'up' ? 0.1 : -0.1);
-    } else if (row === 'bring') {
+    } else if (row === 'captions') on.captions(id === 'on');
+    else if (row === 'bring') {
       if (id === 'add') on.bring();
       else showPage('creatures');
     } else if (row === 'limit') on.limit(Number(id));
     else if (id === 'lab') on.lab();
     else if (id === 'controls') showPage('controls');
+    else if (id === 'valley') showPage('valley');
   };
 
   let current: MenuRow[] = [];
@@ -157,7 +204,7 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
       const buttons: HTMLElement[] = row.items.map((it) => h('button', {
         class: `menu-btn${it.selected ? ' on' : ''}${row.id === 'resume' ? ' menu-resume' : ''}${it.disabled ? ' dim' : ''}`, type: 'button',
         'data-focus': true, 'data-key': `${row.id}:${it.id}`, 'aria-label': it.aria, 'aria-disabled': it.disabled ? 'true' : undefined,
-        'aria-pressed': row.id === 'speed' || row.id === 'quality' || row.id === 'limit' || it.id === 'mute' || it.id === 'add' ? String(!!it.selected) : undefined,
+        'aria-pressed': row.id === 'speed' || row.id === 'quality' || row.id === 'limit' || row.id === 'captions' || it.id === 'mute' || it.id === 'add' ? String(!!it.selected) : undefined,
         onclick: () => act(row.id, it.id),
       }, it.label, it.hint ? h('span', { class: 'menu-hint' }, ` · ${it.hint}`) : null));
       if (row.level !== undefined) {
@@ -173,16 +220,19 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     const keep = was && main.querySelector<HTMLElement>(`[data-key="${was}"]`);
     if (keep) ring.focus(keep);
   };
-  /** Show a page (Controls or Creatures) in place of the menu, or go back to the menu with the focus on the button that opened it. */
+  /** Show a page (Controls, Creatures or Valley) in place of the menu, or go back to the menu with the focus on the button that opened it. */
   const showPage = (next: keyof typeof pages | null) => {
     const was = page;
     page = next;
     controls.hidden = next !== 'controls';
     creatures.hidden = next !== 'creatures';
+    valley.hidden = next !== 'valley';
+    if (next === 'valley') confirmAgain(false); // always opens on its buttons, never on the question
     main.hidden = next !== null;
     if (next === 'creatures') on.creatures?.(creatures, { back: () => showPage(null), focus: (el) => ring.focus(el) });
-    if (next) ring.reset(); // (the Creatures page moves it to its first creature once it has drawn)
-    else ring.focus(main.querySelector<HTMLElement>(was === 'creatures' ? '[data-key="bring:creatures"]' : '[data-key="more:controls"]'));
+    if (next === 'valley') ring.focus(valley.querySelector<HTMLElement>('[data-focus]:not([hidden])'));
+    else if (next) ring.reset(); // (the Creatures page moves it to its first creature once it has drawn)
+    else ring.focus(main.querySelector<HTMLElement>(`[data-key="${was === 'creatures' ? 'bring:creatures' : was === 'valley' ? 'more:valley' : 'more:controls'}"]`));
   };
 
   draw(state);
@@ -199,7 +249,7 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
       if (b === 'up' || b === 'down' || b === 'left' || b === 'right') return ring.move(b);
       if (repeat) return;
       if (b === 'a') return ring.activate();
-      if (b === 'b') return page ? showPage(null) : on.resume();
+      if (b === 'b') return page === 'valley' && !valleyAsk.hidden ? confirmAgain(false) : page ? showPage(null) : on.resume();
     },
     update: draw,
     close() {

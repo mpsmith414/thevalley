@@ -10,6 +10,7 @@ import type { Recipe } from '../recipe/schema';
 import { viewpointPose } from '../camera/viewpoints';
 import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
+import { ANIMAL_S_PER_HOUR, TICK, type Agent, type Needs, type Pt } from '../sim/types';
 import { VALLEY } from '../valley/layout';
 import { PRESETS } from '../world/clock';
 import type { World } from './main';
@@ -199,18 +200,23 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     console.table(rows);
     return rows;
   };
+  /** Put the camera `h` m above the ground (or water) at (x, z), looking at the point `lh` m above (lx, lz). */
+  const at = (x: number, z: number, h: number, lx: number, lz: number, lh = 0) => {
+    const p = viewpointPose({ name: 'dev', pos: { x, z, h }, look: { x: lx, z: lz, h: lh } }, w.valley);
+    Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
+    w.fly.apply(camera);
+  };
+  const simDev = simHooks(w, at, time);
   const fpsNow = () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0);
   Object.assign(window, {
     __valley: {
       ...w, tier, step, shot, screen, pace,
       resume: () => (loop.paused = false),
-      /** Put the camera `h` m above the ground (or water) at (x, z), looking at the point `lh` m above (lx, lz). */
-      at: (x: number, z: number, h: number, lx: number, lz: number, lh = 0) => {
-        const p = viewpointPose({ name: 'dev', pos: { x, z, h }, look: { x: lx, z: lz, h: lh } }, w.valley);
-        Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
-        w.fly.apply(camera);
-      },
+      at,
       time, tour, perf, frames,
+      sim: simDev,
+      /** Stage a scene for a shot (as `sim.stage`). */
+      stage: simDev.stage,
       /** Paint every leaf card (colour above, height below, on a sky-grey ground) and save the sheet as .shots/<name>.png. */
       cards: async (size = 256, name = 'cards') => {
         const { CARD_KINDS, paintCard } = await import('../plants/cards');
@@ -289,6 +295,98 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     },
     __bring: bringHooks(w, screen),
   });
+}
+
+// ---------- the simulation: its state and moments, needs, running ahead, and staged scenes ----------
+/** The scenes `__valley.sim.stage` sets up. */
+type Stage = 'fox-rabbits' | 'wolves-deer' | 'hawk' | 'dusk-ducks' | 'drink';
+/** A staged hunter starts this far (m) from its prey's middle; the hawk this far off, up where it soars. */
+const STAGE_GAP: Record<'fox' | 'wolf' | 'hawk', number> = { fox: 40, wolf: 60, hawk: 30 };
+
+/**
+ * Dev: `__valley.sim` reads the simulation's state and its last moments, sets an animal's needs, runs it ahead headless
+ * (the view jumps), and stages a scene for shots: a hungry hunter near its prey, the ducks at dusk, the herd drinking.
+ */
+function simHooks(w: World, at: (x: number, z: number, h: number, lx: number, lz: number, lh?: number) => void, time: (hour: number) => number) {
+  const sim = () => w.residents.sim;
+  /** The animals of a species (not those going back to the earth). */
+  const of = (species: string) => sim().agents.filter((a) => a.species === species && a.doing !== 'returning');
+  const middle = (pts: Pt[]) => ({ x: pts.reduce((s, p) => s + p.x, 0) / pts.length, z: pts.reduce((s, p) => s + p.z, 0) / pts.length });
+  /** Moves `a` to `p` (its smoothing too, so the view does not slide it there) to choose afresh. */
+  const put = (a: Agent, p: Pt) => {
+    const s = sim();
+    s.ctx.become(a, 'watch');
+    Object.assign(a.motion, { x: p.x, z: p.z, target: null, speed: 0 });
+    Object.assign(s.prev(a.id)!, a.motion);
+    s.ctx.done(a);
+  };
+  /** The camera off to one side of the line through `pts` (from `a` to `b`), far enough back to have them all in the picture. */
+  const frame = (pts: Pt[]) => {
+    const c = middle(pts), a = pts[0], b = pts[pts.length - 1];
+    const spread = Math.max(8, ...pts.map((p) => Math.hypot(p.x - c.x, p.z - c.z)));
+    const d = Math.hypot(b.x - a.x, b.z - a.z), ux = d > 1e-6 ? -(b.z - a.z) / d : 1, uz = d > 1e-6 ? (b.x - a.x) / d : 0; // across the line
+    const back = Math.max(25, spread * 1.6);
+    at(c.x + ux * back, c.z + uz * back, back * 0.35, c.x, c.z, 1);
+  };
+  /** A hungry `hunter` (and its group) `STAGE_GAP` m from the middle of its `prey`, on dry ground, the camera framing both. */
+  const hunt = (hunter: 'fox' | 'wolf' | 'hawk', prey: string) => {
+    const s = sim(), quarry = of(prey), first = of(hunter)[0];
+    if (!quarry.length || !first) return null;
+    const c = middle(quarry.map((a) => a.motion)), pack = first.group ? of(hunter).filter((a) => a.group === first.group) : [first];
+    const toward = Math.atan2(first.motion.z - c.z, first.motion.x - c.x), r = STAGE_GAP[hunter];
+    let spot: Pt | null = null;
+    for (let k = 0; k < 12 && !spot; k++) {
+      const ang = toward + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6), x = c.x + Math.cos(ang) * r, z = c.z + Math.sin(ang) * r;
+      if (!w.valley.isWater(x, z) && w.valley.inside(x, z, 20)) spot = { x, z };
+    }
+    if (!spot) return null;
+    pack.forEach((a, k) => {
+      put(a, { x: spot!.x + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 3, z: spot!.z });
+      s.setNeeds(a.id, { hunger: 1, tired: 0, thirst: 0 });
+    });
+    frame([spot, c]);
+    return pack.map((a) => a.id);
+  };
+  const stages: Record<Stage, () => unknown> = {
+    'fox-rabbits': () => hunt('fox', 'rabbit'),
+    'wolves-deer': () => hunt('wolf', 'deer'),
+    hawk: () => hunt('hawk', 'rabbit'),
+    'dusk-ducks': () => {
+      time(20.5);
+      const ducks = of('duck');
+      if (ducks.length) frame(ducks.map((a) => a.motion));
+      return ducks.map((a) => a.id);
+    },
+    drink: () => {
+      const deer = of('deer');
+      for (const a of deer) {
+        sim().setNeeds(a.id, { thirst: 1 });
+        sim().ctx.done(a);
+      }
+      if (deer.length) frame(deer.map((a) => a.motion));
+      return deer.map((a) => a.id);
+    },
+  };
+  return {
+    /** The simulation's whole state (a deep copy). */
+    state: () => sim().state(),
+    /** The last `n` moments, oldest first. */
+    moments: (n = 20) => sim().moments.recent().slice(-n),
+    /** Set some of animal `id`'s needs; returns them all. */
+    needs: (id: string, partial: Partial<Needs>) => (sim().setNeeds(id, partial), sim().get(id)?.needs),
+    /** Run the simulation `hours` valley hours ahead, headless (16 ticks a step), the clock with it; the view jumps there. */
+    ahead: (hours: number) => {
+      const s = sim(), step = 16 * TICK, n = Math.round((hours * ANIMAL_S_PER_HOUR) / step);
+      for (let i = 0; i < n; i++) {
+        w.clock.hours += step / ANIMAL_S_PER_HOUR;
+        s.step(step, w.clock.hours);
+      }
+      w.light(Infinity);
+      return w.clock.hour;
+    },
+    /** Stage a scene (`fox-rabbits`, `wolves-deer`, `hawk`, `dusk-ducks`, `drink`), the camera framing it; returns who is in it. */
+    stage: (name: Stage) => stages[name]?.() ?? null,
+  };
 }
 
 // ---------- the workshop without the designer: a stand-in turn, one call at a time ----------

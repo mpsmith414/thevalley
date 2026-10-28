@@ -33,7 +33,7 @@ const later = () => {
 };
 const settle = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0)); };
 
-type Member = { rig: { position: { x: number; z: number }; altitude: number }; home: Family['valley']['home']; errand: { out: boolean } | null };
+type Member = { rig: { position: { x: number; z: number }; altitude: number }; home: Family['valley']['home']; out: boolean };
 
 /** Fakes for everything but the list (fake-indexeddb) and the valley (the small generated one). */
 async function setup(opts: { fail?: boolean; glide?: Promise<void> } = {}) {
@@ -50,7 +50,7 @@ async function setup(opts: { fail?: boolean; glide?: Promise<void> } = {}) {
       if (opts.fail) throw new Error('the body would not build');
       await o.compile(new Group());
       placed = true;
-      families.set(item.id, [0, 1, 2].map((k) => ({ rig: { position: { x: item.valley.home.center.x + k, z: item.valley.home.center.z }, altitude: 0 }, home: item.valley.home, errand: null })));
+      families.set(item.id, [0, 1, 2].map((k) => ({ rig: { position: { x: item.valley.home.center.x + k, z: item.valley.home.center.z }, altitude: 0 }, home: item.valley.home, out: false })));
     },
     async removeSpecies(id: string) {
       log.push('remove');
@@ -58,6 +58,7 @@ async function setup(opts: { fail?: boolean; glide?: Promise<void> } = {}) {
       families.delete(id);
     },
     familyOf: (id: string) => families.get(id) ?? [],
+    leaving: (a: Member) => a.out,
   };
   const deps: ReleaseDeps = {
     list, valley, residents: residents as unknown as ReleaseDeps['residents'],
@@ -210,7 +211,7 @@ describe('visit', () => {
     const s = await setup();
     expect(visit('nobody', s.deps)).toBe(false);
     await releaseMade(made, s.deps);
-    s.families.get('c1')!.forEach((a) => (a.errand = { out: true }));
+    s.families.get('c1')!.forEach((a) => (a.out = true));
     s.glides.length = 0;
     expect(visit('c1', s.deps)).toBe(false);
     expect(s.glides).toEqual([]);

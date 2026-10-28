@@ -64,6 +64,7 @@ export const VALLEY: Layout = {
     { name: 'Rocky Knoll', pos: { x: -250, z: 350, h: 3 }, look: { x: 100, z: 200, h: 0 } },
     { name: 'Valley Overview', pos: { x: 0, z: 700, h: 140 }, look: { x: 0, z: 0, h: 0 } },
   ],
+  // Part of the generation cache key only: the animals' homes are `HOMES` (src/sim/homes.ts). Do not edit.
   homes: [
     { species: 'deer', count: 3, center: P(-185, 175), radius: 65, medium: 'land', prefer: ['meadow', 'forest'] },
     { species: 'rabbit', count: 3, center: P(-210, 190), radius: 30, medium: 'land', prefer: ['meadow'] },

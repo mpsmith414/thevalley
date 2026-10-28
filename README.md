@@ -5,6 +5,9 @@ A living 3D valley you watch like a nature documentary, where a child's drawing 
 - **The Valley:** a northern valley with a lake, a river, forest, meadows and rocky ridges, a day and night cycle,
   resident animals, wind and an ambient soundscape. Fly through it with a controller or keyboard and mouse, or glide
   between viewpoints.
+- **Animals with lives:** the animals follow their needs. Herds graze and drink together with one on watch, foxes and
+  wolves stalk and sometimes chase, the hawk dives, and prey freezes, hides or flees. Most hunts fail, and the rare
+  catch is gentle. Ducks raft up at dusk, frogs call in the evening, and new animals wander in from the valley's edge.
 - **The Creature Lab:** a drawing, a few words, or both become a 3D creature with fur, scales or feathers that walks,
   runs, grazes, drinks, sleeps, calls, flies or swims. Claude designs it and looks again at each build to fix it.
 - **Bring it to life:** phones on the home Wi-Fi join from a QR code on the TV. Draw, snap a photo of a paper drawing or
@@ -73,9 +76,17 @@ app, and the keyboard's microphone key works for talking.
 | Menu | Start | Esc |
 | In the menu: move, choose, back | D-pad, A, B | Arrow keys, Enter, Backspace |
 | Sound off / on | (menu) | M |
+| Time a step slower / faster | D-pad down / up | [ / ], or arrow down / up |
+| Fly to the animal in the caption | X | F |
 
-The menu has the time of day, quality, volume, **Add a creature**, **Creatures** (visit, send off exploring or bring
-back each released creature) and a daily limit on new creatures.
+The menu has the time of day and its speed (Paused, Slow, Normal, Fast and Fastest, where a whole day takes 90
+seconds), quality, volume, captions on or off, **Add a creature**, **Creatures** (visit, send off exploring or bring
+back each released creature), a daily limit on new creatures and the **Valley** page (start the valley again, back it
+up to a file, restore a backup).
+
+The valley remembers itself: the animals, the hour and the speed are saved in the browser, so it carries on where it left
+off. A quiet caption at the bottom names the good moments (a stalk, a chase, a raft of ducks); press **Fly there** to
+glide to the animal and follow it.
 
 ### The Creature Lab
 

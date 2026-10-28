@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { defineConfig, type Plugin } from 'vitest/config';
+import { configDefaults, defineConfig, type Plugin } from 'vitest/config';
 
 /** Dev only: POST a PNG data URL to /__shot?name=x and it is saved as .shots/x.png (for checking work). */
 function shots(): Plugin {
@@ -62,6 +62,9 @@ export function endBrokenStream(res: unknown): void {
   if (r && 'req' in r && r.headersSent && !r.writableEnded) r.end?.();
 }
 
+/** The test that times the simulation over whole valley days. */
+const VALLEY_DAY = 'tests/sim/valley-day.test.ts';
+
 export default defineConfig({
   plugins: [shots(), builderHashDefine()],
   server: {
@@ -70,5 +73,12 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   build: { target: 'es2023', chunkSizeWarningLimit: 1500, rollupOptions: { input: { valley: 'index.html', lab: 'lab.html', drawings: 'drawings.html', phone: 'phone.html' } } },
-  test: { environment: 'node', include: ['tests/**/*.test.ts'] },
+  test: {
+    environment: 'node',
+    projects: [
+      { extends: true, test: { name: 'unit', include: ['tests/**/*.test.ts'], exclude: [...configDefaults.exclude, VALLEY_DAY] } },
+      // the valley-day test times the simulation: it runs on its own, after the rest, so other tests do not slow the clock
+      { extends: true, test: { name: 'valley-day', include: [VALLEY_DAY], sequence: { groupOrder: 1 } } },
+    ],
+  },
 });
