@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { moonDirection, moonPhase, sunDirection } from '../../src/world/clock';
+import type { Grade } from '../../src/render/grade';
 import { lightingAt, type LightState } from '../../src/world/lighting';
 
 /** The lighting at `hour` on day 0, with the moon of that moment. */
@@ -25,7 +26,7 @@ describe('lightingAt', () => {
     expect(s.key).toBe('moon');
     expect(s.stars).toBeCloseTo(1, 6);
     expect(s.exposure).toBeGreaterThanOrEqual(4);
-    expect(s.keyColor).toBe('#9db4ff');
+    expect(s.keyColor).toBe('#7f9bff');
   });
 
   it('scales the moonlight by how full and how high the moon is', () => {
@@ -67,7 +68,7 @@ describe('lightingAt', () => {
     expect(lightingAt(9, sunAt(15), moon, 0).keyColor).toBe('#ffe0b8');
     expect(lightingAt(9, sunAt(10), moon, 0).keyIntensity).toBeCloseTo(2.0, 6);
     expect(lightingAt(9, sunAt(2.5), moon, 0).exposure).toBeCloseTo(1.55, 6);
-    expect(lightingAt(9, sunAt(-30), moon, 0).exposure).toBeCloseTo(4.2, 9);
+    expect(lightingAt(9, sunAt(-30), moon, 0).exposure).toBeCloseTo(4.6, 9);
     expect(lightingAt(9, sunAt(80), moon, 0).keyIntensity).toBeCloseTo(3, 9);
   });
 
@@ -99,7 +100,61 @@ describe('lightingAt', () => {
   it('has the key intensity reach 0 at the sun-to-moon switch', () => {
     const dir = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
     expect(lightingAt(20, dir(-3), dir(60), 0.5).keyIntensity).toBeCloseTo(0, 6);
-    expect(lightingAt(20, dir(-2), dir(60), 0.5).keyIntensity).toBeGreaterThan(0);
+    expect(lightingAt(20, dir(-0.5), dir(60), 0.5).keyIntensity).toBeGreaterThan(0);
     expect(lightingAt(20, dir(-4), dir(60), 0.5).keyIntensity).toBeGreaterThan(0);
+  });
+
+  it('puts the sun key out as the sun crosses the horizon (it would light the animals from under the ground)', () => {
+    const dir = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
+    const below = dir(-60); // no moonlight, so only the sun's key is left
+    for (const d of [-1, -1.5, -2, -2.9]) expect(lightingAt(20, dir(d), below, 0.5).keyIntensity).toBe(0);
+    expect(lightingAt(20, dir(0), below, 0.5).keyIntensity).toBeCloseTo(0.7 * 0.5, 6); // half way through the fade
+    expect(lightingAt(20, dir(1), below, 0.5).keyIntensity).toBeCloseTo(0.7 + (1.6 - 0.7) / 5, 6);
+  });
+
+  describe('grade', () => {
+    const sunAt = (deg: number) => ({ x: 0, y: Math.sin((deg * Math.PI) / 180), z: Math.cos((deg * Math.PI) / 180) });
+    const below = { x: 0, y: -1, z: 0 };
+    /** Every grade field as one flat list of numbers. */
+    const flat = (g: Grade) => [g.warmth, g.tint, ...g.lift, ...g.gamma, ...g.gain, g.contrast, g.saturation, g.vibrance, g.vignette];
+
+    it('is given at every hour, with finite fields', () => {
+      for (let h = 0; h < 24; h += 0.25) {
+        const g = at(h).grade;
+        expect(g).toBeDefined();
+        expect(flat(g)).toHaveLength(15);
+        for (const n of flat(g)) expect(Number.isFinite(n)).toBe(true);
+      }
+    });
+
+    it('is continuous across every row of the table', () => {
+      for (const e of [-18, -8, -3, 0, 5, 15, 40, 65]) {
+        const lo = flat(lightingAt(9, sunAt(e - 0.01), below, 0).grade), hi = flat(lightingAt(9, sunAt(e + 0.01), below, 0).grade);
+        lo.forEach((v, i) => expect(Math.abs(v - hi[i])).toBeLessThan(1e-3));
+      }
+    });
+
+    it('has each row of the table at its own elevation, and the mean of two rows half way between', () => {
+      const g = (e: number) => lightingAt(9, sunAt(e), below, 0).grade;
+      const close = (got: number[], want: number[]) => got.forEach((v, i) => expect(v).toBeCloseTo(want[i], 6));
+      close([g(-8).saturation, g(-8).warmth], [0.75, 0.2]);
+      close(g(-3).lift, [0.012, 0.012, 0.016]);
+      expect(g(-3).vibrance).toBeCloseTo(0.05, 6);
+      close(g(0).gain, [1.02, 1, 0.97]);
+      expect(g(0).saturation).toBeCloseTo(0.95, 6);
+      close([g(5).warmth, g(5).contrast], [0.2, 1.05]);
+      close(g(5).gain, [1.03, 1.01, 0.96]);
+      close(g(15).lift, [0.008, 0.004, 0.002]);
+      expect(g(15).warmth).toBeCloseTo(0.08, 6);
+      close(g(40).lift, [0.01, 0.005, 0]);
+      close([g(10).warmth, g(10).contrast], [(0.2 + 0.08) / 2, (1.05 + 1.04) / 2]);
+      close([g(-5.5).saturation], [(0.75 + 0.85) / 2]);
+    });
+
+    it('is desaturated deep in the night and has no warmth at noon', () => {
+      expect(lightingAt(0, sunAt(-18), below, 0).grade.saturation).toBeLessThan(0.8);
+      expect(lightingAt(0, sunAt(-40), below, 0).grade.saturation).toBeLessThan(0.8);
+      expect(at(12).grade.warmth).toBe(0);
+    });
   });
 });

@@ -20,6 +20,10 @@ const pipelineKey = (o: Drawable, m: Material) =>
  * Every call gathers what it will compile before its first `await` (three r186), so this has gathered everything by the
  * time it returns its promise: a caller may undo temporary visibility at once (see `VegetationTiles.compile`). Check both
  * on a three upgrade.
+ *
+ * The valley and the lab draw through the post pipeline's scene pass (post.ts), whose target matches the renderer's own
+ * frame buffer target (half float, 4 samples, linear working colour space, depth24plus), so the pipelines compiled here
+ * (with no render target set) are the ones the pass uses: GPU pipelines are keyed on those (checked in the valley).
  */
 export function compileTogether(renderer: Compiler, root: Object3D, camera: Camera, scene: Object3D = root): Promise<void> {
   const firsts = new Map<string, Object3D>();

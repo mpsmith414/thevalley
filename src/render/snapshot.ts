@@ -3,8 +3,10 @@ import type { BodyData } from '../builder/build';
 import type { ImageIn, View } from '../designer/types';
 import type { Recipe } from '../recipe/schema';
 import { createCreatureObject } from './creature';
+import type { Post } from './post';
 
-export type SnapshotContext = { renderer: WebGPURenderer; scene: Scene; camera: Camera };
+/** The canvas to borrow: its renderer, the stage it shows and, where the stage draws through one, its post pipeline. */
+export type SnapshotContext = { renderer: WebGPURenderer; scene: Scene; camera: Camera; post?: Post };
 
 const FOV = 30;
 
@@ -26,10 +28,13 @@ export function viewDirection(view: View): Vector3 {
 
 /**
  * Photograph a creature in its rest pose on a plain background, framed to its size, from the
- * drawing's angle. Uses the main canvas for one synchronous frame, then puts the stage back.
+ * drawing's angle. Uses the main canvas for one synchronous frame, then puts the stage back. With a post pipeline (the lab)
+ * the studio is drawn through it, its pass pointed at the studio for that one frame, so the picture is tone mapped and graded
+ * like the stage.
  */
 export async function renderView(ctx: SnapshotContext, body: BodyData, recipe: Recipe, view: View, size = 768): Promise<ImageIn> {
-  const { renderer } = ctx;
+  const { renderer, post } = ctx;
+  const draw = (s: Scene, c: Camera) => (post ? post.render(s, c) : renderer.render(s, c));
   const studio = new Scene();
   studio.background = new Color('#e9e6df');
   studio.add(new HemisphereLight('#ffffff', '#b8b0a0', 1.6));
@@ -53,12 +58,12 @@ export async function renderView(ctx: SnapshotContext, body: BodyData, recipe: R
   const prev = { w: canvas.width, h: canvas.height, ratio: renderer.getPixelRatio() };
   renderer.setPixelRatio(1);
   renderer.setSize(size, size, false);
-  renderer.render(studio, camera);
+  draw(studio, camera);
   const url = canvas.toDataURL('image/png'); // same task as the render
   if (prev.w > 0 && prev.h > 0) {
     renderer.setSize(prev.w / prev.ratio, prev.h / prev.ratio, false);
     renderer.setPixelRatio(prev.ratio);
-    renderer.render(ctx.scene, ctx.camera); // put the stage back before the browser shows a frame
+    draw(ctx.scene, ctx.camera); // put the stage back before the browser shows a frame
   }
   creature.dispose();
   return { base64: url.replace(/^data:image\/png;base64,/, ''), mediaType: 'image/png' };

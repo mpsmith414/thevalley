@@ -7,7 +7,7 @@ import { compileTogether } from '../render/compile';
 import { createCreatureObject, type CreatureObject } from '../render/creature';
 import type { Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
-import { probe } from '../render/probe';
+import { nodeFrameOf } from '../render/probe';
 import { renderView } from '../render/snapshot';
 import { createStage } from '../render/stage';
 import { POND, WATER_LEVEL, heightAt, isWater } from '../render/terrain';
@@ -49,11 +49,10 @@ const EYE_DIR = new Vector3(0.6, 0.16, 0.8).normalize();
  * upload once a frame) while the eyes, plain meshes on the bones, move on, and the grass's `time` stands still.
  */
 function nextFrame(r: WebGPURenderer) {
-  const frame = (r as unknown as { _nodes?: { nodeFrame?: { update?(): void; frameId?: number } } })._nodes?.nodeFrame;
-  if (!probe(typeof frame?.update === 'function' && typeof frame.frameId === 'number',
-    "renderer._nodes.nodeFrame (update, frameId) is gone, so the workshop's creature keeps its first pose on the stage (studio.ts)")) return;
-  frame!.update!();
-  (r.info as { frame: number }).frame = frame!.frameId!; // as the loop does (read-only in the types only)
+  const frame = nodeFrameOf(r, "the workshop's creature keeps its first pose on the stage (studio.ts)");
+  if (!frame) return;
+  frame.update();
+  (r.info as { frame: number }).frame = frame.frameId; // as the loop does (read-only in the types only)
 }
 
 /**

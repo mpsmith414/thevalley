@@ -26,10 +26,14 @@ const LOWER_SCALE = 0.98;
 const UPTURN_OPEN = 30 * deg, UPTURN_FROM = 0.4, UPTURN_FULL = 0.9;
 
 /** Lid rim elevations (radians) for a closing amount: upper +50° → −35°, lower −55° → −35°. */
-export function lidAngles(amount: number): { upper: number; lower: number } {
+export function lidAngles(amount: number, out = { upper: 0, lower: 0 }): { upper: number; lower: number } {
   const a = Math.min(1, Math.max(0, amount));
-  return { upper: UPPER_OPEN + (SHUT - UPPER_OPEN) * a, lower: LOWER_OPEN + (SHUT - LOWER_OPEN) * a };
+  out.upper = UPPER_OPEN + (SHUT - UPPER_OPEN) * a;
+  out.lower = LOWER_OPEN + (SHUT - LOWER_OPEN) * a;
+  return out;
 }
+/** Scratch for the blink, which runs every frame. */
+const lidScratch = { upper: 0, lower: 0 };
 
 function eyeMaterial(recipe: Recipe): MeshPhysicalNodeMaterial {
   const iris = uniform(new Color(recipe.skin.eyes.color));
@@ -134,7 +138,7 @@ export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?:
     const wider = UPTURN_OPEN * Math.min(1, Math.max(0, (dir.y - UPTURN_FROM) / (UPTURN_FULL - UPTURN_FROM)));
     // a cap's front edge tips up by e when turned −e about x; the lower is the cap turned over (z by π) first
     eye.blink = upper ? (amount: number) => {
-      const a = lidAngles(amount);
+      const a = lidAngles(amount, lidScratch);
       upper.rotation.set(-a.upper, 0, 0);
       lower.rotation.set(-(a.lower - wider * (1 - Math.min(1, Math.max(0, amount)))), 0, Math.PI);
     } : () => {};

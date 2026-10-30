@@ -25,12 +25,13 @@ export const fox = native({
     part('tail3', 'tail2', 'tail', [0, -0.4, -1], 0.12, 0.05, 0.02, { region: 'tip' }),
   ],
   skin: {
+    // the russet a little deeper and less saturated (was #c8641e, #c4621e, #c0601f): at dusk the fox glowed against the dim wood
     regions: [
-      region('body', 'fur', '#c8641e', { belly: '#f1ebe0', furLength: 0.018, fluff: 0.35, coat: 'soft' }),
-      region('snout', 'fur', '#c4621e', { belly: '#f4efe6', furLength: 0.008, coat: 'sleek' }),
+      region('body', 'fur', '#b9612a', { belly: '#f1ebe0', furLength: 0.018, fluff: 0.35, coat: 'soft' }),
+      region('snout', 'fur', '#b65f29', { belly: '#f4efe6', furLength: 0.008, coat: 'sleek' }),
       region('ears', 'fur', '#3a2416', { furLength: 0.006, coat: 'sleek' }),
       region('socks', 'fur', '#2a1d16', { furLength: 0.01, fluff: 0.2, coat: 'soft' }),
-      region('brush', 'fur', '#c0601f', { belly: '#d9a37a', furLength: 0.035, fluff: 0.75, coat: 'shaggy' }),
+      region('brush', 'fur', '#b25d2a', { belly: '#d9a37a', furLength: 0.035, fluff: 0.75, coat: 'shaggy' }),
       region('tip', 'fur', '#f4efe6', { furLength: 0.035, fluff: 0.75, coat: 'shaggy' }),
     ],
     eyes: { color: '#c88a1a', pupil: 'slit', size: 0.95 },

@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Scene } from 'three/webgpu';
+import { Matrix4, PerspectiveCamera, Scene, Vector3, type BufferAttribute, type InstancedMesh } from 'three/webgpu';
 import { describe, expect, it, vi } from 'vitest';
 import { buildBody, type BodyData } from '../../src/builder/build';
 import { FreeFly } from '../../src/camera/freefly';
@@ -94,6 +94,88 @@ describe('Residents', () => {
     expect(full).toBeGreaterThan(0);
     expect(paused).toBeGreaterThan(0);
     for (const [id, calls] of quarterCalls) expect(calls, `${id} farther out, every 4th frame`).toBeGreaterThan(0);
+  });
+
+  it('lays a contact shadow under a near animal on the ground, and takes it away when it is stowed or far off', async () => {
+    const res = new Residents(valley, VALLEY, HOMES, fakeBuilder, 'high', new Scene()); // the lowest tier never draws the middle detail
+    await res.spawn();
+    const alpha = (a: { shade: number }) => (res.shadows as unknown as { geometry: { getAttribute(n: string): { array: Float32Array } } }).geometry.getAttribute('opacity').array[a.shade];
+    expect(res.animals.every((a) => a.shade >= 0 && alpha(a) === 0)).toBe(true);
+    const g = res.sim.get(res.animals.find((a) => a.species === 'deer')!.id)!;
+    res.update(1 / 15, 1 / 15, cameraOn(g.motion.x, g.motion.z, 10), 9);
+    const near = res.animals.filter((a) => a.band !== 'paused' && a.obj.lod <= 1 && !a.rig.inWater && a.rig.altitude < 0.01);
+    expect(near.length).toBeGreaterThan(0);
+    for (const a of near) expect(alpha(a), a.id).toBeGreaterThan(0);
+    for (const a of res.animals.filter((b) => b.band === 'paused')) expect(alpha(a), `${a.id} stowed`).toBe(0);
+    for (const a of res.animals.filter((b) => b.obj.lod > 1)) expect(alpha(a), `${a.id} far`).toBe(0);
+    expect(res.shadows.parent).not.toBeNull();
+  });
+
+  describe('contact shadows leave nothing behind', () => {
+    /** Residents at High (the lowest tier never draws the middle detail, so never shades), and their shadow mesh. */
+    const shaded = async () => {
+      const res = new Residents(valley, VALLEY, HOMES, fakeBuilder, 'high', new Scene());
+      await res.spawn();
+      return { res, mesh: res.shadows as InstancedMesh };
+    };
+    const opacity = (mesh: InstancedMesh) => mesh.geometry.getAttribute('opacity') as BufferAttribute;
+    /** Whether instance i draws anything: some opacity, or a quad with any size. */
+    const m = new Matrix4(), c = new Vector3();
+    const visible = (mesh: InstancedMesh, i: number) => opacity(mesh).getX(i) > 0 || new Vector3(1, 0, 1).applyMatrix4(mesh.getMatrixAt(i, m)).distanceTo(c.setFromMatrixPosition(m)) > 0;
+    const anyVisible = (mesh: InstancedMesh) => Array.from({ length: mesh.count }, (_, i) => i).filter((i) => visible(mesh, i));
+    /** A camera on the deer, and the animals shading there after one update. */
+    const shadeTheDeer = (res: Residents, mesh: InstancedMesh) => {
+      const g = res.sim.get(res.animals.find((a) => a.species === 'deer')!.id)!, camera = cameraOn(g.motion.x, g.motion.z, 10);
+      res.update(1 / 15, 1 / 15, camera, 9);
+      expect(anyVisible(mesh).length).toBeGreaterThan(0);
+      return camera;
+    };
+
+    it('fades the shadow of an animal going back into the earth, and takes it away when it has gone', async () => {
+      const { res, mesh } = await shaded();
+      const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!, g = res.sim.get(rabbit.id)!;
+      const camera = cameraOn(g.motion.x, g.motion.z);
+      res.update(1 / 15, 1 / 15, camera, 9);
+      expect(rabbit.band).toBe('full');
+      const shade = rabbit.shade;
+      expect(opacity(mesh).getX(shade)).toBeGreaterThan(0.3);
+      res.sim.ctx.become(g, 'returning');
+      let faded = false;
+      for (let t = 0; t < 8 && res.sim.get(rabbit.id); t += 1 / 15) {
+        res.update(1 / 15, 1 / 15, camera, 9);
+        const agent = res.sim.get(rabbit.id);
+        if (!agent || agent.sink <= 0 || rabbit.band !== 'full') continue;
+        expect(opacity(mesh).getX(shade), `sink ${agent.sink}`).toBeLessThanOrEqual(0.35 * (1 - agent.sink) + 1e-6);
+        if (agent.sink > 0.5) faded = true;
+      }
+      expect(faded).toBe(true);
+      expect(res.animals).not.toContain(rabbit); // dropped: its instance is hidden
+      expect(visible(mesh, shade)).toBe(false);
+    });
+
+    it('clears and disposes with no instance showing', async () => {
+      const { res, mesh } = await shaded();
+      shadeTheDeer(res, mesh);
+      res.clear();
+      expect(anyVisible(mesh)).toEqual([]);
+      await res.spawn();
+      shadeTheDeer(res, mesh);
+      res.dispose();
+      expect(anyVisible(mesh)).toEqual([]);
+      expect(mesh.parent).toBeNull();
+    });
+
+    it('holds every shadow while paused, uploading nothing', async () => {
+      const { res, mesh } = await shaded();
+      const camera = shadeTheDeer(res, mesh);
+      const state = () => ({
+        matrices: Array.from(mesh.instanceMatrix.array), opacity: Array.from(opacity(mesh).array),
+        versions: [mesh.instanceMatrix.version, opacity(mesh).version],
+      });
+      const before = state();
+      for (let i = 0; i < 5; i++) res.update(0, 1 / 15, camera, 9);
+      expect(state()).toStrictEqual(before);
+    });
   });
 
   it('takes an out-of-view body out of the scene, and puts it back, in place, when it is back in view', async () => {

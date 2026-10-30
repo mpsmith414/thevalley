@@ -13,8 +13,11 @@ import type { FaceCmd } from '../motion/secondary';
 import type { Recipe } from '../recipe/schema';
 import { createCreatureObject, type CreatureObject } from '../render/creature';
 import { autoQuality, type Tier } from '../render/quality';
+import { STUDIO_GRADE } from '../render/grade';
+import { createPost } from '../render/post';
 import { createRenderer } from '../render/renderer';
 import { renderView } from '../render/snapshot';
+import { castUnder, createContactShadows, footprint } from '../render/contact';
 import { createStage, stageHabitat } from '../render/stage';
 import { mulberry32 } from '../util/rng';
 import { FocusRing } from '../shared/focus';
@@ -49,8 +52,12 @@ controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 0.3;
 controls.maxDistance = 12;
 const stage = createStage(scene, renderer, settings.tier);
+const contact = createContactShadows(1); // the soft shadow under the creature on stage
+scene.add(contact.mesh);
+let foot = { hx: 0, hz: 0, cx: 0, cz: 0 };
+const post = createPost(renderer, scene, camera, settings.tier, STUDIO_GRADE);
 const builder = new BuilderClient();
-const snapshotCtx = { renderer, scene, camera };
+const snapshotCtx = { renderer, scene, camera, post };
 
 let creature: CreatureObject | null = null;
 let rig: CreatureRig | null = null;
@@ -69,6 +76,7 @@ async function show(recipe: Recipe) {
   scene.add(creature.root);
   rig = new CreatureRig(creature, body, recipe, stage);
   if (rig.swimmer) rig.position.set(stage.pond.x, 0, stage.pond.z);
+  foot = footprint(body.skeleton);
   const rng = mulberry32(recipe.seed);
   actions = new ActionController(rig, stageHabitat(stage, rng), rng);
   setAction('wander');
@@ -285,6 +293,7 @@ function tick(dt: number) {
   if (rig && actions) {
     actions.update(dt, camera.position);
     rig.update(dt);
+    castUnder(contact, 0, rig, stage, foot);
     // follow the creature: the camera keeps its offset as the target moves
     lastTarget.copy(controls.target);
     const p = rig.obj.root.position;
@@ -314,7 +323,7 @@ renderer.setAnimationLoop((now: number) => {
   if (fps.length > 240) fps.shift();
   if (!paused) tick(dt);
   else controls.update();
-  if (canvas.width > 0) renderer.render(scene, camera);
+  if (canvas.width > 0) post.render();
   if ((infoTimer += dt) > 0.5) {
     infoTimer = 0;
     workshop.refresh(workshopInfo());
@@ -326,7 +335,7 @@ renderer.setAnimationLoop((now: number) => {
 async function shot(name: string) {
   controls.update();
   await renderer.compileAsync(scene, camera); // new materials compile in the background; wait for them
-  renderer.render(scene, camera);
+  post.render();
   const url = canvas.toDataURL('image/png'); // same task as the render, before the frame is presented
   await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: url });
   return name;
@@ -336,7 +345,7 @@ async function screen(name: string) {
   const { toCanvas } = await import('html-to-image');
   controls.update();
   await renderer.compileAsync(scene, camera);
-  renderer.render(scene, camera);
+  post.render();
   const out = document.createElement('canvas');
   out.width = canvas.width;
   out.height = canvas.height;
@@ -427,7 +436,8 @@ async function clip(recipe: Recipe, name: ClipName, prefix: string, frames = 16,
   paused = true;
   if (!creature || !shownBody) return [];
   const saved = { pos: camera.position.clone(), target: controls.target.clone(), min: controls.minDistance };
-  const cr = new CreatureRig(creature, shownBody, recipe, clipGround(name));
+  const ground = clipGround(name);
+  const cr = new CreatureRig(creature, shownBody, recipe, ground);
   const total = frames * every;
   const dist = Math.max(0.6, 2.4 * recipe.life.sizeM);
   const lift = cr.canFly ? 0 : cr.restHeight; // fliers: aim at the root, the body is carried up there
@@ -439,6 +449,7 @@ async function clip(recipe: Recipe, name: ClipName, prefix: string, frames = 16,
     for (let f = -warm; f < total; f++) {
       driveClip(name, cr, f, total);
       cr.update(1 / 60);
+      castUnder(contact, 0, cr, ground, foot); // the shadow follows the clip's rig
       if (f < 0 || (f + 1) % every !== 0) continue;
       // the creature's left is +x of its heading: (cos yaw, 0, -sin yaw)
       controls.target.set(root.x, root.y + lift, root.z);
@@ -461,7 +472,7 @@ if (import.meta.env.DEV) {
   const fixtures = await import('../../tests/fixtures/recipes');
   Object.assign(window, {
     __lab: {
-      scene, camera, renderer, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait, clip,
+      scene, camera, renderer, post, backend, controls, builder, gallery, input, focus, CAST, fixtures, show, showItem, step, shot, screen, portrait, clip,
       resume: () => (paused = false),
       face: (cmd: FaceCmd) => rig?.secondary.trigger(cmd),
       act: setAction,

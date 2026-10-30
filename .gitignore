@@ -2,6 +2,7 @@ node_modules
 dist
 .env
 .shots
+brag-output/
 data/
 
 # Local working docs and tool config (not published)

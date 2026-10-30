@@ -16,6 +16,23 @@ A living 3D valley you watch like a nature documentary, where a child's drawing 
 
 Built with TypeScript, [three.js](https://threejs.org/) (WebGPU), Vite and a small [Hono](https://hono.dev/) server.
 
+## Motion and the picture
+
+- **Bodies that move like bodies:** a walking animal's weight shifts from leg to leg, its spine and hips work, its head
+  stays steadier than its shoulders and its tail and ears follow through. Birds bob their heads, fliers fold their legs
+  and wings, bank into turns and flare to land, and fish and snakes swim with a wave that grows towards the tail.
+- **Starts, stops and turns:** animals crouch a little before they set off, settle as they stop, square up their feet
+  when they stand and lead a turn with their heads.
+- **The picture:** the valley and the lab are drawn through a small post pipeline (multisampled scene, a soft bloom
+  on the sun and its glints, tone mapping and a colour grade). The grade follows the time of day: warm and golden at the
+  low sun, cool and quiet at night. Animals stand on soft contact shadows.
+- **Tools for checking it:** in the lab, `__lab.clip(...)` records a gait as a strip of frames, `tools/tile.py` makes a
+  contact sheet from them and `tools/gif.py` makes a looping GIF (or a before-and-after pair).
+- **Numbers** (an RTX 3060 Ti at 1920×1080, High): the busiest viewpoint costs about 20 ms a frame measured one frame at
+  a time (the live loop overlaps the CPU and GPU, so it does better); bloom adds about 0.5 ms and contact shadows nothing
+  measurable. The animal rig costs about 0.05 ms an update, 2.4 times less than before, and every body still builds in
+  under 3 seconds.
+
 ## Requirements
 
 - Node.js 22.9 or newer

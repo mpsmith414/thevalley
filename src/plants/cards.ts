@@ -358,7 +358,8 @@ const FLOWER_RECIPES: Record<FlowerCard, Recipe> = {
     for (let i = 0; i < n; i++) {
       const x = 0.5 + (i - (n - 1) / 2) * 0.16 + between(rng, -0.03, 0.03);
       const s = stalk(rng, x, x + between(rng, -0.06, 0.06), between(rng, 0.04, 0.2), 0.016, [70, 104, 54]);
-      out.push(s.stroke, ...spike(rng, s.pts, 0.45, 13, 0.03, [92, 84, 196], [176, 170, 220], [190, 180, 240]));
+      // the flowers' violet-blue about 25% towards grey ([92, 84, 196] etc. were): fully saturated, the drifts read as neon in the meadow
+      out.push(s.stroke, ...spike(rng, s.pts, 0.45, 13, 0.03, [92, 86, 171], [176, 171, 209], [189, 182, 226]));
     }
     return out;
   },

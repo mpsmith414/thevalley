@@ -5,6 +5,7 @@ import { CAST } from '../cast';
 import type { GalleryItem, ValleyRecord } from '../lab/gallery';
 import { CreatureRig, type DrivenPose } from '../motion/rig';
 import type { Recipe } from '../recipe/schema';
+import { castUnder, createContactShadows, footprint } from '../render/contact';
 import { createCreatureObject, type CreatureLook, type CreatureObject } from '../render/creature';
 import { QUALITY, type Tier } from '../render/quality';
 import { Sim } from '../sim/sim';
@@ -38,6 +39,8 @@ const STRIDE_STEP = 2 / 15, RIG_STEP = 0.3, SUBSTEPS = 4, FAR_STRIDE = 2;
 const POINT_R = 2;
 /** Seconds between glances (2 to 5); the share at the camera, and of the rest the share somewhere about, 5 to 20 m off. */
 const GLANCE_MIN = 2, GLANCE_SPAN = 3, AT_CAMERA = 0.4, LOOK_ABOUT = 0.5, ABOUT_NEAR = 5, ABOUT_SPAN = 15;
+/** The most animals that can have a contact shadow at once (the valley holds a few dozen). */
+const MAX_SHADOWS = 128;
 /** What a released creature is called when its kid card has no name (as the release's welcome says). */
 const NO_NAME = 'A new friend';
 
@@ -80,7 +83,11 @@ export type Resident = { id: string; species: string; home: HomeRange; recipe: R
   band: Band;
   /** Which of every 4 frames it updates on in the quarter band. */
   slot: number;
-  glance: Glance };
+  glance: Glance;
+  /** Its contact shadow's instance (-1: none left), its footprint, and whether the shadow is showing now. */
+  shade: number;
+  foot: ReturnType<typeof footprint>;
+  shaded: boolean };
 
 /** A species as the residents know it: its body (from the builder), recipe, and its homes in the simulation's order. */
 type Kind = { body: BodyData; recipe: Recipe; homes: HomeRange[] };
@@ -115,9 +122,16 @@ export class Residents {
   readonly animals: Resident[] = [];
   /** Every animal's body hangs off this group. */
   readonly object = new Group();
+  /** The animals' contact shadows (one drawn mesh, in the scene beside `object`): compiled with the animals. */
+  get shadows(): Object3D {
+    return this.contact.mesh;
+  }
   /** The animals' lives (made in `spawn`). */
   sim!: Sim;
   private frame = 0;
+  /** The soft shadows under the animals at full and middle detail, and the instances not in use. */
+  private contact = createContactShadows(MAX_SHADOWS);
+  private spare = Array.from({ length: MAX_SHADOWS }, (_, i) => MAX_SHADOWS - 1 - i);
   private byId = new Map<string, Resident>();
   /** Each species (natives by recipe id, released ones by item id) the residents can make a body for. */
   private kinds = new Map<string, Kind>();
@@ -149,6 +163,8 @@ export class Residents {
     scene: Scene,
   ) {
     this.object.name = 'residents';
+    this.contact.mesh.layers.set(CREATURE_LAYER); // it appears (and compiles) with the animals
+    scene.add(this.contact.mesh);
     scene.add(this.object);
   }
 
@@ -297,7 +313,7 @@ export class Residents {
     if (!look) this.wearers.set(obj.look, { owner: obj, n: 0 });
     obj.root.traverse((o) => o.layers.set(CREATURE_LAYER));
     obj.root.name = `${species}-${n}`;
-    return { obj, rig: new CreatureRig(obj, body, recipe, this.valley, SPEED_CAP) };
+    return { obj, rig: new CreatureRig(obj, body, recipe, this.valley, SPEED_CAP, n) };
   }
 
   /** Simulated animal `g` comes into the valley in `made` (by default a new body), hidden until the next update bands it. */
@@ -312,6 +328,7 @@ export class Residents {
     const a: Resident = {
       id: g.id, species: g.species, home: kind.homes[g.home] ?? kind.homes[0], recipe: kind.recipe, obj, rig,
       band: 'paused', slot: this.animals.length % 4, glance: new Glance(mulberry32(g.seed)),
+      shade: this.spare.pop() ?? -1, foot: footprint(kind.body.skeleton), shaded: false,
     };
     obj.root.visible = false;
     this.object.add(obj.root);
@@ -325,6 +342,8 @@ export class Residents {
   /** Out of the valley: its body freed, but the materials its species wears stay with their owner until nobody needs them. */
   private drop(a: Resident): void {
     this.animals.splice(this.animals.indexOf(a), 1);
+    this.unshade(a);
+    if (a.shade >= 0) this.spare.push(a.shade);
     this.byId.delete(a.id);
     this.onward.delete(a.id);
     a.obj.root.removeFromParent();
@@ -390,6 +409,7 @@ export class Residents {
       const d = this.band(a, p);
       if (a.band === 'paused') {
         obj.root.visible = false;
+        this.unshade(a);
         this.stow(a, true);
         rig.drive(p); // where it is, for whoever asks (Visit), without the cost of a pose
         obj.root.position.copy(standing); // and its body with it, for whoever follows it (Fly there); detached, so no matrices
@@ -403,8 +423,11 @@ export class Residents {
       const lod = Math.max(QUALITY[this.tier].lod, d < LOD0_RANGE * k ? 0 : d < LOD1_RANGE * k ? 1 : 2) as 0 | 1 | 2;
       if (lod !== obj.lod) obj.setLod(lod);
       if (obj.furOn !== fur) obj.setFur(fur);
+      const casts = obj.root.visible && lod <= 1; // no shadow under a far animal (or one hidden under the water)
+      if (!casts) this.unshade(a);
       if (!obj.root.visible || (!back && (dt === 0 || (a.band === 'quarter' && (this.frame + a.slot) % 4 !== 0)))) {
         rig.drive(p);
+        if (casts && !a.shaded) this.shade(a, g); // its body has not moved: the shadow only needs laying if it is not showing
         continue;
       }
       const every = a.band === 'full' ? 1 : 4; // frames between its updates
@@ -420,7 +443,23 @@ export class Residents {
       }
       // going back to the earth: down into the ground
       if (g.sink > 0) obj.root.position.y -= g.sink * (rig.restHeight + a.recipe.life.sizeM * 0.3);
+      if (casts) this.shade(a, g); // once a frame, after the substeps
     }
+  }
+
+  /**
+   * Lays `a`'s contact shadow under its rig as it stands now (none in water or high in the air); one going back into the
+   * earth (`g.sink`) casts less of it the further down it is, and none once it has gone.
+   */
+  private shade(a: Resident, g: Agent): void {
+    a.shaded = a.shade >= 0 && castUnder(this.contact, a.shade, a.rig, this.valley, a.foot, 1 - g.sink);
+  }
+
+  /** Takes `a`'s contact shadow away (out of view, far off, hidden, or gone). */
+  private unshade(a: Resident): void {
+    if (!a.shaded) return;
+    this.contact.hide(a.shade);
+    a.shaded = false;
   }
 
   /** The animals the simulation added and removed this step: a body for each newcomer (out of view), the gone ones freed. */
@@ -557,12 +596,14 @@ export class Residents {
    */
   clear(): void {
     for (const a of this.animals) {
+      this.unshade(a);
       a.obj.root.removeFromParent();
       if (this.wearers.get(a.obj.look)?.owner !== a.obj) a.obj.dispose();
     }
     this.wearers.forEach((w) => w.owner.dispose()); // each set of materials with the body that made it, last
     this.wearers.clear();
     this.animals.length = 0;
+    this.spare = Array.from({ length: MAX_SHADOWS }, (_, i) => MAX_SHADOWS - 1 - i);
     this.byId.clear();
     this.looks.clear();
     this.kinds.clear();
@@ -575,6 +616,7 @@ export class Residents {
     this.clear();
     this.leavers.forEach((l) => l.done()); // nobody waits for a family that has gone with the rest
     this.leavers.clear();
+    this.contact.dispose();
     this.object.removeFromParent();
   }
 }

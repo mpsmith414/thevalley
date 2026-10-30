@@ -3,6 +3,8 @@ import { BuilderClient } from '../builder/client';
 import { FreeFly, intentFrom, surfaceAt, toggleDown, type FlyIntent } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { compileTogether } from '../render/compile';
+import { setGrade } from '../render/grade';
+import { createPost } from '../render/post';
 import { startQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { Input } from '../shared/input';
@@ -116,6 +118,9 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(55, 1, 0.1, 8000);
+  // every frame of the valley goes through the post pipeline (MSAA, bloom, tone mapping, grade); the shadow warm-up, the
+  // impostor bakes and the lake's mirror still draw straight with the renderer
+  const post = createPost(renderer, scene, camera, tier);
 
   const tex = valleyTextures(data);
   const terrain = createTerrain(tex, tier, sets);
@@ -216,7 +221,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const wakeAnimals = async () => {
     const eye = camera.clone();
     eye.layers.enable(CREATURE_LAYER);
-    await residents.compile(() => compileTogether(renderer, residents.object, eye, scene));
+    await residents.compile(() => Promise.all([compileTogether(renderer, residents.object, eye, scene), compileTogether(renderer, residents.shadows, eye, scene)]));
     camera.layers.enable(CREATURE_LAYER);
     sky.cascadeLayers(cascades(CREATURE));
     // their shadow pipelines too, which `compileAsync` cannot make: on the next frame, before it is drawn, one render of only
@@ -232,6 +237,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     const hour = clock.hour, sun = sunDirection(hour), moon = moonDirection(clock.hours);
     const state = lightingAt(hour, sun, moon, moonPhase(clock.hours));
     sky.update(state, sun, moon, camera, clock.hours, dt);
+    setGrade(post.grade, sky.grade); // the grade eases with the exposure (in the sky), into the post's uniforms
     if (Number.isFinite(dt)) waterTime += dt;
     lake.update(waterTime, state, wind);
     setPlantLight(plants.light, state);
@@ -636,7 +642,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // What the opening view shows compiles behind the loading screen, then one frame is drawn (its shadow passes make
   // pipelines of their own); everything else compiles in the background once the valley is up (see `compileRest`).
   await compileTogether(renderer, scene, camera);
-  renderer.render(scene, camera);
+  post.render(); // also compiles the pipeline's own quad materials, still behind the loading screen
   await gpuDone(renderer)?.();
   performance.mark('valley-ready');
   console.info(`valley: ready ${seconds('valley-ready')} s after the page opened (${cached ? 'from the cache' : 'made fresh'})`);
@@ -659,7 +665,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     if (later) showLabel(ui, later);
     later = null;
   };
-  return { renderer, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
+  return { renderer, post, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
     wind, veg, plants, bake, impostors, cover, residents, compileRest, audio, sound, listener, release, label, bring, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open,
     builder, shop, workshop, hooks, list,
     arrival };
@@ -679,7 +685,7 @@ function run(w: World, pace: Pacing) {
     loop.onFrame?.(dt);
     if (loop.heavy > 0) while (performance.now() - t0 < loop.heavy); // dev: a forced heavy frame
     if (!loop.paused) w.tick(dt);
-    if (canvas.width > 0) w.renderer.render(w.scene, w.camera);
+    if (canvas.width > 0) w.post.render();
     w.shop.render(); // the workshop's stage, on its own canvas
     if (!loop.paused && canvas.width > 0) pace.frame(dt, t0); // real frames only
     loop.onDrawn?.(now, performance.now() - t0);

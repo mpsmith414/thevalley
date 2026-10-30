@@ -48,10 +48,24 @@ export function findLimbs(sk: Skeleton): Limb[] {
   return limbs;
 }
 
+/** The torso bones from the root forward (root first), following torso roles; the head is not included. */
+export function torsoChain(sk: Skeleton): number[] {
+  const chain = [0];
+  for (;;) {
+    const last = chain[chain.length - 1];
+    const next = sk.bones.findIndex((c) => c.parent === last && c.role === 'torso');
+    if (next < 0) return chain;
+    chain.push(next);
+  }
+}
+
 export type ChainKind = 'tail' | 'neck' | 'spine' | 'ear' | 'antenna';
 
-/** Bendy chains for follow-through: tails, necks (with the head), torso spines, ears and antennae. */
-export function findChains(sk: Skeleton): { kind: ChainKind; chain: number[] }[] {
+/**
+ * Bendy chains for follow-through: tails, necks (with the head), torso spines, ears and antennae. A legged body's torso
+ * is no spine (its body mechanics bend it), so a head straight on it turns as a neck.
+ */
+export function findChains(sk: Skeleton, legged = false): { kind: ChainKind; chain: number[] }[] {
   const { bones } = sk;
   const out: { kind: ChainKind; chain: number[] }[] = [];
   const follow = (start: number, roles: Role[]) => {
@@ -64,9 +78,9 @@ export function findChains(sk: Skeleton): { kind: ChainKind; chain: number[] }[]
     }
     return chain;
   };
-  // a torso made of several bones in a row (snakes, long bodies) bends as a spine, head included
+  // a legless torso made of several bones in a row (snakes, long bodies) bends as a spine, head included
   const torso = follow(0, ['torso', 'head']);
-  const hasSpine = torso.length > 2;
+  const hasSpine = !legged && torso.length > 2;
   bones.forEach((b, i) => {
     const parentRole = b.parent >= 0 ? bones[b.parent].role : null;
     // a head straight on the body (no neck) still turns to look

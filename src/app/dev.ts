@@ -12,7 +12,7 @@ import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
 import { ANIMAL_S_PER_HOUR, TICK, type Agent, type Needs, type Pt } from '../sim/types';
 import { VALLEY } from '../valley/layout';
-import { PRESETS } from '../world/clock';
+import { DEFAULT_SPEED, PRESETS } from '../world/clock';
 import type { World } from './main';
 import { gpuDone, type Pacing } from './pacing';
 
@@ -30,7 +30,7 @@ export type DevContext = { canvas: HTMLCanvasElement; ui: HTMLElement; tier: Tie
 
 /** Dev only: `window.__valley`, the hooks the browser checks use (shots, stepping, the camera, the clock, sound, pacing). */
 export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
-  const { renderer, scene, camera, tick, clock, light } = w;
+  const { renderer, post, scene, camera, tick, clock, light } = w;
   const { canvas, ui, tier, quality } = ctx;
   const fps: number[] = [];
   loop.onFrame = (dt) => {
@@ -108,7 +108,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     pace.reset(); // full resolution (the live loop's scaler takes over again after)
     tick(0);
     await renderer.compileAsync(scene, camera); // new materials compile in the background; wait for them
-    renderer.render(scene, camera);
+    post.render();
     const url = canvas.toDataURL('image/png'); // same task as the render, before the frame is presented
     await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: url });
     return name;
@@ -119,7 +119,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     pace.reset();
     tick(0);
     await renderer.compileAsync(scene, camera);
-    renderer.render(scene, camera);
+    post.render();
     const out = document.createElement('canvas');
     out.width = canvas.width;
     out.height = canvas.height;
@@ -153,33 +153,55 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
   };
   const views = VALLEY.viewpoints.length;
   /**
-   * The contact sheet's shots: every viewpoint at dawn, noon, golden hour and night. Each goes to the viewpoint's end pose
-   * (where its glide lands), steps 120 frames (the plants fade in, the animals move on) and saves .shots/<prefix>-v<n>-<time>.png.
+   * Run `fn` on a pinned clock, so sheets and timings compare across sessions: Normal speed, running (a stored Fastest moved
+   * a tour's golden hour half an hour on, towards sunset), and `onDay(day, hour)` putting the sun, moon and stars where they
+   * were that day. The clock (time, speed, pause) comes back afterwards, relit at once.
    */
-  const tour = async (prefix = 'tour') => {
+  const pinned = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const was = { hours: clock.hours, speed: clock.speed, paused: clock.paused };
+    clock.speed = DEFAULT_SPEED;
+    clock.paused = false;
+    try {
+      return await fn();
+    } finally {
+      Object.assign(clock, was);
+      light(Infinity);
+    }
+  };
+  /** `hour` o'clock on valley day `day` (forwards or back: only `pinned` uses it, and it puts the clock back), relit at once. */
+  const onDay = (day: number, hour: number) => {
+    clock.hours = 24 * day + hour;
+    light(Infinity);
+  };
+  /**
+   * The contact sheet's shots: every viewpoint at dawn, noon, golden hour and night, viewpoint n on day n (as a fresh valley's
+   * tour has it). Each goes to the viewpoint's end pose (where its glide lands), steps 120 frames (the plants fade in, the
+   * animals move on) and saves .shots/<prefix>-v<n>-<time>.png.
+   */
+  const tour = (prefix = 'tour') => pinned(async () => {
     const names: string[] = [];
     for (let n = 1; n <= views; n++) {
       for (const [id, hour] of Object.entries(PRESETS)) {
         w.view(n);
-        time(hour);
+        onDay(n, hour);
         step(120);
         names.push(await shot(`${prefix}-v${n}-${id}`));
       }
     }
     return names;
-  };
+  });
   /**
-   * Frame cost at every viewpoint at noon, at full resolution: 180 frames each, one at a time, each timed from its start to
+   * Frame cost at every viewpoint at noon (on the pinned clock, viewpoint n on day n), at full resolution: 180 frames each, one at a time, each timed from its start to
    * the GPU finishing it (pacing's working time, with no overlap between frames, so a little pessimistic). Returns the
-   * median ms, the draw calls and the triangles of a frame (shadow passes and the lake's mirror included).
+   * median ms, the draw calls and the triangles of a frame (shadow passes, the lake's mirror and the post passes included).
    */
-  const perf = async (frames = 180, hour: number = PRESETS.noon) => {
+  const perf = (frames = 180, hour: number = PRESETS.noon) => pinned(async () => {
     const done = gpuDone(renderer);
     if (!done) return 'no GPU timing on WebGL 2';
     const rows: { view: string; ms: number; p90: number; drawCalls: number; triangles: number }[] = [];
     for (let n = 1; n <= views; n++) {
       const name = w.view(n);
-      time(hour);
+      onDay(n, hour);
       step(120);
       await renderer.compileAsync(scene, camera);
       const ms: number[] = [];
@@ -188,7 +210,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
         const t0 = performance.now();
         tick(1 / 60);
         renderer.info.reset(); // the live loop's animation resets it; stepping by hand must
-        renderer.render(scene, camera);
+        post.render();
         ({ drawCalls, triangles } = renderer.info.render);
         await done();
         ms.push(performance.now() - t0);
@@ -199,7 +221,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     }
     console.table(rows);
     return rows;
-  };
+  });
   /** Put the camera `h` m above the ground (or water) at (x, z), looking at the point `lh` m above (lx, lz). */
   const at = (x: number, z: number, h: number, lx: number, lz: number, lh = 0) => {
     const p = viewpointPose({ name: 'dev', pos: { x, z, h }, look: { x: lx, z: lz, h: lh } }, w.valley);

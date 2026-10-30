@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildBody } from '../../src/builder/build';
+import { anticipationTime } from '../../src/motion/body';
 import { CreatureRig } from '../../src/motion/rig';
 import type { Recipe } from '../../src/recipe/schema';
 import { createCreatureObject } from '../../src/render/creature';
@@ -94,11 +95,44 @@ describe('steering golden trajectories', () => {
       rig.yaw = c.yaw;
       rig.moveTo({ x: c.target[0], y: 0, z: c.target[1] });
       rig.setSpeed(c.frac);
+      let still = 0, going = false;
       const rows = run(c, (wantFly) => {
         rig.wantFly = wantFly;
         rig.update(DT);
+        if (!going && rig.speed === 0) still++;
+        else going = true;
       }, () => [rig.position.x, rig.position.z, rig.yaw, rig.speed, rig.altitude, rig.flying ? 1 : 0]);
-      expectGolden(rows, GOLDEN[name]);
+      // setting off from rest briskly, the rig first gathers itself with its speed held at 0 (the anticipation, R15);
+      // otherwise it is `steer`, step for step: the golden path, or that path with the speed held for those first steps
+      if (!still) return expectGolden(rows, GOLDEN[name]);
+      if (name === 'flier') {
+        // taking off, the rig first crouches with its flight and speed held (R15), then jumps 0.3 leg lengths up over
+        // 0.1 s: `steer`, step for step, with those holds and that jump
+        expect(still).toBe(Math.ceil(0.2 / DT - 1e-6));
+        const t = traitsFor(c.recipe, 'land', c.cap), m = newMotion(0, 0, c.yaw), jump = 0.3 * rig.legLength;
+        m.target = { x: c.target[0], z: c.target[1] };
+        let n = 0, left = 0;
+        return expectGolden(rows, run(c, (wantFly) => {
+          const held = n++ < still, flew = m.flying;
+          m.wantFly = wantFly && !held;
+          m.speedFrac = held ? 0 : c.frac;
+          steer(m, t, DT);
+          if (m.flying && !flew) left = jump;
+          const up = Math.min(left, (jump * DT) / 0.1);
+          m.altitude += up;
+          left -= up;
+        }, () => [m.x, m.z, m.yaw, m.speed, m.altitude, m.flying ? 1 : 0]));
+      }
+      expect(name).toBe('valley'); // the lab's case sets off at only 0.15 of its top speed (a sharp turn first)
+      expect(still).toBe(Math.ceil(anticipationTime(c.recipe.life.sizeM) / DT - 1e-6));
+      const t = traitsFor(c.recipe, 'land', c.cap), m = newMotion(0, 0, c.yaw);
+      m.target = { x: c.target[0], z: c.target[1] };
+      let n = 0;
+      expectGolden(rows, run(c, (wantFly) => {
+        m.wantFly = wantFly;
+        m.speedFrac = n++ < still ? 0 : c.frac;
+        steer(m, t, DT);
+      }, () => [m.x, m.z, m.yaw, m.speed, m.altitude, m.flying ? 1 : 0]));
     }, 30_000);
 
     it(`${name}: steer follows the same path`, () => {

@@ -4,16 +4,17 @@ import {
   type Node, type PerspectiveCamera, type RenderTarget, type WebGPURenderer,
 } from 'three/webgpu';
 import {
-  Fn, cameraPosition, cameraProjectionMatrix, clamp, dot, exp, float, fog, instancedBufferAttribute, max, min, mix,
+  Fn, If, cameraPosition, cameraProjectionMatrix, clamp, dot, exp, float, fog, instancedBufferAttribute, max, min, mix,
   modelViewMatrix, modelViewProjection, modelWorldMatrix, mx_fractal_noise_float, normalLocal, normalWorld, normalize, pmremTexture,
   positionGeometry, positionLocal, positionWorld, pow, smoothstep, texture, uniform, uv, vec3, vec4,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
+import { NEUTRAL_GRADE, easeGrade, type Grade } from '../render/grade';
 import type { Tier } from '../render/quality';
 import { mulberry32 } from '../util/rng';
 import type { Vec3 } from '../util/vec';
-import { LATITUDE } from './clock';
+import { LATITUDE, elevationDeg } from './clock';
 import type { LightState } from './lighting';
 import { WORLD_QUALITY } from './quality';
 import type { ValleyTextures } from './textures';
@@ -28,10 +29,12 @@ const ENV_DEG = 1.5, ENV_STALE = 0.25;
  * what keeps a moonless valley readable on a TV instead of black.
  */
 const ENV_DAY = 0.25, ENV_NIGHT = 1.5;
-/** Seconds for the exposure to settle (time constant). */
+/** Seconds for the exposure (and the colour grade with it) to settle (time constant). */
 const EXPOSURE_TAU = 1.5;
 /** Metres over which the haze thins by e above 40 m (the backdrop's 300–900 m peaks must still fade into the sky). */
 const HAZE_HEIGHT = 800;
+/** The key intensity from which the fog's glow towards the key is full (the sun from just under the horizon up; a high full moon). */
+const KEY_GLOW_FULL = 0.2;
 /** Below this key-light intensity the shadow maps are held (not re-rendered): the light they shade is all but out. */
 const SHADOW_MIN = 0.02;
 /** Clip-space depth for the moon: behind everything in the valley and its mountains (≈ 6.9 km), in front of the stars (at the far plane). */
@@ -42,9 +45,11 @@ export type Sky = {
   hemi: HemisphereLight;
   /** `csm`: cascaded shadows; `single`: the fallback, one map following the camera. */
   shadows: 'csm' | 'single';
+  /** The colour grade, eased towards the light state's like the exposure (one object, changed in place; the loop hands it to the post). */
+  grade: Grade;
   /**
    * Bring the sky, lights, exposure and fog to `state`, with the sun and moon at `sun` and `moon`, `hours` into the valley's time.
-   * `dt` (seconds) eases the exposure and paces the environment map; `Infinity` snaps both (after a jump in time).
+   * `dt` (seconds) eases the exposure and grade and paces the environment map; `Infinity` snaps them (after a jump in time).
    */
   update(state: LightState, sun: Vec3, moon: Vec3, camera: PerspectiveCamera, hours: number, dt: number): void;
   /**
@@ -59,6 +64,11 @@ export type Sky = {
   withNight<T>(fn: () => T): T;
   /** Have every shadow map drawn on the next render even while the key light is out (they are held then). */
   redrawShadows(): void;
+};
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 };
 
 /** A vertex at the far plane (or `depth` in clip space), like the sky dome, so it sits behind the whole world. */
@@ -230,8 +240,8 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
 
   // ---------- fog: aerial perspective, glowing towards the key light, and dawn mist hugging the water ----------
   const fogColor = uniform(new Color()), keyColor = uniform(new Color()), keyDir = uniform(new Vector3(0, 1, 0));
-  const density = uniform(0.00025), mist = uniform(0);
-  const toFrag = positionWorld.sub(cameraPosition), dist = toFrag.length(), viewDir = toFrag.div(max(dist, 1e-3));
+  const density = uniform(0.00025), mist = uniform(0), away = uniform(0), keyGlow = uniform(0);
+  const toFrag = positionWorld.sub(cameraPosition), dist = toFrag.length(), viewDir = toFrag.div(max(dist, 1e-3)).toVar();
   // thinner with height: the density at the average height of the camera and the fragment, falling off above 40 m
   const thin = exp(max(positionWorld.y.add(cameraPosition.y).mul(0.5).sub(40), 0).div(-HAZE_HEIGHT));
   // squared (exp²) rather than plain exponential: the haze is bright, so even 8% of it lifted the lake 500 m away to a milky
@@ -239,9 +249,30 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
   // backdrop 3–6 km out still fades (up to 43–90%, less up its high slopes).
   const depth = dist.mul(density);
   const haze = float(1).sub(exp(depth.mul(depth).mul(thin).negate()));
-  const tint = mix(fogColor, keyColor, pow(max(dot(viewDir, keyDir), 0), 8).mul(0.5));
-  // the thicker the haze, the more it takes the sky's own colour at the horizon, so distant ridges dissolve into the sky behind them
+  const facing = dot(viewDir, keyDir).toVar();
+  // the sky's own colour at the horizon behind the fragment
   const horizon = pmremTexture(env.texture, normalize(vec3(viewDir.x, max(viewDir.y, 0.03), viewDir.z)), float(0.4)) as Node<'vec3'>;
+  // the warm fog colour is the light scattered towards the low sun: looking away from the sun the haze takes the horizon's hue
+  // instead (a warm veil there turned the far ridges peach against a blue sky), then glows towards the key light. The hue is
+  // the horizon's most blurred (cloudless) and at the fog's own brightness: the horizon facing away from a low sun is dim, and
+  // taken as it is, it darkened the far ridges and printed the clouds' shapes on them. `away` is how low the sun is: only the
+  // low sun's fog is warm. The side is the sun's, not the key's: below −3° the key is the moon, and measuring from it made the
+  // haze's hue jump at the switch. While `away` is 0 (most of the day and night) the branch skips the extra environment read.
+  const air = Fn(() => {
+    const c = vec3(fogColor as unknown as Node<'vec3'>).toVar();
+    const sunFacing = dot(viewDir, sunDir).toVar(); // before the branch: it declares `viewDir` outside it
+    If(away.greaterThan(0), () => {
+      const skyAway = (pmremTexture(env.texture, normalize(vec3(viewDir.x, 0.05, viewDir.z)), float(1)) as Node<'vec3'>).rgb;
+      const luma = vec3(0.2126, 0.7152, 0.0722);
+      const awayColour = skyAway.mul(dot(c, luma).div(max(dot(skyAway, luma), 1e-4)));
+      c.assign(mix(c, awayColour, float(1).sub(sunFacing.mul(0.5).add(0.5)).mul(away)));
+    });
+    return c;
+  })();
+  // the glow towards the key light, as strong as the key (`keyGlow`): it fades out with the key at the sun-to-moon switch, where
+  // its colour and direction flip, instead of stepping from sunset orange to moon blue
+  const tint = mix(air, keyColor, pow(max(facing, 0), 8).mul(keyGlow).mul(0.5));
+  // the thicker the haze, the more it takes the horizon's colour, so distant ridges dissolve into the sky behind them
   const hazeColour = mix(tint, horizon.rgb, haze);
   const moisture = texture(tex.biomeB, tex.mapUv(positionWorld.xz)).g;
   // the mist thins out within the first few tens of metres, so it lies on the water instead of filling the camera's lens
@@ -253,6 +284,7 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
   const v = new Vector3(), quat = new Quaternion(), axis = new Vector3(0, Math.sin((LATITUDE * Math.PI) / 180), -Math.cos((LATITUDE * Math.PI) / 180));
   let aspect = 0, fov = 0;
   let exposure = renderer.toneMappingExposure;
+  const grade: Grade = { ...NEUTRAL_GRADE, lift: [...NEUTRAL_GRADE.lift], gamma: [...NEUTRAL_GRADE.gamma], gain: [...NEUTRAL_GRADE.gain] };
   let masks: number[] | null = null;
   /** The cascades are made on the first render: give them their layers once they exist. */
   const applyMasks = () => {
@@ -262,7 +294,7 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
   };
 
   return {
-    light, hemi, shadows: csm ? 'csm' : 'single',
+    light, hemi, shadows: csm ? 'csm' : 'single', grade,
     cascadeLayers(m) {
       masks = m;
       if (!csm) light.shadow.camera.layers.mask = m.reduce((a, b) => a | b, 0);
@@ -324,8 +356,10 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
       hemi.groundColor.set(state.groundColor);
       hemi.intensity = state.hemiIntensity;
       scene.environmentIntensity = ENV_DAY + (ENV_NIGHT - ENV_DAY) * state.stars;
-      // exposure eases; the environment follows the sun
-      exposure += (state.exposure - exposure) * (1 - Math.exp(-dt / EXPOSURE_TAU));
+      // exposure and grade ease (dt = Infinity gives ease = 1: a snap); the environment follows the sun
+      const ease = 1 - Math.exp(-dt / EXPOSURE_TAU);
+      exposure += (state.exposure - exposure) * ease;
+      easeGrade(grade, state.grade, dt, EXPOSURE_TAU);
       renderer.toneMappingExposure = exposure;
       sinceEnv += dt;
       if (sinceEnv >= ENV_STALE && (envSun.angleTo(v) > (ENV_DEG * Math.PI) / 180 || dt === Infinity)) {
@@ -338,6 +372,9 @@ export function createSky(scene: Scene, renderer: WebGPURenderer, tier: Tier, te
       keyColor.value.set(state.keyColor);
       keyDir.value.set(k.x, k.y, k.z);
       density.value = state.fogDensity;
+      const elev = elevationDeg(sun);
+      away.value = smooth(-6, -2, elev) * (1 - smooth(10, 25, elev));
+      keyGlow.value = Math.min(1, state.keyIntensity / KEY_GLOW_FULL);
       mist.value = state.mist;
     },
   };
