@@ -37,6 +37,10 @@ export type MenuDeps = {
   speedPicked?(): void;
   /** Does something else have the screen (the workshop)? Then Esc is its Back and the menu stays shut. */
   busy?(): boolean;
+  /** The menu has opened (the views hand back the reins). */
+  opened?(): void;
+  /** Esc with the menu shut, for something on the screen that takes it first (the map closes): true when it did. */
+  escape?(): boolean;
   /** The Creatures page's list and what its buttons do (the menu closes itself for Visit and Come back). */
   creatures?: Omit<CreaturesDeps, 'close'>;
   /** The Valley page's buttons (start again, back up, restore); without them the page says the valley cannot be saved here. */
@@ -115,20 +119,27 @@ export function menuControl(d: MenuDeps) {
       creatures: d.creatures && ((page, nav) => void fillCreatures(page, { ...d.creatures!, close }, nav)),
     });
     void cap.get().then(learn); // today's count may have moved since the menu was last up
+    d.opened?.();
   };
   const toggle = () => (menu ? close() : show());
 
   // Esc toggles the menu (like Start). `Input` maps Esc to B, so it is caught first, in the capture phase, and goes no further.
+  // On the map (its mouse is free, so the browser lets the page have Esc) it closes the map instead.
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || d.waiting() || d.busy?.()) return; // the start screen's own handler takes it, or the workshop's Back
     e.preventDefault();
     e.stopImmediatePropagation();
-    if (!e.repeat) toggle();
+    if (e.repeat || (!menu && d.escape?.())) return;
+    toggle();
   }, true);
   // The browser keeps Esc for itself while the mouse is captured (it lets the mouse go and the page never sees the key), so
   // losing the capture opens the menu, as the press meant. (Opening the menu lets go of it too, with the menu already up.)
+  // A quiet release (the map's, which wants a free mouse) lets go without the menu.
+  let quiet = false;
   document.addEventListener('pointerlockchange', () => {
-    if (!document.pointerLockElement && !menu && !d.waiting()) show();
+    if (document.pointerLockElement) return;
+    if (quiet) return void (quiet = false);
+    if (!menu && !d.waiting()) show();
   });
 
   return {
@@ -139,6 +150,12 @@ export function menuControl(d: MenuDeps) {
     show,
     close,
     toggleMute,
+    /** Let go of the captured mouse without the menu opening (the map's cursor needs a free mouse). */
+    quietRelease() {
+      if (!document.pointerLockElement) return;
+      quiet = true;
+      document.exitPointerLock();
+    },
     /** A controller press: while the menu is open it takes them all (Start closes it); otherwise Start opens it. */
     press(b: Button, repeat = false): boolean {
       if (menu) {

@@ -33,6 +33,30 @@ Built with TypeScript, [three.js](https://threejs.org/) (WebGPU), Vite and a sma
   measurable. The animal rig costs about 0.05 ms an update, 2.4 times less than before, and every body still builds in
   under 3 seconds.
 
+## Views and eyes
+
+- **Ride along with any animal:** look at an animal and its ring and name show; press A to follow it. Three views:
+  **Follow** (behind it, orbit and zoom), **Close** (riding along just over its shoulder) and **Eyes** (what it sees).
+  The previous and next animal are a button away, and fast valley time never loses it.
+- **Through its eyes:** each animal sees in its own way, from its recipe. Prey with eyes on the sides of their heads see
+  wider, the hawk narrow and sharp, deer, foxes and wolves in muted two-colour sight, birds and fish in richer colour.
+  At night the deer, fox and wolf see a brighter, grainier picture and the hawk sees less. A trout's eyes look up at the
+  bright, rippling surface through green water. Released creatures get their own look from their recipe.
+- **Special senses:** X switches through the animal's own senses. **Smell** shows the paths other animals walked in the
+  last two valley hours as glowing wisps (its prey gold, its dangers red), **Hearing** sends ripples out from whatever is
+  running or calling, the hawk's **Sharp eyes** pick out moving prey (and zoom in, in Eyes), and **Fear** pulses the
+  screen's edge with a heartbeat that quickens as the danger nears, with a soft red ring round the danger.
+- **Take the reins:** steer the animal yourself. It grazes, drinks or calls on A, flies if it can, and everyone else
+  reacts to it for real: rabbits bolt from a steered fox, and a steered hunter hunts by the valley's own rules and odds.
+  A steered rabbit always gets away. The valley runs at normal speed while you steer, and 20 seconds without a touch
+  hands the animal back to its own life.
+- **The map:** Tab (View on the controller) lifts the camera high over the whole valley, with a marker for every animal
+  (a star for each released creature) and the places named. Choose an animal and the camera dives down to follow it, or
+  choose a place to fly there.
+- **Numbers** (the same PC, High): free flight costs about the same as before; the Eyes lenses measured at most 0.2 ms
+  and Smell and Hearing at most 0.3 ms, the map draws in 6 ms against the busiest viewpoint's 21 ms, and no switch
+  (view, sense, the map) took a frame over 50 ms.
+
 ## Requirements
 
 - Node.js 22.9 or newer
@@ -94,7 +118,21 @@ app, and the keyboard's microphone key works for talking.
 | In the menu: move, choose, back | D-pad, A, B | Arrow keys, Enter, Backspace |
 | Sound off / on | (menu) | M |
 | Time a step slower / faster | D-pad down / up | [ / ], or arrow down / up |
-| Fly to the animal in the caption | X | F |
+| Fly to the animal in the caption and follow it | X | F |
+| Follow the animal you are looking at (its ring and name show) | A | Enter / Space, or click |
+| The map (open / close) | View | Tab |
+| On the map: move the cursor, zoom, choose | Left stick, RT / LT, A | Mouse or W A S D, wheel or E / Q, click or Enter |
+| Following: change view (Follow, Close, Eyes) | Y | V |
+| Following: sense on / next / off | X | X |
+| Following: previous / next animal | LB / RB | , / . |
+| Following: orbit, or look round | Right stick | Mouse |
+| Following (Follow view): nearer / farther | LT / RT | Q / E |
+| Following: take the reins | A | Enter / R |
+| Following: let go | B, or move | Backspace, or W A S D |
+| With the reins: go, run | Left stick, RB (hold) | W A S D, Shift (hold) |
+| With the reins: eat, drink or call | A | Enter / Space |
+| With the reins: fly up / down (fliers) | RT / LT | E / Q |
+| With the reins: hand them back | B | Backspace / R |
 
 The menu has the time of day and its speed (Paused, Slow, Normal, Fast and Fastest, where a whole day takes 90
 seconds), quality, volume, captions on or off, **Add a creature**, **Creatures** (visit, send off exploring or bring
@@ -103,7 +141,7 @@ up to a file, restore a backup).
 
 The valley remembers itself: the animals, the hour and the speed are saved in the browser, so it carries on where it left
 off. A quiet caption at the bottom names the good moments (a stalk, a chase, a raft of ducks); press **Fly there** to
-glide to the animal and follow it.
+glide to the animal and follow it, until you let go. Esc opens the menu in every mode (on the map it closes the map).
 
 ### The Creature Lab
 

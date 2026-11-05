@@ -47,6 +47,8 @@ export type Soundscape = {
   mute(on: boolean): void;
   /** A short soft two-note bell (a creature has arrived), through the master volume: silent when muted. */
   chime(): void;
+  /** Where other sounds join the mix under the master volume (silent when muted), or null when there is no sound at all. */
+  readonly output: AudioNode | null;
 };
 
 /** `synth: true` skips the files (every layer synthesised). */
@@ -305,6 +307,7 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
       setMaster();
     },
     chime,
+    output: master,
   };
 }
 
@@ -332,5 +335,6 @@ export function silentSoundscape(): Soundscape {
       remember(MUTED_KEY, muted);
     },
     chime() {},
+    output: null,
   };
 }

@@ -1,4 +1,4 @@
-import { Frustum, Group, Matrix4, Sphere, Vector3, type Camera, type Object3D, type Scene } from 'three/webgpu';
+import { Frustum, Group, Matrix4, Quaternion, Sphere, Vector3, type Camera, type Object3D, type Scene } from 'three/webgpu';
 import { individualVariation, type BodyData } from '../builder/build';
 import type { BuilderClient } from '../builder/client';
 import { CAST } from '../cast';
@@ -8,15 +8,28 @@ import type { Recipe } from '../recipe/schema';
 import { castUnder, createContactShadows, footprint } from '../render/contact';
 import { createCreatureObject, type CreatureLook, type CreatureObject } from '../render/creature';
 import { QUALITY, type Tier } from '../render/quality';
+import { plural } from '../sim/moments';
+import { URGENT_FEAR } from '../sim/needs';
+import { nearRange, sightRange } from '../sim/senses';
 import { Sim } from '../sim/sim';
 import type { Agent, Doing, Needs, Pt, SimState, SpeciesDef } from '../sim/types';
 import { mulberry32 } from '../util/rng';
 import type { Vec3 } from '../util/vec';
 import type { HomeRange, Layout } from '../valley/types';
 import type { Valley } from '../valley/valley';
+import type { Candidate } from '../views/aim';
+import { speciesColour, type MapAnimal } from '../views/map';
+import { sensesOf, type Sensing } from '../views/senses';
+import { TrailStore, meaningOf, type Scent, type Scents } from '../views/trails';
+import { noisy, type Sound } from '../views/ripples';
+import type { Sighting } from '../views/sharp';
+import type { AnimalPose } from '../views/types';
+import type { ViewAnimal } from '../views/views';
 
 /** The render layer the animals draw on (the camera and the two nearest shadow cascades enable it). */
 export const CREATURE_LAYER = 6;
+/** The layer a body moves to while the camera sees through its own eyes (Eyes view): the shadows' cascades draw it, the camera does not. */
+export const SELF_LAYER = 7;
 
 /** Top speed in the valley (m/s): the lab's stage is small, the valley lets them stretch their legs a little more. */
 const SPEED_CAP = 8;
@@ -43,6 +56,10 @@ const GLANCE_MIN = 2, GLANCE_SPAN = 3, AT_CAMERA = 0.4, LOOK_ABOUT = 0.5, ABOUT_
 const MAX_SHADOWS = 128;
 /** What a released creature is called when its kid card has no name (as the release's welcome says). */
 const NO_NAME = 'A new friend';
+/** How many animals that have gone (back to the earth, or exploring) the views can still be told about. */
+const DEPARTED = 8;
+/** A flier more than this high (m) over the ground leaves no scent trail (nor does a fish under the water). */
+const SCENT_ALOFT = 1;
 
 export type Band = 'full' | 'quarter' | 'paused';
 
@@ -112,6 +129,9 @@ const frustum = new Frustum(), viewProj = new Matrix4(), sphere = new Sphere(), 
 /** Where the last banded animal's body stands (on the ground, the water, or in the air at its height). */
 const standing = new Vector3();
 const shown = newPose(), from = newPose(), sub = newPose();
+/** Scratch for the views' eye point and the way the head faces. */
+const eyeAt = new Vector3(), part = new Vector3(), headQ = new Quaternion(), facing = new Vector3();
+const wrapAngle = (a: number) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
 
 /**
  * The valley's animals, natives and released families, as the simulation (`sim`) lives their lives: the lab's bodies and
@@ -147,6 +167,15 @@ export class Residents {
   private leavers = new Map<string, { ids: Set<string>; done: () => void; gone: Promise<void> }>();
   /** Families being added (built and compiled), so a second call for the same one waits for it rather than adding it twice. */
   private adding = new Map<string, Promise<void>>();
+  /** Each species' name as the valley says it: a native's kid card ("Deer"), a released creature's own ("Bramble"). */
+  private names = new Map<string, string>();
+  /** The animals the views have asked about, as they last saw them, and those of them that have gone since (the latest few). */
+  private watched = new Map<string, ViewAnimal>();
+  private departed = new Map<string, ViewAnimal>();
+  /** Each species' colour on the overview map (made the first time it is asked for). */
+  private colours = new Map<string, string>();
+  /** Every animal's recent trail, recorded as the simulation steps: only for the eye (the Smell sense's scent trails). */
+  private trails = new TrailStore();
   /** The camera as the simulation sees it: where it is, which animals it sees (by the last bands) and whether it sees a point. */
   private view = {
     eye: { x: 0, z: 0 },
@@ -196,6 +225,7 @@ export class Residents {
       const homes = this.homes.filter((h) => h.species === id);
       this.kinds.set(id, { body, recipe: recipeOf(id), homes });
       this.natives.add(id);
+      this.names.set(id, nativeDef(homes[0]).name);
       for (const home of homes) defs.push(nativeDef(home));
     }
     for (const f of families) {
@@ -203,6 +233,7 @@ export class Residents {
       if (!body) continue;
       this.kinds.set(f.id, { body, recipe: f.recipe, homes: [f.valley.home] });
       this.families.add(f.id);
+      this.names.set(f.id, familyName(f));
       defs.push(familyDef(f));
     }
     this.sim = new Sim(this.valley, { seed: this.layout.seed, species: defs, state });
@@ -248,6 +279,7 @@ export class Residents {
     }
     this.kinds.set(item.id, kind);
     this.families.add(item.id);
+    this.names.set(item.id, familyName(item));
     const members = this.sim.addSpecies(familyDef(item), { entry: opts.entry, onward: opts.onward });
     members.forEach((g, k) => {
       if (opts.onward?.[k]) this.onward.add(g.id);
@@ -346,6 +378,8 @@ export class Residents {
     if (a.shade >= 0) this.spare.push(a.shade);
     this.byId.delete(a.id);
     this.onward.delete(a.id);
+    this.departs(a.id);
+    this.trails.forget(a.id);
     a.obj.root.removeFromParent();
     const w = this.wearers.get(a.obj.look)!;
     w.n--;
@@ -401,6 +435,7 @@ export class Residents {
     const dt = Math.min(Math.max(0, dtAnimal), MAX_STEP);
     this.sim.step(dt, hours);
     this.comings();
+    this.scent();
     const alpha = this.sim.alpha;
     for (const a of this.animals) {
       const g = this.sim.get(a.id), prev = this.sim.prev(a.id);
@@ -460,6 +495,16 @@ export class Residents {
     if (!a.shaded) return;
     this.contact.hide(a.shade);
     a.shaded = false;
+  }
+
+  /** Each animal on the ground or the water leaves its scent where it is now (a point every 2 animal seconds). */
+  private scent(): void {
+    const now = this.sim.time;
+    for (const a of this.animals) {
+      const g = this.sim.get(a.id);
+      if (!g || (g.motion.flying && g.motion.altitude > SCENT_ALOFT) || this.sim.traits(a.species).swimmer) continue;
+      this.trails.record(a.id, a.species, g.motion.x, g.motion.z, now);
+    }
   }
 
   /** The animals the simulation added and removed this step: a body for each newcomer (out of view), the gone ones freed. */
@@ -579,6 +624,169 @@ export class Residents {
     });
   }
 
+  /**
+   * Animal `id` as the views ride it (see `ViewAnimal`): its body where it is drawn now, its heading in the camera's
+   * convention, the eye point between its eyes and the way its head faces, its name, what it is doing, whether it is in a
+   * chase (a caught one stays in it while it goes back to the earth) and whether it has gone. One that has gone back to
+   * the earth or out exploring since the views last asked is still told of, as gone; any other animal not in the valley is null.
+   */
+  viewAnimal(id: string): ViewAnimal | null {
+    const a = this.byId.get(id), g = a && this.sim.get(id);
+    if (!a || !g) return this.departed.get(id) ?? null;
+    const doing = g.doing, pose = this.poseOf(a);
+    const v: ViewAnimal = {
+      pose,
+      eye: this.eyeOf(a, pose.yaw),
+      name: this.names.get(a.species) ?? NO_NAME,
+      native: this.natives.has(a.species),
+      doing,
+      swimmer: a.rig.swimmer,
+      chasing: doing === 'chase' || doing === 'dive' || doing === 'returning' || (doing === 'flee' && !!g.threat?.charging),
+      gone: doing === 'leave' ? 'exploring' : doing === 'returning' && g.sink >= 1 ? 'earth' : null,
+    };
+    this.watched.set(id, v);
+    return v;
+  }
+
+  /** Resident `a`'s body as the views see it (see `AnimalPose`), where it is drawn now, its heading in the camera's convention. */
+  private poseOf(a: Resident): AnimalPose {
+    const { rig, obj } = a, r = obj.root.position;
+    const yaw = wrapAngle(rig.yaw + Math.PI); // the rig's yaw 0 faces +z, the views' faces -z (both turn left as it grows)
+    return {
+      pos: { x: r.x, y: r.y, z: r.z }, yaw, size: a.recipe.life.sizeM, bodyLength: rig.bodyLength, backHeight: rig.restHeight,
+      flying: rig.flying, turnRate: rig.turnRate,
+    };
+  }
+
+  /**
+   * Where `a` sees from: the middle of its eyes (without eyes, the end of its head bone), and the way its head bone faces
+   * (yaw and pitch, the camera's convention); with no head bone, its body's heading `yaw`, level.
+   */
+  private eyeOf(a: Resident, yaw: number): { pos: Vec3; yaw: number; pitch: number } {
+    const { obj } = a, defs = a.rig.body.skeleton.bones, h = defs.findIndex((b) => b.role === 'head'), head = h >= 0 ? obj.bones[h] : null;
+    if (obj.eyes.length) {
+      eyeAt.set(0, 0, 0);
+      for (const e of obj.eyes) eyeAt.add(e.getWorldPosition(part));
+      eyeAt.divideScalar(obj.eyes.length);
+    } else if (head) {
+      const d = defs[h];
+      head.updateWorldMatrix(true, false);
+      head.localToWorld(eyeAt.set(d.end.x - d.start.x, d.end.y - d.start.y, d.end.z - d.start.z)); // the bones rest unturned
+    } else eyeAt.set(obj.root.position.x, obj.root.position.y + a.rig.restHeight, obj.root.position.z);
+    const pos = { x: eyeAt.x, y: eyeAt.y, z: eyeAt.z };
+    if (!head) return { pos, yaw, pitch: 0 };
+    facing.set(0, 0, 1).applyQuaternion(head.getWorldQuaternion(headQ)); // the face looks along the head's +z
+    return { pos, yaw: Math.atan2(-facing.x, -facing.z), pitch: Math.atan2(facing.y, Math.hypot(facing.x, facing.z)) };
+  }
+
+  /** Animal `id` has left the valley: if the views saw it going back to the earth or out exploring, they will be told it has gone. */
+  private departs(id: string): void {
+    const seen = this.watched.get(id);
+    this.watched.delete(id);
+    if (!seen || (seen.doing !== 'returning' && seen.doing !== 'leave')) return;
+    this.departed.set(id, { ...seen, gone: seen.doing === 'returning' ? 'earth' : 'exploring' });
+    if (this.departed.size > DEPARTED) this.departed.delete(this.departed.keys().next().value!);
+  }
+
+  /** Every animal as the aim and the neighbour order see it: the middle of its body, its size, and whether it is drawn. */
+  candidates(): Candidate[] {
+    return this.animals.map((a) => {
+      const r = a.obj.root.position;
+      return { id: a.id, pos: { x: r.x, y: r.y + a.rig.restHeight, z: r.z }, size: a.recipe.life.sizeM, drawn: a.band !== 'paused' && a.obj.root.visible };
+    });
+  }
+
+  /** Every animal as the overview map shows it (see `MapAnimal`: where its body is drawn now), with what it is doing and its species' colour there. */
+  onMap(): (MapAnimal & { doing: Doing; colour: string })[] {
+    const out: (MapAnimal & { doing: Doing; colour: string })[] = [];
+    for (const a of this.animals) {
+      const g = this.sim.get(a.id), r = a.obj.root.position;
+      if (!g) continue;
+      let colour = this.colours.get(a.species);
+      if (!colour) this.colours.set(a.species, (colour = speciesColour(a.recipe)));
+      out.push({ id: a.id, species: a.species, name: this.names.get(a.species) ?? NO_NAME, released: !this.natives.has(a.species), x: r.x, z: r.z, doing: g.doing, colour });
+    }
+    return out;
+  }
+
+  /** Animal `id`'s senses (its recipe's: how wide and how sharply it sees, by night too, and its colour range), or null if it is not in the valley. */
+  sensesOf(id: string): Recipe['mind']['senses'] | null {
+    return this.byId.get(id)?.recipe.mind.senses ?? null;
+  }
+
+  /**
+   * What animal `id` senses now, for the Sense button (see `Sensing`): its senses from its recipe and the food web (Fear
+   * first while it is afraid enough to flee), its fear, the danger it knows of and what it hunts ("the rabbits"; its first
+   * prey); null if it is not in the valley.
+   */
+  sensing(id: string): Sensing | null {
+    const a = this.byId.get(id), g = a && this.sim.get(id);
+    if (!a || !g) return null;
+    const prey = this.sim.preyOf(a.species)[0], name = prey !== undefined ? this.names.get(prey) : undefined;
+    return {
+      senses: sensesOf(a.recipe.mind.senses, this.sim.isPrey(a.species), g.needs.fear >= URGENT_FEAR),
+      fear: g.needs.fear,
+      threat: g.threat?.id ?? null,
+      prey: name === undefined ? null : this.natives.has(prey) ? `the ${plural(name.toLowerCase())}` : `${name} and family`,
+    };
+  }
+
+  /**
+   * What animal `id` smells now, for the Smell sense (see `Scents`): where it is drawn, how far it smells (its `nearRange`
+   * for a runner) and the other animals' trails within that, each with what it means to it; null if it is not in the valley.
+   */
+  scents(id: string): Scents | null {
+    const a = this.byId.get(id);
+    if (!a || !this.sim.get(id)) return null;
+    const { x, z } = a.obj.root.position, range = nearRange(this.sim.traits(a.species), true), points: Scent[] = [];
+    for (const p of this.trails.near(x, z, range, this.sim.time))
+      if (p.id !== id) points.push(Object.assign(p, { meaning: meaningOf(a.species, p.species, this.sim) }));
+    return { at: { x, z }, range, points };
+  }
+
+  /**
+   * Who animal `id` hears now, for the Hearing sense: everyone else making noise (see `noisy`) within its hearing (its
+   * `nearRange` for a runner), each where it is drawn and how loud; null if it is not in the valley.
+   */
+  hearing(id: string): Sound[] | null {
+    const a = this.byId.get(id);
+    if (!a || !this.sim.get(id)) return null;
+    const at = a.obj.root.position, range = nearRange(this.sim.traits(a.species), true), sounds: Sound[] = [];
+    for (const b of this.animals) {
+      const o = b !== a && this.sim.get(b.id);
+      if (!o || b.obj.root.position.distanceTo(at) > range) continue;
+      const m = o.motion, topSpeed = this.sim.traits(b.species).topSpeed;
+      const loud = noisy({ doing: o.doing, speed: m.speed, topSpeed, calling: o.pose.calling, flying: m.flying, climb: m.climb, inWater: this.valley.isWater(m.x, m.z) });
+      if (loud > 0) sounds.push({ id: b.id, pose: this.poseOf(b), loud });
+    }
+    return sounds;
+  }
+
+  /**
+   * What animal `id` could spot now, for Sharp eyes: the other animals drawn within its sight (the simulation's
+   * `sightRange` for each one's size, at `light`: 1 by day, 0 at deep night), each with how fast it moves and whether it
+   * is its prey, and the farthest of those sights (m); null if it is not in the valley.
+   */
+  sightings(id: string, light: number): { range: number; seen: Sighting[] } | null {
+    const a = this.byId.get(id);
+    if (!a || !this.sim.get(id)) return null;
+    const at = a.obj.root.position, t = this.sim.traits(a.species), seen: Sighting[] = [];
+    let range = 0;
+    for (const b of this.animals) {
+      const o = b !== a && b.band !== 'paused' && b.obj.root.visible && this.sim.get(b.id);
+      const sight = o ? sightRange(t, this.sim.traits(b.species).size, light) : 0;
+      if (!o || b.obj.root.position.distanceTo(at) > sight) continue;
+      seen.push({ id: b.id, pose: this.poseOf(b), speed: o.motion.speed, prey: this.sim.hunts(a.species, b.species) });
+      range = Math.max(range, sight);
+    }
+    return { range, seen };
+  }
+
+  /** Take animal `id`'s body out of the camera's sight (`on`: the camera is at its eyes) or give it back; its shadows stay either way. */
+  hideFromCamera(id: string, on: boolean): void {
+    this.byId.get(id)?.obj.root.traverse((o) => o.layers.set(on ? SELF_LAYER : CREATURE_LAYER));
+  }
+
   /** Each animal as plain data (for the dev hooks): who, where, what it is doing, its update band and detail, and its needs. */
   info(): { id: string; species: string; position: Vec3; doing: Doing; band: Band; lod: 0 | 1 | 2; flying: boolean; needs: Needs }[] {
     return this.animals.map((a) => {
@@ -605,11 +813,15 @@ export class Residents {
     this.animals.length = 0;
     this.spare = Array.from({ length: MAX_SHADOWS }, (_, i) => MAX_SHADOWS - 1 - i);
     this.byId.clear();
+    this.trails = new TrailStore();
     this.looks.clear();
     this.kinds.clear();
     this.natives.clear();
     this.families.clear();
     this.onward.clear();
+    this.names.clear();
+    this.watched.clear();
+    this.departed.clear();
   }
 
   dispose(): void {

@@ -19,10 +19,19 @@ export type FlyWorld = {
   inside(x: number, z: number, margin?: number): boolean;
 };
 
+/**
+ * Free flight's speeds and ease, its steepest look, and its ceiling (m): the overview map's camera stands higher (about
+ * 1.5 km) but never goes through free flight; one let go up there sinks back down to the ceiling (SINK_MAX, SINK_TAU).
+ */
 export const SPEED = 12, FAST = 5, WALK = 0.35, EASE = 0.25, MAX_PITCH = 1.35, MAX_Y = 600;
+/**
+ * A camera above the ceiling (left there by the map) sinks back down to it: easing up to at most SINK_MAX m/s, and
+ * slowing as it nears it (the height over it falls with this time constant, s). A sink, not a plunge.
+ */
+const SINK_MAX = 80, SINK_TAU = 1;
 const EYE_FLY = 1.2, EYE_WALK = 1.6, TRUNK_GAP = 0.6, BORDER = 10;
 /** Trunks only block the camera lower than this above the ground: the tallest trees are about 26 m, so higher up it flies over them. */
-const TREE_TOP = 30;
+export const TREE_TOP = 30;
 /** Longest horizontal move between collision checks (m). */
 const STEP = 0.5;
 const STICK_YAW = 1.8, STICK_PITCH = 1.2, MOUSE = 0.0022;
@@ -59,6 +68,8 @@ export function intentFrom(pad: PadState, held: (k: string) => boolean, mouse: {
 export class FreeFly {
   vel: Vec3 = { x: 0, y: 0, z: 0 };
   walk = false;
+  /** How fast a camera over the ceiling is sinking back down to it (m/s). */
+  sink = 0;
   pos: Vec3;
   yaw: number;
   pitch: number;
@@ -119,7 +130,13 @@ export class FreeFly {
     let y = this.pos.y + this.vel.y * dt;
     if (this.walk) y += (ground + EYE_WALK - y) * (1 - Math.exp(-dt / EASE));
     if (y < ground + EYE_FLY) { y = ground + EYE_FLY; if (this.vel.y < 0) this.vel.y = 0; }
-    if (y > MAX_Y) { y = MAX_Y; if (this.vel.y > 0) this.vel.y = 0; }
+    if (y > MAX_Y) {
+      // no climbing past the ceiling; a camera already over it (the map's) sinks back down to it, eased in and out
+      const want = Math.min(SINK_MAX, Math.max(0, this.pos.y - MAX_Y) / SINK_TAU);
+      this.sink += (want - this.sink) * a;
+      y = Math.max(MAX_Y, Math.min(y, this.pos.y) - this.sink * dt);
+      if (this.vel.y > 0) this.vel.y = 0;
+    } else this.sink = 0;
     this.pos.y = y;
   }
 

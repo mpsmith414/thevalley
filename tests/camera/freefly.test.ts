@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FreeFly, intentFrom, type FlyIntent, type FlyWorld } from '../../src/camera/freefly';
+import { FreeFly, MAX_Y, intentFrom, type FlyIntent, type FlyWorld } from '../../src/camera/freefly';
 import { EMPTY_PAD, type PadState } from '../../src/shared/input';
 
 const idle: FlyIntent = { move: { x: 0, y: 0, z: 0 }, look: { yaw: 0, pitch: 0 }, fast: false, toggleWalk: false };
@@ -142,6 +142,25 @@ describe('FreeFly collision', () => {
     expect(Math.hypot(f.pos.x - trunk.x, f.pos.z - trunk.z)).toBeGreaterThanOrEqual(1.6 - 1e-6);
     expect(f.pos.z).toBeGreaterThan(-10); // did not pass through
   });
+  it('climbs no higher than 600 m, and a camera left higher (by the map) sinks back under it smoothly', () => {
+    const f = new FreeFly({ x: 0, y: 590, z: 0 }, 0, 0);
+    run(f, flat(), 3, intent({ move: { y: 1 } }));
+    expect(f.pos.y).toBe(MAX_Y);
+    const high = new FreeFly({ x: 0, y: 1400, z: 0 }, 0, -1.3);
+    let last = high.pos.y, biggest = 0, first = 0;
+    for (let k = 0; k < 15 * 60; k++) {
+      high.update(1 / 60, intent({ move: { y: 1 } }), flat());
+      if (k === 0) first = last - high.pos.y;
+      biggest = Math.max(biggest, last - high.pos.y);
+      expect(high.pos.y).toBeLessThanOrEqual(last); // never climbing
+      expect(high.pos.y).toBeGreaterThanOrEqual(MAX_Y); // nor dropping through it
+      last = high.pos.y;
+    }
+    expect(first).toBeLessThan(0.5); // it starts to sink gently
+    expect(biggest * 60).toBeLessThanOrEqual(80 + 1e-6); // a sink, at most 80 m/s: no plunge down to the ceiling
+    expect(high.pos.y).toBeLessThan(MAX_Y + 5);
+  });
+
   it('flies straight over a trunk circle at ground + 100 m', () => {
     const w = flat(0);
     w.trunksNear = () => [{ x: 0, z: -10, r: 1 }];

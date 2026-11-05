@@ -1,10 +1,10 @@
-import { Matrix4, PerspectiveCamera, Scene, Vector3, type BufferAttribute, type InstancedMesh } from 'three/webgpu';
+import { Matrix4, PerspectiveCamera, Scene, Vector3, type BufferAttribute, type InstancedMesh, type Mesh, type Object3D } from 'three/webgpu';
 import { describe, expect, it, vi } from 'vitest';
 import { buildBody, type BodyData } from '../../src/builder/build';
 import { FreeFly } from '../../src/camera/freefly';
 import { viewpointPose } from '../../src/camera/viewpoints';
 import type { Recipe } from '../../src/recipe/schema';
-import { Residents } from '../../src/residents/residents';
+import { CREATURE_LAYER, Residents, SELF_LAYER } from '../../src/residents/residents';
 import { HOMES } from '../../src/sim/homes';
 import { TICK } from '../../src/sim/types';
 import { VALLEY } from '../../src/valley/layout';
@@ -380,5 +380,93 @@ describe('Residents', () => {
       return res.info().map((i) => [i.id, i.doing, i.position.x.toFixed(4), i.position.z.toFixed(4), i.position.y.toFixed(4)]);
     };
     expect(await run()).toEqual(await run());
+  });
+});
+
+describe('Residents for the views', () => {
+  const wrap = (a: number) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
+
+  it('viewAnimal: the eye point between its two eyes, its heading in the camera convention, its name and what it does', async () => {
+    const res = await spawned();
+    const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!, g = res.sim.get(rabbit.id)!;
+    res.update(1 / 15, 1 / 15, cameraOn(g.motion.x, g.motion.z), 9);
+    const v = res.viewAnimal(rabbit.id)!;
+    expect(rabbit.obj.eyes.length).toBe(2);
+    const mid = rabbit.obj.eyes.map((e) => e.getWorldPosition(new Vector3())).reduce((s, p) => s.add(p), new Vector3()).multiplyScalar(0.5);
+    expect(v.eye.pos.x).toBeCloseTo(mid.x, 5);
+    expect(v.eye.pos.y).toBeCloseTo(mid.y, 5);
+    expect(v.eye.pos.z).toBeCloseTo(mid.z, 5);
+    // the rig's yaw 0 faces +z; the views' faces -z
+    expect(wrap(v.pose.yaw - rabbit.rig.yaw - Math.PI)).toBeCloseTo(0, 6);
+    const ahead = { x: -Math.sin(v.pose.yaw), z: -Math.cos(v.pose.yaw) };
+    expect((v.eye.pos.x - v.pose.pos.x) * ahead.x + (v.eye.pos.z - v.pose.pos.z) * ahead.z).toBeGreaterThan(0); // its eyes are at its front
+    expect(Math.abs(wrap(v.eye.yaw - v.pose.yaw))).toBeLessThan(1); // its head faces about the way it heads
+    expect(v.pose.pos).toEqual({ x: rabbit.obj.root.position.x, y: rabbit.obj.root.position.y, z: rabbit.obj.root.position.z });
+    expect(v.pose.size).toBe(rabbit.recipe.life.sizeM);
+    expect(v.pose.backHeight).toBeGreaterThan(0);
+    expect(v).toMatchObject({ name: 'Rabbit', native: true, doing: g.doing, swimmer: false, gone: null });
+    expect(res.viewAnimal('nobody#0')).toBeNull();
+  });
+
+  it('viewAnimal: a caught animal stays in the chase while it goes back to the earth, and has gone there once it is removed', async () => {
+    const res = await spawned();
+    const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!, g = res.sim.get(rabbit.id)!;
+    const camera = cameraOn(g.motion.x, g.motion.z);
+    res.update(1 / 15, 1 / 15, camera, 9);
+    expect(res.viewAnimal(rabbit.id)!.chasing).toBe(false);
+    res.sim.ctx.become(g, 'returning');
+    let seen = 0;
+    for (let t = 0; t < 10 && res.sim.get(rabbit.id); t += 1 / 15) {
+      const v = res.viewAnimal(rabbit.id)!; // as the views ask each frame
+      expect(v.chasing).toBe(true);
+      expect(v.gone).toBe(res.sim.get(rabbit.id)!.sink >= 1 ? 'earth' : null);
+      seen++;
+      res.update(1 / 15, 1 / 15, camera, 9);
+    }
+    expect(seen).toBeGreaterThan(10);
+    expect(res.animal(rabbit.id)).toBeUndefined();
+    expect(res.viewAnimal(rabbit.id)).toMatchObject({ gone: 'earth', name: 'Rabbit' });
+  });
+
+  it('viewAnimal: one walking out of the valley has gone exploring', async () => {
+    const res = await spawned();
+    const g = res.sim.get('deer#0')!;
+    g.doing = 'leave';
+    expect(res.viewAnimal('deer#0')!.gone).toBe('exploring');
+  });
+
+  it('candidates: every animal, at its body, drawn when it is in view and not hidden', async () => {
+    const res = await spawned();
+    const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!, g = res.sim.get(rabbit.id)!;
+    res.update(1 / 15, 1 / 15, cameraOn(g.motion.x, g.motion.z), 9);
+    const cands = res.candidates();
+    expect(cands.map((c) => c.id)).toEqual(res.animals.map((a) => a.id));
+    for (const c of cands) {
+      const a = res.animal(c.id)!;
+      expect(c.drawn).toBe(a.band !== 'paused' && a.obj.root.visible);
+      expect(c.size).toBe(a.recipe.life.sizeM);
+      expect(c.pos.y).toBeGreaterThan(a.obj.root.position.y);
+    }
+    expect(cands.find((c) => c.id === rabbit.id)!.drawn).toBe(true);
+  });
+
+  it('hideFromCamera: the body leaves the camera (its shadow casters keep it), and comes back', async () => {
+    const res = await spawned();
+    const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!;
+    const camera = new PerspectiveCamera();
+    camera.layers.enable(CREATURE_LAYER);
+    const caster = new PerspectiveCamera();
+    caster.layers.mask = 1 | (1 << CREATURE_LAYER) | (1 << SELF_LAYER); // the shadows' cascades
+    const meshes: Object3D[] = [];
+    rabbit.obj.root.traverse((o) => (o as Mesh).isMesh && meshes.push(o));
+    expect(meshes.length).toBeGreaterThan(2);
+    res.hideFromCamera(rabbit.id, true);
+    for (const m of meshes) {
+      expect(m.layers.test(camera.layers)).toBe(false);
+      expect(m.layers.test(caster.layers)).toBe(true);
+    }
+    res.hideFromCamera(rabbit.id, false);
+    for (const m of meshes) expect(m.layers.test(camera.layers)).toBe(true);
+    expect(() => res.hideFromCamera('nobody#0', true)).not.toThrow();
   });
 });

@@ -39,6 +39,12 @@ export type Agent = { id: string; species: string; n: number; seed: number; home
   doing: Doing; since: number; group: string | null; leader: boolean; focus: string | null; place: Pt | null;
   stamina: number; cooldown: number; fedDay: number; pose: Pose; route: Pt[]; detour: Pt | null; sink: number;
   threat: Threat | null; wary: number; until: number };
+/**
+ * The player's hold on a steered animal, as it stands this tick: the heading pushed toward (`atan2(dx, dz)`, as the
+ * animal's own `yaw`), how far the stick is pushed (0..1: up to a walk), whether run is held, flying up (1), down (−1) or
+ * neither, and whether the Do button went down this tick.
+ */
+export type SteerInput = { yaw: number; speed: number; run: boolean; fly: -1 | 0 | 1; act: boolean };
 export type SpeciesDef = { id: string; name: string; recipe: Recipe; home: HomeRange; target: number;
   released: boolean; seeds?: number[] };
 export type MomentKind = 'stalk' | 'chase' | 'catch' | 'escape' | 'dive' | 'startle' | 'drink' | 'raft' | 'chorus'

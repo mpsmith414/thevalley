@@ -228,6 +228,19 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     Object.assign(w.fly, { pos: { ...p.pos }, yaw: p.yaw, pitch: p.pitch, vel: { x: 0, y: 0, z: 0 }, walk: false });
     w.fly.apply(camera);
   };
+  /**
+   * Free flight `back` m off animal `id` (by default 6 of its sizes, at least 12 m), on the side the camera is, 2 m up and
+   * looking at it, the views let go: the highlight lands on it a frame later. False if there is no such animal.
+   */
+  const aimAt = (id: string, back?: number) => {
+    const a = w.residents.animal(id);
+    if (!a) return false;
+    const { x, z } = a.rig.position, d = back ?? Math.max(12, 6 * a.recipe.life.sizeM);
+    const dx = camera.position.x - x, dz = camera.position.z - z, n = Math.hypot(dx, dz) || 1;
+    w.views.letGo();
+    at(x + (dx / n) * d, z + (dz / n) * d, 2, x, z, a.rig.restHeight);
+    return true;
+  };
   const simDev = simHooks(w, at, time);
   const fpsNow = () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0);
   Object.assign(window, {
@@ -235,6 +248,9 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
       ...w, tier, step, shot, screen, pace,
       resume: () => (loop.paused = false),
       at,
+      /** The views controller (`views.lock(id, view)`, `setView`, `letGo`, `state`…), and free flight aimed at an animal. */
+      views: w.views,
+      aimAt,
       time, tour, perf, frames,
       sim: simDev,
       /** Stage a scene for a shot (as `sim.stage`). */

@@ -7,7 +7,7 @@ import { drink } from './behaviours/drink';
 import { flee, flight, freeze, hide } from './behaviours/flee';
 import { forage, graze, soarHeight, soars } from './behaviours/feed';
 import { FEEDING, GROUP_DISTANCE, LYING, alike, assignGroups, carriesOn, crowded, flock, groupNeeds, nextWatcher, rank, rejoin, spacing, spread, trainSpot, type Group } from './behaviours/group';
-import { chase, dive, eat, returning, search, stalk } from './behaviours/hunt';
+import { chase, dive, eat, returning, search, stalk, steeredHunt } from './behaviours/hunt';
 import { rest, watch } from './behaviours/rest';
 import { canHunt, isHunter } from './foodweb';
 import { Governor } from './governor';
@@ -19,7 +19,7 @@ import { Places, type KeepOff } from './places';
 import { Rng } from './rng';
 import { between, daylight, inCover, notices, running, runsAt, senseReach } from './senses';
 import { traitsFor, type Traits } from './traits';
-import { ANIMAL_S_PER_HOUR, HIGH, MEDIUM, TICK, type Agent, type Doing, type MomentKind, type Motion, type Needs, type Pose, type Pt, type SimEvent, type SimState, type SimWorld, type SpeciesDef } from './types';
+import { ANIMAL_S_PER_HOUR, HIGH, MEDIUM, TICK, type Agent, type Doing, type MomentKind, type Motion, type Needs, type Pose, type Pt, type SimEvent, type SimState, type SimWorld, type SpeciesDef, type SteerInput } from './types';
 
 /** What a behaviour sees of the simulation, and the small helpers they share. */
 export type SimCtx = {
@@ -96,8 +96,14 @@ export type SimCtx = {
   apart<P extends Pt | null>(a: Agent, pick: (near: Pt) => P, finish?: (p: Pt) => Pt | null): P;
   /** The animal and its group-mates (its own species, if it has no group) within `within` m that pass `test`. */
   mates(a: Agent, within: number, test: (b: Agent) => boolean): Agent[];
+  /** The nearest other animal of any kind within `within` m of `a` that passes `test`, or null. */
+  nearest(a: Agent, within: number, test: (b: Agent) => boolean): Agent | null;
+  /** Whether `a` leads its group this tick (a steered leader does not: its next member leads while it is steered). */
+  leads(a: Agent): boolean;
   /** A moment about `a` and `members` (one of them: a lone animal; more: its group or species), and a hunt's `prey`. */
   moment(kind: MomentKind, a: Agent, members: Agent[], interest: number, where?: string, prey?: Agent): void;
+  /** The player's hold on the animal with this id this tick, or null when it lives its own life. */
+  steered(id: string): SteerInput | null;
 };
 
 /** A behaviour: sets the agent's target, speed, flying and pose for this tick, and calls `s.done` when it has finished. */
@@ -120,6 +126,22 @@ const DUSK = 6;
 const samePt = (p: Pt | null, q: Pt) => !!p && p.x === q.x && p.z === q.z;
 /** Within `slack` m of `q` (exactly `q` at no slack). */
 const nearPt = (p: Pt | null, q: Pt, slack: number) => (slack > 0 ? !!p && Math.hypot(p.x - q.x, p.z - q.z) <= slack : samePt(p, q));
+/** A steered animal heads for a point this many body lengths ahead (at least AHEAD_MIN m), kept BORDER m inside the valley's edge. */
+const AHEAD = 3, AHEAD_MIN = 2, BORDER = 20;
+/** A steered animal pushed less than this (0..1) stands watching; it walks at up to WALK of its top speed (running, all of it). */
+const STILL = 0.05, WALK = 0.5;
+/** A steered flier climbs or sinks toward CLIMB_STEP m above (or below) where it is, up to CEILING m, landing once below LAND m. */
+const CLIMB_STEP = 3, CEILING = 60, LAND = 1;
+/** A Do (the steered animal's drink, feed or call) lasts this many animal seconds, unless the stick is pushed. */
+export const DO_S = 5;
+/** Water within DO_WATER m, looked for on DO_RING points round the animal, makes a Do a drink. */
+const DO_WATER = 2, DO_RING = 16;
+/** What a Do can be (the steered animal's `doing` while one lasts). */
+const DOES = new Set<Doing>(['drink', 'graze', 'forage', 'call']);
+/** A steered hunter's chase, dive and meal play out by themselves, as in the valley. */
+const HUNTS = new Set<Doing>(['chase', 'dive', 'eat']);
+/** Walking in or out, or going back to the earth, an animal is beyond the reins: it carries on by itself. */
+const UNSTEERED = new Set<Doing>(['arrive', 'leave', 'returning']);
 /** Neighbour grid cell (m). */
 const CELL = 32;
 /** A leader whose target is farther than this (m) is on a long walk, and its followers keep with it. */
@@ -195,6 +217,8 @@ export class Sim {
   private off: Pt = { x: 0, z: 0 };
   private sep: Pt = { x: 0, z: 0 };
   private needs: Needs = { hunger: 0, thirst: 0, tired: 0, fear: 0, company: 0 };
+  /** The one animal the player steers, and how, or null (never saved: a reload starts with every animal its own). */
+  private steering: { id: string; input: SteerInput; acted: boolean } | null = null;
 
   constructor(private world: SimWorld, opts: { seed: number; species: SpeciesDef[]; state?: SimState }) {
     this.seed = opts.seed;
@@ -229,6 +253,26 @@ export class Sim {
   /** A species' traits (one object per species, shared). */
   traits(species: string): Traits {
     return this.traitsBy.get(species)!;
+  }
+
+  /** Whether `species` is prey in the valley now: someone here hunts it (its dangers), or it is a fish (the Fear sense). */
+  isPrey(species: string): boolean {
+    return this.dangers.has(species) || !!this.traitsBy.get(species)?.swimmer;
+  }
+
+  /** The species `species` hunts in the valley now (none for an animal that hunts nothing). */
+  preyOf(species: string): string[] {
+    return [...(this.quarry.get(species)?.prey ?? [])];
+  }
+
+  /** Whether species `hunter` hunts species `prey` in the valley now (the food web). */
+  hunts(hunter: string, prey: string): boolean {
+    return !!this.quarry.get(hunter)?.prey.has(prey);
+  }
+
+  /** The animals' time now: animal seconds the valley has lived (whole ticks). */
+  get time(): number {
+    return this.t;
   }
 
   /** How far into the next tick the animal time has run (0..1), for smoothing the view. */
@@ -305,6 +349,30 @@ export class Sim {
       pending: structuredClone(this.pending), governor: { ...this.governor }, nextMoment: this.moments.next,
       nextN: { ...this.nextN }, cooldowns: { ...this.moments.cooldowns },
     };
+  }
+
+  /**
+   * The player takes the reins of the animal `id` (one at a time: a new one takes them from the last), or with null lets
+   * it go, back to choosing for itself. An id that is no animal here changes nothing.
+   */
+  steer(id: string, input: SteerInput | null): void {
+    if (!this.byId.has(id)) return;
+    if (input) {
+      if (this.steering && this.steering.id !== id) this.handBack();
+      this.steering = { id, input, acted: this.steering?.id === id && this.steering.acted };
+    } else if (this.steering?.id === id) this.handBack();
+  }
+
+  /** The id of the animal the player steers, or null. */
+  get steered(): string | null {
+    return this.steering?.id ?? null;
+  }
+
+  /** Lets the steered animal go: it chooses afresh on its next tick. */
+  private handBack() {
+    const a = this.byId.get(this.steering!.id)!;
+    this.steering = null;
+    if (!UNSTEERED.has(a.doing)) this.sctx.done(a);
   }
 
   /** Sets some of an animal's needs (for staging and tests). */
@@ -459,6 +527,7 @@ export class Sim {
     this.byId.delete(a.id);
     this.defOf.delete(a.id);
     this.prevs.delete(a.id);
+    if (this.steering?.id === a.id) this.steering = null;
     this.events.push({ type: 'removed', id: a.id });
     this.group();
     // the last of a species that has left: the valley forgets it
@@ -482,6 +551,8 @@ export class Sim {
     s.light = daylight(s.sun);
     this.grid.clear();
     for (const g of this.groups.values()) (g.members.length = 0), (g.x = g.z = 0), (g.leader = null);
+    const steered = this.steering?.id;
+    let unled: Group | undefined;
     for (const a of this.agents) {
       Object.assign(this.prevs.get(a.id)!, a.motion);
       this.grid.insert(a.id, a.motion.x, a.motion.z);
@@ -491,8 +562,11 @@ export class Sim {
       g.members.push(a);
       g.x += a.motion.x;
       g.z += a.motion.z;
-      if (a.leader) g.leader = a;
+      if (a.leader && a.id === steered) unled = g; // the herd does not follow the player
+      else if (a.leader) g.leader = a;
     }
+    // for the tick, the steered leader's group is led by its next member (its own `leader` stays, to lead again after)
+    if (unled) for (const b of unled.members) if (b.id !== steered && (!unled.leader || b.n < unled.leader.n)) unled.leader = b;
     for (const a of this.agents) this.tickAgent(a, s);
     this.keepWatch(s);
     for (const a of this.agents.filter((x) => x.doing === 'returning' && x.sink >= 1)) this.remove(a);
@@ -538,12 +612,13 @@ export class Sim {
   }
 
   private tickAgent(a: Agent, s: SimCtx) {
-    const t = this.traitsBy.get(a.species)!, diet = this.diet.get(a.species)!, m = a.motion, w = this.world;
+    const t = this.traitsBy.get(a.species)!, diet = this.diet.get(a.species)!, m = a.motion;
     // apart: farther from its mates' centre than its group's distance (it has not moved yet this tick)
     const g = a.group && !ERRAND.has(a.doing) ? this.groups.get(a.group) : undefined, k = g ? g.members.length - 1 : 0;
     const apart = k > 0 && Math.hypot((g!.x - m.x) / k - m.x, (g!.z - m.z) / k - m.z) > GROUP_DISTANCE[t.social];
     updateNeeds(a, t, diet.hunter, TICK, tiredTarget(t.activity, s.sun), apart);
     this.sense(a, t, s);
+    if (this.steering?.id === a.id && !UNSTEERED.has(a.doing)) return this.steeredTick(a, t, this.steering);
     const done = a.since < 0, lead = g?.leader && g.leader !== a ? g.leader.doing : null;
     const needs = a.leader && g ? groupNeeds(a, g, this.needs) : undefined;
     const cooling = diet.hunter && s.hours < a.cooldown, hold = a.doing === 'rest' && a.until > this.t;
@@ -553,11 +628,104 @@ export class Sim {
     BEHAVIOURS[a.doing]?.(a, t, s);
     const roomy = g && a.pose.sleep === 0 && !m.flying && !STOCK_STILL.has(a.doing);
     if (roomy) this.walkOut(a, t, g);
+    this.move(a, t, roomy ? g : undefined);
+  }
+
+  /**
+   * The player's animal: its target a few body lengths ahead along the heading pushed, walking (up to half its top speed)
+   * when pushed, else standing watching, running flat out while run is held; a flier climbs and sinks as told, landing
+   * once low. It moves by the same rules as any other (its own medium, the trunks, its breath). A hunter run at prey
+   * hunts it by the valley's rules (`steeredHunt`): the chase or dive, and a meal after a catch, play out by themselves,
+   * and steering takes over again the moment one is over (in the same tick, even a chase over as soon as it began).
+   */
+  private steeredTick(a: Agent, t: Traits, hold: { input: SteerInput; acted: boolean }) {
+    const input = hold.input, press = input.act && !hold.acted;
+    hold.acted = input.act;
+    if (HUNTS.has(a.doing)) {
+      BEHAVIOURS[a.doing]!(a, t, this.sctx);
+      if (HUNTS.has(a.doing)) return this.move(a, t);
+    } else if (this.diet.get(a.species)!.hunter && steeredHunt(a, t, this.sctx, input) && HUNTS.has(a.doing)) return this.move(a, t);
+    if (this.steeredDo(a, t, input, press)) return;
+    const m = a.motion, doing = input.speed > STILL ? 'walk' : 'watch';
+    if (a.doing !== doing) (a.doing = doing), (a.since = this.t); // set directly, not started afresh each tick: its start holds
+    this.sctx.pose(a, 0, 0);
+    a.place = null;
+    const ahead = Math.max(AHEAD_MIN, AHEAD * t.bodyLength), edge = this.world.size / 2 - BORDER;
+    const inside = (v: number) => Math.max(-edge, Math.min(edge, v));
+    const to = { x: inside(m.x + Math.sin(input.yaw) * ahead), z: inside(m.z + Math.cos(input.yaw) * ahead) };
+    if (a.detour) a.detour = to; // mid side step round a trunk: where it goes after
+    else m.target = to;
+    m.speedFrac = input.run ? 1 : WALK * input.speed;
+    if (t.canFly && input.fly > 0) (m.wantFly = true), (m.cruise = Math.min(CEILING, m.altitude + CLIMB_STEP));
+    else if (t.canFly && input.fly < 0) {
+      m.cruise = Math.max(0, m.altitude - CLIMB_STEP);
+      if (m.altitude < LAND) m.wantFly = false;
+    }
+    this.move(a, t);
+  }
+
+  /**
+   * A Do: when the button goes down (`press`) with the stick at rest, the steered animal stands where it is for DO_S s,
+   * drinking (facing the water) if water lies within DO_WATER m, else grazing on open land if it is a grazer or foraging if
+   * it forages, else calling (a flier aloft calls too). Its needs do the rest. Pushing the stick ends it early. Returns
+   * whether it holds the animal this tick.
+   */
+  private steeredDo(a: Agent, t: Traits, input: SteerInput, press: boolean): boolean {
+    const m = a.motion;
+    if (DOES.has(a.doing) && a.until > this.t) {
+      if (input.speed <= STILL) return this.holdDo(a, t);
+      a.until = 0; // the stick: on with the walk
+      return false;
+    }
+    if (!press || input.speed > STILL) return false;
+    const water = m.flying ? null : this.waterAround(m, t), diet = this.diet.get(a.species)!;
+    const doing: Doing = water ? 'drink' : !m.flying && t.grazer && !inCover(this.world, m.x, m.z) ? 'graze' : !m.flying && diet.forages ? 'forage' : 'call';
+    a.doing = doing;
+    a.since = this.t;
+    a.until = this.t + DO_S;
+    a.place = null;
+    a.detour = null;
+    m.target = water; // a turn to face the water; the speed is nil
+    return this.holdDo(a, t);
+  }
+
+  /** One tick of a Do: standing still (turning to the water, when drinking), with the pose of the doing. */
+  private holdDo(a: Agent, t: Traits): boolean {
+    const m = a.motion;
+    m.speedFrac = 0;
+    if (a.doing === 'call') {
+      const fly = m.wantFly;
+      call(a, t, this.sctx);
+      m.wantFly = fly; // a hawk calling stays up
+    } else this.sctx.pose(a, 1, 0, a.doing === 'drink' ? 'lap' : 'chew');
+    this.move(a, t);
+    return true;
+  }
+
+  /** A point on the water within DO_WATER m of `m` (the middle of the wet ones on a ring round it), or null; a swimmer never drinks. */
+  private waterAround(m: Motion, t: Traits): Pt | null {
+    if (t.swimmer) return null;
+    let x = 0, z = 0, wet = 0;
+    for (let k = 0; k < DO_RING; k++) {
+      const sx = Math.sin((k / DO_RING) * Math.PI * 2), sz = Math.cos((k / DO_RING) * Math.PI * 2);
+      if (!this.world.isWater(m.x + sx * DO_WATER, m.z + sz * DO_WATER)) continue;
+      (x += sx), (z += sz), wet++;
+    }
+    const d = Math.hypot(x, z) || 1;
+    return wet ? { x: m.x + x / d, z: m.z + z / d } : null;
+  }
+
+  /**
+   * One step toward its target (at most a trot when out of breath), easing out of a mate's space (`g`, when it has room
+   * to), kept to its own medium and clear of trunks; a walker that came down over the water steps out onto the bank.
+   */
+  private move(a: Agent, t: Traits, g?: Group) {
+    const m = a.motion, w = this.world;
     this.from.x = m.x;
     this.from.z = m.z;
     if (a.stamina <= 0 && !m.flying) m.speedFrac = Math.min(m.speedFrac, SPENT); // out of breath
     steer(m, t, TICK, a.pose.sleep > 0.1);
-    if (roomy) this.easeAway(a, t, g);
+    if (g) this.easeAway(a, t, g);
     if (!keepClear(a, t, w, this.from, Math.max(0.1, t.size * 0.2))) return;
     a.place = null; // that way was barred: the behaviour looks again
     if (!t.swimmer && !t.floater && !m.flying && w.isWater(m.x, m.z)) {
@@ -609,7 +777,7 @@ export class Sim {
   private keepWatch(s: SimCtx) {
     for (const g of this.groups.values()) {
       if (!g.members.length) continue;
-      const t = this.traitsBy.get(g.members[0].species)!, w = nextWatcher(g, t);
+      const t = this.traitsBy.get(g.members[0].species)!, w = nextWatcher(g, t, this.steering?.id ?? null);
       if (!w) continue;
       this.start(w, 'watch');
       watch(w, t, s);
@@ -693,7 +861,7 @@ export class Sim {
       }
     }
     let off: Pt | null = null;
-    if (g) off = flock(a, g.members, t, TICK, this.off);
+    if (g) off = flock(a, g.members, g.leader, t, TICK, this.off);
     else if (t.social === 'solitary') off = spread(a, this.kinNear(a, m, SOLITARY_GAP), SOLITARY_GAP, this.off);
     const d = Math.hypot(x - m.x, z - m.z);
     if (off) {
@@ -822,6 +990,7 @@ export class Sim {
         a.since = DONE;
       },
       become: (a, doing) => sim.start(a, doing),
+      steered: (id) => (sim.steering?.id === id ? sim.steering.input : null),
       seen: (id) => sim.view?.seen(id) ?? false,
       centre(a) {
         const g = a.group ? sim.groups.get(a.group) : undefined, n = g ? g.members.length : 0;
@@ -863,6 +1032,15 @@ export class Sim {
         }
         return out;
       },
+      nearest(a, within, test) {
+        let near: Agent | null = null, best = Infinity;
+        for (const id of sim.grid.near(a.motion.x, a.motion.z, within, sim.near)) {
+          const b = sim.byId.get(id)!, d = between(a, b);
+          if (b !== a && d < best && test(b)) (near = b), (best = d);
+        }
+        return near;
+      },
+      leads: (a) => !!a.group && sim.groups.get(a.group)?.leader === a,
       moment(kind, a, members, interest, where = '', prey) {
         const def = sim.defOf.get(a.id)!, plural = members.length > 1, pd = prey && sim.defOf.get(prey.id)!;
         const quarry = pd && { name: pd.name, native: !pd.released, plural: prey.group !== null };

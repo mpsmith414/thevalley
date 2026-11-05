@@ -156,7 +156,84 @@ body { background: #b9c8cf; color: #14405c; }
 }
 .caption.in { opacity: 1; transform: translate(-50%, 0); }
 .caption-hint { flex: none; padding: 4px 16px; border-radius: 999px; background: #5fae4a; color: #fff; font-size: 0.8em; font-weight: 900; white-space: nowrap; }
+.caption-hint:empty { display: none; }
+/* ---------- the views: the name tag over the highlighted animal, and the card (with the button hints) while watching one ---------- */
+.view-tag {
+  position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 12px; padding: 7px 10px 7px 20px; border-radius: 999px;
+  pointer-events: none; background: #ffffffc0; color: #14405c; font-size: 22px; font-weight: 800; white-space: nowrap; box-shadow: 0 3px 12px #0002;
+  opacity: 0; transition: opacity 0.3s ease; will-change: transform;
+}
+.view-tag.in { opacity: 1; }
+.view-tag-hint { padding: 3px 12px; border-radius: 999px; background: #5fae4a; color: #fff; font-size: 0.8em; font-weight: 900; }
+.view-tag-hint:empty { display: none; }
+.view-tag:has(.view-tag-hint:empty) { padding-right: 20px; }
+.view-card {
+  position: absolute; left: 3vw; bottom: calc(5vh + 78px); display: grid; justify-items: start; gap: 4px; padding: 12px 24px; border-radius: 26px;
+  pointer-events: none; background: #ffffffc0; color: #14405c; font-size: 22px; font-weight: 800; line-height: 1.2; box-shadow: 0 4px 18px #0002;
+  opacity: 0; transform: translateY(8px); transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.view-card.in { opacity: 1; transform: none; }
+.view-card-view { font-size: 0.85em; color: #14405cc0; }
+.view-hints {
+  max-height: 0; margin-top: 0; overflow: hidden; font-size: 0.75em; font-weight: 900; color: #3f8a2e; white-space: nowrap;
+  opacity: 0; transition: opacity 0.8s ease, max-height 0.8s ease, margin-top 0.8s ease;
+}
+.view-hints.in { max-height: 2em; margin-top: 4px; opacity: 1; }
+.view-sense-line {
+  max-height: 0; margin-top: 0; overflow: hidden; font-size: 0.75em; font-weight: 700; color: #14405c; white-space: nowrap;
+  opacity: 0; transition: opacity 0.8s ease, max-height 0.8s ease, margin-top 0.8s ease;
+}
+.view-sense-line.in { max-height: 2em; margin-top: 4px; opacity: 1; }
+/* the Fear sense's danger out of view: a soft red glow at the screen's side (no flashing: it eases in and out) */
+.view-arc { position: absolute; top: 20vh; height: 60vh; width: 9vw; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; }
+.view-arc.left { left: 0; background: radial-gradient(ellipse 100% 50% at 0% 50%, #e0503c99, #e0503c00 100%); }
+.view-arc.right { right: 0; background: radial-gradient(ellipse 100% 50% at 100% 50%, #e0503c99, #e0503c00 100%); }
+.view-arc.in { opacity: 1; }
+/* Hearing's sound out of view: the same glow, in the ripples' soft pale blue */
+.view-arc.sound.left { background: radial-gradient(ellipse 100% 50% at 0% 50%, #b8d8f088, #b8d8f000 100%); }
+.view-arc.sound.right { background: radial-gradient(ellipse 100% 50% at 100% 50%, #b8d8f088, #b8d8f000 100%); }
+/* ---------- the overview map: marks over the valley seen from above (each placed by its transform at its point) ---------- */
+#ui > .map { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.5s ease; }
+#ui > .map.in { opacity: 1; }
+.map-mark, .map-place, .map-you, .map-cursor { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; }
+.map-mark { display: none; }
+.map-mark.in { display: block; }
+.map-dot {
+  position: absolute; left: 0; top: 0; width: 16px; height: 16px; transform: translate(-50%, -50%); border-radius: 50%;
+  display: grid; place-content: center; background: var(--c); border: 3px solid #fff; box-shadow: 0 2px 6px #0006;
+  color: #14405c; font-size: 13px; font-weight: 900; line-height: 1;
+}
+.map-mark.group .map-dot { width: 24px; height: 24px; }
+.map-mark.star .map-dot { width: 30px; height: 30px; font-size: 20px; color: #fff; text-shadow: 0 1px 3px #0008; }
+.map-name {
+  position: absolute; left: 0; top: 16px; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px; white-space: nowrap;
+  background: #ffffffd0; color: #14405c; font-size: 17px; font-weight: 800; box-shadow: 0 2px 8px #0003; opacity: 0; transition: opacity 0.25s ease;
+}
+.map-mark.star .map-name { top: 20px; }
+.map-mark.named .map-name { opacity: 1; }
+.map-place span {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); white-space: nowrap; color: #fffffff0; font-size: 18px;
+  font-weight: 700; font-style: italic; letter-spacing: 0.04em; text-shadow: 0 1px 3px #000a, 0 0 10px #0006;
+}
+.map-you { display: none; }
+.map-you.in { display: block; }
+/* a small camera where you were */
+.map-you::before {
+  content: ''; position: absolute; left: -11px; top: -8px; width: 16px; height: 16px; border-radius: 4px; background: #14405c; border: 2px solid #fff;
+  box-shadow: 0 2px 6px #0006;
+}
+.map-you::after { content: ''; position: absolute; left: 7px; top: -4px; border: 6px solid transparent; border-left: 8px solid #fff; border-right: 0; }
+.map-cursor::before {
+  content: ''; position: absolute; left: 0; top: 0; width: 34px; height: 34px; transform: translate(-50%, -50%); border-radius: 50%;
+  border: 4px solid #fff; box-shadow: 0 0 0 2px #14405c80, 0 2px 10px #0006; transition: width 0.15s ease, height 0.15s ease;
+}
+.map-cursor.on::before { width: 46px; height: 46px; border-color: #ffe27a; }
+.map-hints {
+  position: absolute; left: 50%; bottom: 4vh; transform: translateX(-50%); padding: 8px 22px; border-radius: 999px; white-space: nowrap;
+  background: #ffffffc0; color: #3f8a2e; font-size: 18px; font-weight: 900; box-shadow: 0 3px 12px #0002; opacity: 0; transition: opacity 0.8s ease;
+}
+.map-hints.in { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
-  .menu, .menu-btn, .label-pill, .caption { transition: none !important; animation: none !important; }
+  .menu, .menu-btn, .label-pill, .caption, .view-tag, .view-card, .view-hints, .view-sense-line, .view-arc, .map, .map-name, .map-hints, .map-cursor::before { transition: none !important; animation: none !important; }
   .menu-btn.focused, .menu-btn:focus-visible { transform: none; }
 }

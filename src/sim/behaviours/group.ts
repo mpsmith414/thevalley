@@ -68,10 +68,10 @@ export function spread(a: Agent, others: readonly Agent[], gap: number, out: Pt 
 
 /**
  * Gentle flocking: an offset (into `out`) to add to the target `a` chose. Cohesion toward its mates' centre once it is
- * loose, separation from mates within 1.5 body sizes, and alignment with its leader's heading (as far as the leader goes
- * in a few steps of `dt` s).
+ * loose, separation from mates within 1.5 body sizes, and alignment with the heading of `leader`, the one leading the
+ * group this tick (as far as it goes in a few steps of `dt` s; a steered leader leads no one, so none is passed for it).
  */
-export function flock(a: Agent, mates: readonly Agent[], t: Traits, dt: number, out: Pt = { x: 0, z: 0 }): Pt {
+export function flock(a: Agent, mates: readonly Agent[], leader: Agent | null, t: Traits, dt: number, out: Pt = { x: 0, z: 0 }): Pt {
   const m = a.motion;
   spread(a, mates, spacing(t), out);
   let cx = 0, cz = 0, n = 0;
@@ -81,7 +81,7 @@ export function flock(a: Agent, mates: readonly Agent[], t: Traits, dt: number, 
     cz += b.motion.z;
     n++;
     const lm = b.motion;
-    if (b.leader && lm.speed > MOVING) {
+    if (b === leader && lm.speed > MOVING) {
       const ahead = lm.speed * dt * ALIGN_STEPS;
       out.x += Math.sin(lm.yaw) * ahead;
       out.z += Math.cos(lm.yaw) * ahead;
@@ -103,17 +103,21 @@ export function watcher(group: Agent[]): string | null {
   return onWatch(group)?.id ?? null;
 }
 
-/** The herd member that should start standing watch now (none for other groups, or while the watcher already watches). */
-export function nextWatcher(g: Group, t: Traits): Agent | null {
+/**
+ * The herd member that should start standing watch now (none for other groups, or while the watcher already watches).
+ * `steered` (the player's animal) never watches for the herd, nor counts as watching.
+ */
+export function nextWatcher(g: Group, t: Traits, steered: string | null = null): Agent | null {
   if (t.social !== 'herd' || !t.grazer) return null;
-  const w = onWatch(g.members);
+  const w = onWatch(g.members, steered);
   return w && w.doing !== 'watch' ? w : null;
 }
 
-/** `watcher`'s pick, the animal itself. */
-function onWatch(group: Agent[]): Agent | null {
+/** `watcher`'s pick, the animal itself (never `skip`). */
+function onWatch(group: Agent[], skip: string | null = null): Agent | null {
   let grazing = 0, pick: Agent | null = null;
   for (const b of group) {
+    if (b.id === skip) continue;
     if (b.doing === 'watch' && !b.wary) return b;
     if (b.doing !== 'graze') continue;
     grazing++;

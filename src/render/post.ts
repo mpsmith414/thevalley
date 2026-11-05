@@ -1,7 +1,8 @@
-import { ColorManagement, RenderPipeline, type Camera, type ColorSpace, type Node, type PassNode, type Scene, type WebGPURenderer } from 'three/webgpu';
+import { ColorManagement, DepthTexture, RenderPipeline, RenderTarget, type Camera, type ColorSpace, type Node, type PassNode, type Scene, type TextureNode, type WebGPURenderer } from 'three/webgpu';
 import { pass, renderOutput, vec4 } from 'three/tsl';
 import { bloom, type default as BloomNode } from 'three/addons/tsl/display/BloomNode.js';
 import { NEUTRAL_GRADE, gradeNode, gradeUniforms, type Grade, type GradeUniforms } from './grade';
+import { lensColourNode, lensSceneNode, lensUniforms, type LensUniforms } from './lens';
 import { nodeFrameOf, pipelineOutput } from './probe';
 import type { Tier } from './quality';
 
@@ -19,9 +20,9 @@ export const POST: Record<Tier, PostSettings> = {
 
 /**
  * The picture's last stage. `render()` draws the scene (or, for a one-off such as a snapshot, another `scene` and `camera`)
- * through the pipeline; `grade` holds the colour grade's uniforms.
+ * through the pipeline; `grade` holds the colour grade's uniforms, `lens` the Eyes view's lens's (all off but in Eyes).
  */
-export type Post = { render(scene?: Scene, camera?: Camera): void; grade: GradeUniforms; setTier(t: Tier): void; dispose(): void };
+export type Post = { render(scene?: Scene, camera?: Camera): void; grade: GradeUniforms; lens: LensUniforms; setTier(t: Tier): void; dispose(): void };
 
 /** The scene pass's MSAA samples: as asked, or one on WebGL 2 when the context cannot multisample a half-float target. */
 function passSamples(renderer: WebGPURenderer, want: number): number {
@@ -33,34 +34,50 @@ function passSamples(renderer: WebGPURenderer, want: number): number {
 
 /**
  * The post-processing pipeline: an MSAA scene pass into a half-float target, bloom on the HDR picture (High and Medium),
- * then `renderOutput` (the renderer's tone mapping, exposure and output colour space) and the grade on the display-referred
- * picture. The pass's target matches the renderer's own frame buffer target (half float, 4 samples, linear working colour
- * space, depth24plus), so the pipelines `compileTogether` builds for the canvas are the ones the pass draws with. The
- * pipeline's own quad materials compile on the first `render()`.
+ * the Eyes view's lens on the HDR picture (its shape and exposure), then `renderOutput` (the renderer's tone mapping,
+ * exposure and output colour space), the lens's colour and the grade on the display-referred picture. The lens is built
+ * in once with its strengths as uniforms (see `lens.ts`): off, it hands the picture on untouched. The pass's target
+ * matches the renderer's own frame buffer target (half float, 4 samples, linear working colour space, depth24plus), so
+ * the pipelines `compileTogether` builds for the canvas are the ones the pass draws with. The pipeline's own quad
+ * materials compile on the first `render()`.
  *
  * If this three build cannot place the output transform itself (see `pipelineOutput`), it draws straight with
- * `renderer.render`: no bloom, no grade.
+ * `renderer.render`: no bloom, no grade, no lens.
  */
 export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camera, tier: Tier, grade: Grade = NEUTRAL_GRADE): Post {
-  const u = gradeUniforms(grade);
+  const u = gradeUniforms(grade), lens = lensUniforms();
   const pipeline = new RenderPipeline(renderer);
   if (!pipelineOutput(pipeline)) {
     pipeline.dispose();
-    return { render: (s = scene, c = camera) => renderer.render(s, c), grade: u, setTier: () => {}, dispose: () => {} };
+    return { render: (s = scene, c = camera) => renderer.render(s, c), grade: u, lens, setTier: () => {}, dispose: () => {} };
   }
   pipeline.outputColorTransform = false; // renderOutput below does it, so the grade can follow
   let scenePass: PassNode | null = null, glow: BloomNode | null = null;
+  // The look from under the water reads the scene's depth, but only a fish's Eyes need it: bound into the frame, the
+  // multisampled depth costs up to 10 ms a frame in the forest views on the owner's PC (River Bend 29 ms against 21; the
+  // read itself waits behind the lens's If). So the picture binds a one-pixel stand-in with the same samples, and the
+  // real depth only while the lens is under water (see `bindDepth`).
+  let depth: TextureNode | null = null, stand: RenderTarget | null = null;
   const build = (t: Tier) => {
-    const s = POST[t];
+    const s = POST[t], samples = passSamples(renderer, s.samples);
     scenePass?.dispose();
     glow?.dispose();
-    scenePass = pass(scene, camera, { samples: passSamples(renderer, s.samples), colorSpace: ColorManagement.workingColorSpace as ColorSpace });
-    let hdr: Node<'vec4'> = scenePass.getTextureNode();
+    stand?.dispose();
+    scenePass = pass(scene, camera, { samples, colorSpace: ColorManagement.workingColorSpace as ColorSpace });
+    stand = new RenderTarget(1, 1, { samples, depthTexture: new DepthTexture(1, 1) });
+    const picture = scenePass.getTextureNode();
+    let hdr: Node<'vec4'> = picture;
     glow = s.bloom ? bloom(hdr, s.bloomStrength, s.bloomRadius, s.bloomThreshold) : null;
     // the glow's alpha is 1: add its colour only, so the scene's own alpha (under 1 where the sky is drawn) still
     // unpremultiplies as it does without bloom
     if (glow) hdr = vec4(hdr.rgb.add(glow.rgb), hdr.a);
-    pipeline.outputNode = gradeNode(renderOutput(hdr), u);
+    // the glow's own texture, for the lens to read at bent places (r186's typings name it `getTexture`; it is `getTextureNode`)
+    const glowTex = glow ? (glow as unknown as { getTextureNode(): TextureNode }).getTextureNode() : null;
+    // the scene's depth and camera, for the look from under the water
+    depth = scenePass.getTextureNode('depth');
+    const view = { depth, camera: () => scenePass!.camera };
+    const seen = lensSceneNode(hdr, picture, glowTex, lens, view);
+    pipeline.outputNode = gradeNode(lensColourNode(renderOutput(seen), lens), u);
     pipeline.needsUpdate = true;
   };
   build(tier);
@@ -71,11 +88,16 @@ export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camer
   // the bloom's own passes sample the scene texture, which updates the pass again.)
   const frame = nodeFrameOf(renderer);
   let drawn = -1;
+  /** The scene's depth while the lens is under water, the stand-in otherwise (a new pairing rebinds once, then is cached). */
+  const bindDepth = () => {
+    if (depth) depth.value = lens.underwater.value > 0 ? scenePass!.getTexture('depth') : stand!.depthTexture!;
+  };
   const draw = () => {
     if (frame) {
       if (frame.frameId === drawn) frame.update();
       drawn = frame.frameId;
     }
+    bindDepth();
     pipeline.render();
   };
   return {
@@ -92,10 +114,12 @@ export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camer
       }
     },
     grade: u,
+    lens,
     setTier: build, // tiers change on a reload today; this rebuilds the graph (bloom on or off, samples) when called
     dispose() {
       scenePass?.dispose();
       glow?.dispose();
+      stand?.dispose();
       pipeline.dispose();
     },
   };

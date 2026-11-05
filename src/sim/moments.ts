@@ -54,7 +54,8 @@ export type Who = { name: string; native: boolean; plural: boolean };
 /** Plurals that are not just an added "s". */
 const PLURALS: Record<string, string> = { deer: 'deer', trout: 'trout', fish: 'fish', sheep: 'sheep', wolf: 'wolves', mouse: 'mice', goose: 'geese' };
 
-function plural(name: string): string {
+/** A name for more than one ("rabbits", "deer", "wolves"): its last word made plural. */
+export function plural(name: string): string {
   const words = name.split(' '), last = words.pop()!;
   const many = PLURALS[last] ?? (/(s|x|z|ch|sh)$/.test(last) ? `${last}es` : `${last}s`);
   return [...words, many].join(' ');

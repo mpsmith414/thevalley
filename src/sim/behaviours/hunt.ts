@@ -2,7 +2,7 @@ import { HUNT_AT } from '../needs';
 import { between, inCover } from '../senses';
 import type { SimCtx } from '../sim';
 import type { Traits } from '../traits';
-import { HIGH, TICK, type Agent, type Pt } from '../types';
+import { HIGH, TICK, type Agent, type Pt, type SteerInput } from '../types';
 import { soar, soars } from './feed';
 import { GROUP_DISTANCE } from './group';
 
@@ -36,6 +36,13 @@ const PACK_NEAR = 40;
 const CALL = [2, 3] as const;
 /** Herd mates nearer their herd's centre than this share of their mean distance from it are in the middle (not singled out). */
 const MIDDLE = 0.5;
+/**
+ * The player's run at prey counts as a hunt while run is held, the stick pushed more than PUSHED, within AIM (radians) of
+ * the prey; the stick let go (pushed less than LET_GO) ends it.
+ */
+const PUSHED = 0.3, AIM = Math.PI / 3, LET_GO = 0.05;
+/** A steered hunter with less than this share of its stamina left is too winded to start a chase (it would be over at once). */
+const WINDED = 0.2;
 
 /** How near (m) it lunges from: 8 m plus 4 m per metre of its size. */
 export const lunge = (t: Traits) => 8 + 4 * t.size;
@@ -83,11 +90,14 @@ export function search(a: Agent, t: Traits, s: SimCtx): void {
   if (s.t - a.since >= ROUND) s.done(a);
 }
 
-/** Whether a pack member calls now: the leader for the first 2–3 s of a search at dusk, the others while it does. */
+/**
+ * Whether a pack member calls now: the one leading the pack this tick for the first 2–3 s of a search at dusk, the others
+ * while it does (a steered leader leads no call: the next one does).
+ */
 function packCall(a: Agent, t: Traits, s: SimCtx): boolean {
   if (t.social !== 'pack' || !s.dusk) return false;
-  if (a.leader) return s.t - a.since < own(a, CALL);
-  return s.mates(a, PACK_NEAR, (b) => b.leader && b.doing === 'search' && b.pose.calling > 0).length > 0;
+  if (s.leads(a)) return s.t - a.since < own(a, CALL);
+  return s.mates(a, PACK_NEAR, (b) => s.leads(b) && b.doing === 'search' && b.pose.calling > 0).length > 0;
 }
 
 /** A pack or pair mate nearby that is stalking or chasing (null for animals that hunt alone). */
@@ -167,9 +177,12 @@ function giveUp(a: Agent, s: SimCtx) {
   s.done(a);
 }
 
-/** Starts the valley's one chase: a pack singles out the nearest of the herd not in its middle; mates chase together (a moment). */
+/**
+ * Starts the valley's one chase: a pack singles out the nearest of the herd not in its middle (a steered hunter keeps to
+ * the one the player runs at); mates chase together (a moment).
+ */
 function startChase(a: Agent, t: Traits, s: SimCtx, prey: Agent) {
-  const target = t.social === 'pack' ? singleOut(a, t, s, prey) : prey;
+  const target = t.social === 'pack' && !s.steered(a.id) ? singleOut(a, t, s, prey) : prey;
   const members = pack(a, t, s, 'search', 'stalk');
   s.governor.startChase(a);
   s.become(a, 'chase');
@@ -196,7 +209,8 @@ function singleOut(a: Agent, t: Traits, s: SimCtx, prey: Agent): Agent {
 /**
  * Chasing: flat out at where the prey is going while stamina lasts, ears back, mates together. Reaching the prey
  * rolls the catch, once per chase; running out of stamina, or the prey getting away out of reach (into water, hiding),
- * is an escape. A mate stops when its group's chase is over.
+ * is an escape. A mate stops when its group's chase is over. A steered hunter keeps on only while the player runs at
+ * the prey: letting go of run or the stick, or turning away, is a miss (a steered mate just drops out).
  */
 export function chase(a: Agent, t: Traits, s: SimCtx): void {
   const lead = s.get(s.governor.chase);
@@ -204,6 +218,8 @@ export function chase(a: Agent, t: Traits, s: SimCtx): void {
   const prey = s.get(a.focus);
   if (!prey || prey.doing === 'returning') return ended(a, t, s, null);
   if (!s.huntable(a, t, prey) || a.stamina <= 0 || s.t - a.since >= CHASE_MAX) return ended(a, t, s, prey);
+  const input = s.steered(a.id);
+  if (input && (!input.run || input.speed < LET_GO || !aimed(a, prey, input))) return lead === a ? ended(a, t, s, prey) : missed(a, t, s);
   if (dist(a, prey) <= reach(t)) return contact(a, t, s, prey);
   const pm = prey.motion, ahead = Math.min(AHEAD, dist(a, prey) / t.topSpeed);
   const to = { x: pm.x + Math.sin(pm.yaw) * pm.speed * ahead, z: pm.z + Math.cos(pm.yaw) * pm.speed * ahead };
@@ -211,18 +227,47 @@ export function chase(a: Agent, t: Traits, s: SimCtx): void {
   s.pose(a, 0, 0, 'shut', 'back');
 }
 
+/** How far (m) a soaring flier dives from: as far as it flies in its 3–4 s stoop. */
+const diveFrom = (a: Agent, t: Traits) => t.flySpeed * own(a, DIVE);
+
 /** Stoops at `prey` when the valley's turn is free and it can reach it in a dive; else glides on over toward it. */
 function stoop(a: Agent, t: Traits, s: SimCtx, prey: Agent) {
-  if (between(a, prey) <= t.flySpeed * own(a, DIVE) && s.governor.mayChase(a, s.day)) {
-    s.governor.startChase(a);
-    s.become(a, 'dive');
-    a.focus = prey.id;
-    s.moment('dive', a, [a], HIGH, '', prey);
-    return dive(a, t, s);
-  }
+  if (between(a, prey) <= diveFrom(a, t) && s.governor.mayChase(a, s.day)) return startDive(a, t, s, prey);
   a.route = [];
   a.motion.target = { x: prey.motion.x, z: prey.motion.z };
   a.detour = null;
+}
+
+/** Starts the valley's one chase as a dive at `prey` (a moment). */
+function startDive(a: Agent, t: Traits, s: SimCtx, prey: Agent) {
+  s.governor.startChase(a);
+  s.become(a, 'dive');
+  a.focus = prey.id;
+  s.moment('dive', a, [a], HIGH, '', prey);
+  dive(a, t, s);
+}
+
+/** Whether the player pushes `a` within AIM of `prey`. */
+function aimed(a: Agent, prey: Agent, input: SteerInput): boolean {
+  const off = Math.atan2(prey.motion.x - a.motion.x, prey.motion.z - a.motion.z) - input.yaw;
+  return Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) <= AIM;
+}
+
+/**
+ * A steered hunter running at prey: with run held and the stick well pushed, its cooldown over, its breath not spent
+ * and the valley's turn free, the nearest prey it could hunt within lunging range (a soaring flier aloft: within its dive) that the player
+ * pushes it at is chased (the flier stoops) as in the valley, hungry or not. True when a chase or a dive began.
+ */
+export function steeredHunt(a: Agent, t: Traits, s: SimCtx, input: SteerInput): boolean {
+  if (s.hours < a.cooldown || a.stamina < WINDED || !input.run || input.speed <= PUSHED) return false;
+  const flier = soars(t);
+  if (flier && !a.motion.flying) return false;
+  const range = flier ? diveFrom(a, t) : lunge(t), far = flier ? between : dist;
+  const prey = s.nearest(a, range, (b) => s.huntable(a, t, b) && far(a, b) <= range && aimed(a, b, input));
+  if (!prey || !s.governor.mayChase(a, s.day)) return false;
+  if (flier) startDive(a, t, s, prey);
+  else startChase(a, t, s, prey);
+  return true;
 }
 
 /**
@@ -254,13 +299,13 @@ export function dive(a: Agent, t: Traits, s: SimCtx): void {
 /**
  * Reaching the prey: the catch is rolled once. The chance falls with the prey's lead (prey with breath left still dodges
  * away; one run out of stamina does not) and for prey among its herd or flock (harder to single out); it takes the prey
- * only if the valley's limit allows.
+ * only if the valley's limit allows, and never one the player steers (it always gets away).
  */
 function contact(a: Agent, t: Traits, s: SimCtx, prey: Agent) {
   const near = GROUP_DISTANCE[s.traits(prey.species).social];
   const herded = prey.group !== null && s.mates(prey, near, (b) => b !== prey && b.doing !== 'returning').length > 0;
   const roll = s.rng.next(), p = CATCH * (1 - prey.stamina) * (herded ? IN_HERD : 1);
-  if ((s.forceCatch || roll < p) && s.governor.mayCatch(a, s.day)) caught(a, t, s, prey);
+  if (!s.steered(prey.id) && (s.forceCatch || roll < p) && s.governor.mayCatch(a, s.day)) caught(a, t, s, prey);
   else ended(a, t, s, prey);
 }
 

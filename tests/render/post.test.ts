@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PassNode, PerspectiveCamera, RenderPipeline, Scene, type Camera, type WebGPURenderer } from 'three/webgpu';
+import { DepthTexture, PassNode, PerspectiveCamera, RenderPipeline, Scene, type Camera, type WebGPURenderer } from 'three/webgpu';
 import { POST, createPost } from '../../src/render/post';
 import { TIERS } from '../../src/render/quality';
 
@@ -78,5 +78,19 @@ describe('createPost', () => {
     post.render();
     expect(nodeFrame.update).toHaveBeenCalledOnce();
     expect(drawn[2].frameId).toBe(20);
+  });
+
+  it("binds the scene's depth only for the look from under the water, a stand-in otherwise", () => {
+    const { post, pass } = make();
+    const depth = pass.getTextureNode('depth'), real = pass.getTexture('depth');
+    post.render();
+    expect(depth.value).not.toBe(real);
+    expect(depth.value).toBeInstanceOf(DepthTexture);
+    post.lens.underwater.value = 0.5;
+    post.render();
+    expect(depth.value).toBe(real);
+    post.lens.underwater.value = 0;
+    post.render();
+    expect(depth.value).not.toBe(real);
   });
 });

@@ -3,14 +3,15 @@ import { BuilderClient } from '../builder/client';
 import { FreeFly, intentFrom, surfaceAt, toggleDown, type FlyIntent } from '../camera/freefly';
 import { Glide, viewpointPose } from '../camera/viewpoints';
 import { compileTogether } from '../render/compile';
-import { setGrade } from '../render/grade';
+import { NEUTRAL_GRADE, setGrade } from '../render/grade';
+import { waterLight } from '../render/lens';
 import { createPost } from '../render/post';
 import { startQuality, type Tier } from '../render/quality';
 import { createRenderer } from '../render/renderer';
 import { Input } from '../shared/input';
 import { remember, stored } from '../shared/settings';
 import { CAST } from '../cast';
-import { CREATURE_LAYER, Residents, speciesDefs } from '../residents/residents';
+import { CREATURE_LAYER, Residents, SELF_LAYER, speciesDefs } from '../residents/residents';
 import { loadValley } from '../valley/cache';
 import { VALLEY } from '../valley/layout';
 import { DEFAULT_GRID } from '../valley/types';
@@ -37,7 +38,20 @@ import { joinCard } from '../bring/card';
 import { createStudio } from '../bring/studio';
 import { ArrivalHold, PUSH } from '../bring/arrival-hold';
 import { pushView, type ArrivalShot } from '../bring/arrival';
-import { FollowCam } from '../bring/follow-cam';
+import { Heartbeat } from '../views/fear';
+import { FollowCam } from '../views/follow';
+import { REINS_CLOCK_NOTE, viewsHud } from '../views/hud';
+import { keyAction, viewAction } from '../views/keys';
+import { MAP_NIGHT_EXPOSURE, nightGrade, places } from '../views/map';
+import { MapView } from '../views/map-view';
+import { ReinsClock } from '../views/reins';
+import { DANGER_RED, SHIMMER_GOLD, createRing } from '../views/ring';
+import { createRippleMesh } from '../views/ripples';
+import { SHARP_MAX } from '../views/sharp';
+import { TRAIL_LAYER, createTrailMesh } from '../views/trail-mesh';
+import type { Pose } from '../views/types';
+import { Views } from '../views/views';
+import { ViewsWire, type WireHands } from '../views/wire';
 import { showTitle } from '../bring/welcome';
 import { comeBack, HOLD_CAP, keepMade, placeHomeless, releaseMade, sendExploring, visit, visitView, type ReleaseDeps } from '../bring/release';
 import { connectWorkshop, sendEnd, TRY_AGAIN, Workshop, workshopView } from '../bring/workshop';
@@ -50,6 +64,7 @@ import { openLoading, toast } from './loading';
 import type { Made } from '../bring/workshop';
 import type { Loop } from './dev';
 import { HOMES } from '../sim/homes';
+import { daylight } from '../sim/senses';
 import { SAVE_VERSION, ValleySaves, backupName, makeBackup, reconcile, restoreBackup, type SaveFile } from '../sim/save';
 import { SPEEDS, showLabel, speedId, type SpeedId, type ValleyPage } from './menu';
 import { h } from '../shared/dom';
@@ -62,12 +77,14 @@ import './valley.css';
 
 /** The lake's mirror shows the forest only within this many metres of the shore (beyond, the lake is a sliver on screen). */
 const MIRROR_PLANTS = 400;
-/** A Fly there follows its animal this long (s) at the most, if the player does not take the camera first. */
-const FOLLOW_S = 30;
 /** The valley's life is saved this often (real milliseconds), and when the page is hidden or closed. */
 const AUTOSAVE_MS = 60_000;
 /** Seconds from the page opening to the performance mark `name` (one decimal). */
 const seconds = (name: string) => ((performance.getEntriesByName(name)[0]?.startTime ?? NaN) / 1000).toFixed(1);
+/** The overview map's own light and trims follow how far up it is, by at most a whole step in this long (s): a map let go of up there fades out, never snaps. */
+const MAP_LIFT_S = 0.5;
+/** While the map is this far up, what it cannot see from there is not drawn (the ground cover, the near plants, the contact shadows). */
+const MAP_TRIM_AT = 0.5;
 /** Metres from (x, z) to the nearest point of the lake's outline. */
 const lakeDistance = (x: number, z: number) => VALLEY.lake.outline.reduce((m, p) => Math.min(m, Math.hypot(p.x - x, p.z - z)), Infinity);
 
@@ -131,6 +148,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const clock = new ValleyClock();
   setSpeed(clock, stored<SpeedId>('valley.speed', 'normal'));
   const timeHold = new ReleaseTimeHold(clock);
+  /** The clock while the player steers an animal: Normal, unpaused, and the player's speed back after (spec section 1). */
+  const reinsClock = new ReinsClock();
   const sky = createSky(scene, renderer, tier, tex);
   // the water (after the sky: it mirrors the sky's environment map)
   const lake = createLake(data, tex, tier, scene), river = createRiver(data, tex, tier, scene);
@@ -162,7 +181,8 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // mid plants (from ~60 m) in all but the first, where only the mid trees (a tree at 60–75 m shades the ground under the near
   // camera) are drawn, not the mid shrubs, logs and stumps (which cast no shadow anyway). The impostors (from ~210 m) in the
   // last two (they cast on High only). The land everywhere.
-  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER, IMP = 1 << IMPOSTOR_LAYER, CREATURE = 1 << CREATURE_LAYER;
+  // (an animal seen through its own eyes moves to SELF_LAYER: off the camera, still in the shadows)
+  const NEAR = 1 << NEAR_LAYER, MID = 1 << MID_LAYER, MID_TREE = 1 << MID_TREE_LAYER, IMP = 1 << IMPOSTOR_LAYER, CREATURE = (1 << CREATURE_LAYER) | (1 << SELF_LAYER);
   // Mid trees in the nearest cascade cost ~1.8 ms at the forest floor for a barely visible gain (low sun only), so they
   // stay out for now; flip this on if the frame budget allows after the residents and ground cover are in.
   const MID_TREES_IN_CASCADE_0 = false;
@@ -201,10 +221,13 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   // the animals are optional: if a body will not build, the valley opens without (some of) them
   if (!carried) await residents.spawn(released).catch((e) => console.error('the animals could not be made', e));
   performance.mark('valley-animals');
-  /** The valley's life as it is now. While an arrival holds the clock at Normal, the player's own speed is what is kept. */
+  /**
+   * The valley's life as it is now. While an arrival or the reins hold the clock at Normal, the player's own speed is what
+   * is kept (the arrival's first: it was held first when both are).
+   */
   const life = (): SaveFile => ({
     kind: 'valley-save', version: SAVE_VERSION, savedAt: Date.now(),
-    clock: { hours: clock.hours, ...(timeHold.remembered ?? { speed: clock.speed, paused: clock.paused }) }, sim: residents.sim.state(),
+    clock: { hours: clock.hours, ...(timeHold.remembered ?? reinsClock.remembered ?? { speed: clock.speed, paused: clock.paused }) }, sim: residents.sim.state(),
   });
   /** Off while the valley is being started again or a backup restored: the page reloads next, and must not write the old state back. */
   let saving = true;
@@ -221,7 +244,16 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const wakeAnimals = async () => {
     const eye = camera.clone();
     eye.layers.enable(CREATURE_LAYER);
-    await residents.compile(() => Promise.all([compileTogether(renderer, residents.object, eye, scene), compileTogether(renderer, residents.shadows, eye, scene)]));
+    eye.layers.enable(TRAIL_LAYER);
+    // the highlight's and the danger's rings compile with them (they are drawn on their layer; Sharp eyes' share their
+    // pipeline), and Smell's trails and Hearing's ripples (one of each)
+    const senses = [ring, threatRing, trails, ripples];
+    for (const r of senses) r.object.visible = true;
+    trails.object.count = ripples.object.count = 1;
+    const ringDone = Promise.all(senses.map((r) => compileTogether(renderer, r.object, eye, scene)));
+    for (const r of senses) r.object.visible = false;
+    trails.object.count = ripples.object.count = 0;
+    await residents.compile(() => Promise.all([compileTogether(renderer, residents.object, eye, scene), compileTogether(renderer, residents.shadows, eye, scene), ringDone]));
     camera.layers.enable(CREATURE_LAYER);
     sky.cascadeLayers(cascades(CREATURE));
     // their shadow pipelines too, which `compileAsync` cannot make: on the next frame, before it is drawn, one render of only
@@ -232,14 +264,24 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   let warm: (() => void) | null = null; // a one-off job for the start of the next frame's render (see `wakeAnimals`)
 
   let waterTime = 0; // seconds the water has run (its own clock, so `step` moves it too)
+  /** How far the overview map's own light is in (0..1; see MAP_LIFT_S), and the cooled grade it shows at night. */
+  let mapLift = 0;
+  const nightLook = structuredClone(NEUTRAL_GRADE);
   /** Light the world for the clock's current time; `dt = Infinity` snaps the exposure and environment (after a jump). */
   const light = (dt: number) => {
     const hour = clock.hour, sun = sunDirection(hour), moon = moonDirection(clock.hours);
     const state = lightingAt(hour, sun, moon, moonPhase(clock.hours));
     sky.update(state, sun, moon, camera, clock.hours, dt);
     setGrade(post.grade, sky.grade); // the grade eases with the exposure (in the sky), into the post's uniforms
+    // the map's own light at night: the exposure lifted and the grade cooled, as far as the map is up and the night is dark
+    const night = mapLift * (1 - daylight(elevationDeg(sun)));
+    if (night > 0) {
+      renderer.toneMappingExposure *= 1 + (MAP_NIGHT_EXPOSURE - 1) * night;
+      setGrade(post.grade, nightGrade(sky.grade, night, nightLook));
+    }
     if (Number.isFinite(dt)) waterTime += dt;
     lake.update(waterTime, state, wind);
+    waterLight(state, post.lens.waterLight.value); // for the look from under the water (Eyes)
     setPlantLight(plants.light, state);
     river.update(waterTime, state);
   };
@@ -251,13 +293,10 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   let current = views.length - 1; // the viewpoint we are at or flying to
   /** A glide under way: to a viewpoint (its name shows on arrival) or to a release framing (`done` once there or taken over). */
   let glide: { g: Glide; t: number; label: string | null; done?: (arrived: boolean) => void } | null = null;
-  /** A Fly there's follow: the animal's id, seconds followed, and the chase camera (made once the glide arrives). */
-  let watch: { id: string; time: number; cam: FollowCam | null } | null = null;
-  /** The glide is over (`arrived`, or taken over or replaced): tell whoever waits for it. Any other glide or jump ends a Fly there's follow too. */
+  /** The glide is over (`arrived`, or taken over or replaced): tell whoever waits for it. */
   const endGlide = (arrived = false) => {
     const done = glide?.done;
     glide = null;
-    watch = null;
     done?.(arrived);
   };
   let wasToggle = false;
@@ -276,12 +315,47 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     fly.pitch = p.pitch;
     fly.vel = { x: 0, y: 0, z: 0 };
   };
+  // ---------- the views: lock on to an animal and ride along (Follow, Close, Eyes); see src/views ----------
+  const ring = createRing(valley, CREATURE_LAYER), threatRing = createRing(valley, CREATURE_LAYER, DANGER_RED);
+  // Smell's scent trails, on a layer of their own: the camera draws it, the mirror and the shadow cascades do not
+  const trails = createTrailMesh(valley, windU);
+  // Hearing's ripples (on the trails' layer) and Sharp eyes' shimmer rings
+  const ripples = createRippleMesh(valley), shimmers = Array.from({ length: SHARP_MAX }, () => createRing(valley, CREATURE_LAYER, SHIMMER_GOLD));
+  scene.add(ring.object, threatRing.object, trails.object, ripples.object, ...shimmers.map((r) => r.object));
+  camera.layers.enable(TRAIL_LAYER);
+  const viewer = new Views({ world: valley, animal: (id) => residents.viewAnimal(id), say: (text) => showLabel(ui, text), now: () => performance.now(), mapPose: () => mapView.pose });
+  // the overview map's screen (its mouse let go quietly: the menu stays shut)
+  const mapView = new MapView({
+    views: viewer, camera, world: valley, size: valley.size, places: places(VALLEY), animals: () => residents.onMap(), ui, canvas,
+    keys: () => input.using === 'keys', now: () => performance.now(), freeMouse: () => menu.quietRelease(), blocked: () => !!menu.open || shop.showing,
+  });
+  const wire = new ViewsWire({
+    views: viewer, world: valley, camera, animals: residents, ring, hud: viewsHud(ui), keys: () => input.using === 'keys', now: () => performance.now(),
+    screen: () => ({ w: canvas.clientWidth, h: canvas.clientHeight }),
+    lens: post.lens, daylight: () => daylight(elevationDeg(sunDirection(clock.hour))),
+    sensing: (id) => residents.sensing(id), threatRing, smell: { mesh: trails, scents: (id) => residents.scents(id), time: () => residents.sim.time }, heartbeat: audio && sound.output ? new Heartbeat(audio, sound.output) : undefined,
+    hearing: { mesh: ripples, heard: (id) => residents.hearing(id) },
+    sharp: { rings: shimmers, sightings: (id, light) => residents.sightings(id, light) },
+    map: mapView,
+    reins: {
+      steer: (id, input) => residents.sim.steer(id, input), time: () => residents.sim.time,
+      heading: (id) => residents.sim.get(id)?.motion.yaw ?? null,
+      flies: (id) => {
+        const g = residents.sim.get(id);
+        return !!g && residents.sim.traits(g.species).canFly;
+      },
+      take: () => reinsClock.take(clock), give: () => reinsClock.give(clock),
+    },
+  });
+  /** The player's hands for the views this frame (set by `drive`, used by `ride` once the animals have moved). */
+  let hands: WireHands = { look: { yaw: 0, pitch: 0 }, zoom: 0, moved: false, any: false };
   /** Viewpoint number `n` (1-8, wrapping) as an index. */
   const index = (n: number) => (((Math.round(n) - 1) % views.length) + views.length) % views.length;
   /** Glide to viewpoint `n` (1-8). */
   const goTo = (n: number) => {
     current = index(n);
     fly.walk = false; // a viewpoint is up in the air, so don't drop back to walking height on arrival
+    viewer.letGo();
     endGlide();
     arrival.end();
     glide = { g: new Glide(fly, views[current], valley), t: 0, label: views[current].name };
@@ -291,6 +365,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const view = (n: number) => {
     current = index(n);
     fly.walk = false;
+    viewer.letGo();
     endGlide();
     arrival.end();
     setPose(viewpointPose(views[current], valley));
@@ -305,8 +380,9 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   let camTime = 0, arrivedAt = 0;
   /** The arrival's framings, and its chase camera once the follow starts. */
   let shot: ArrivalShot | null = null, follow: FollowCam | null = null;
-  /** Glide to a framing (no label on arrival); resolves once there, or when the player takes the camera (or another glide starts). */
+  /** Glide to a framing (no label on arrival; a lock lets go); resolves once there, or when the player takes the camera (or another glide starts). */
   const glideTo = (v: Viewpoint) => new Promise<void>((done) => {
+    viewer.letGo();
     endGlide();
     arrival.end();
     fly.walk = false;
@@ -314,6 +390,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   });
   /** An arrival begins: the glide to its wide framing (its first phase). */
   const arriveAt = (id: string, s: ArrivalShot) => {
+    viewer.letGo(); // the arrival is the family's moment: a lock ends (the reins handed back first)
     timeHold.hold(); // an arrival plays at Normal speed
     const there = glideTo(s.wide);
     arrival.begin(id);
@@ -464,36 +541,52 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const queue = new CaptionQueue(), caption = captionView(ui);
   let realTime = 0; // real seconds the valley has run (the drive's dt, so `step` moves it too)
   residents.sim?.moments.on((m) => queue.offer(m, realTime));
-  const menu = menuControl({ ui, clock, sound, captions: { get: () => captionsOn, set: (on) => ((captionsOn = on), remember('valley.captions', on ? 'on' : 'off')) }, valley: saves && list ? valleyPage(saves, list) : undefined, speedPicked: () => timeHold.playerChanged(), choice: quality.choice, tier, light, bring, waiting: () => waiting, busy: () => shop.showing || linked.waiting,
+  const menu = menuControl({ ui, clock, sound, captions: { get: () => captionsOn, set: (on) => ((captionsOn = on), remember('valley.captions', on ? 'on' : 'off')) }, valley: saves && list ? valleyPage(saves, list) : undefined, speedPicked: () => (timeHold.playerChanged(), reinsClock.playerChanged()), choice: quality.choice, tier, light, bring, waiting: () => waiting, busy: () => shop.showing || linked.waiting,
+    opened: () => viewer.reins(false), // the lock holds behind the menu; the reins hand back
+    escape: () => viewer.state.mode === 'map' && viewsDo('closeMap'), // on the map (its mouse free) Esc closes it
     creatures: releaseDeps ? {
       all: () => releaseDeps.list.all(), visit: (id) => visit(id, releaseDeps), explore: (id) => sendExploring(id, releaseDeps),
       comeBack: (id) => arrive(() => comeBack(id, releaseDeps)), say: (text) => showLabel(ui, text),
     } : undefined,
   });
-  /** The clock a step faster or slower (d-pad up/down, `]` `[`): kept for next time, with its name and note shown. */
+  /**
+   * The clock a step faster or slower (d-pad up/down, `]` `[`): kept for next time, with its name and note shown. While the
+   * player steers it holds at Normal, and says so.
+   */
   const stepClock = (dir: 1 | -1) => {
+    if (viewer.state.reins) return void toast(ui, REINS_CLOCK_NOTE, 2000);
     const id = stepSpeed(speedId(clock.speed, clock.paused), dir), s = SPEEDS.find((x) => x.id === id)!;
     timeHold.playerChanged();
     setSpeed(clock, id);
     remember('valley.speed', id);
     toast(ui, `${s.label} · ${s.note}`, 1600);
   };
-  /** Fly there: glide to the caption's animal (or where it happened, if it has gone), then follow it (see `drive`). */
+  /** Fly there (free flight only): glide to the caption's animal (or where it happened, if it has gone), then lock on to it. */
   const flyThere = () => {
     const m = queue.showing;
-    if (!m) return;
+    if (!m || viewer.state.mode !== 'free') return;
     const a = residents.animal(m.follow), eye = { x: fly.pos.x, z: fly.pos.z };
     const to = a ? visitView(a.rig.position, a.rig.altitude, a.home, eye)
       : visitView(m.at, 0, { species: '', count: 0, center: m.at, radius: 0, medium: 'land', prefer: [] }, eye);
     endGlide();
     arrival.end();
     fly.walk = false;
-    glide = { g: new Glide(fly, to, valley), t: 0, label: null, done: (arrived) => void (arrived && (watch = { id: m.follow, time: 0, cam: null })) };
+    glide = { g: new Glide(fly, to, valley), t: 0, label: null, done: (arrived) => void (arrived && a && viewer.lock(m.follow)) };
+  };
+  /** What the views do with a press (or a key): nothing while the arrival has the camera; the map ends a glide. */
+  const viewsDo = (act: ReturnType<typeof viewAction>) => {
+    if (!act || arrival.active) return false;
+    if (act === 'map') endGlide();
+    wire.act(act);
+    return true;
   };
   input.onPress = (b, repeat) => {
     if (waiting) return; // the start screen comes first
     if (shop.showing) return void (b === 'b' && !repeat && back()); // the workshop has the controls
     if (menu.press(b, repeat) || repeat) return; // a held arrow key must not restart the glide
+    wire.poke();
+    // `[` and `]` send the bumpers too (Input's keys): they are the time steps (below), so they never step to a neighbour
+    if (viewsDo(viewAction(b, viewer.state.mode, wire.highlighted !== null, input.using === 'keys'))) return;
     if (b === 'up' || b === 'down') return stepClock(b === 'up' ? 1 : -1);
     if (b === 'x') return flyThere();
     if (b === 'left') goTo(current); // current is 0-based: n = current is the previous viewpoint
@@ -511,9 +604,19 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     } else if (e.key === 'm' || e.key === 'M') {
       menu.toggleMute();
       toast(ui, sound.muted ? 'Sound off' : 'Sound on', 1200);
+    } else if (!menu.open && !shop.showing) {
+      const act = keyAction(e.key, viewer.state.mode);
+      if (act) wire.poke();
+      if (viewsDo(act)) e.preventDefault(); // Tab must not move the focus
     }
   });
-  canvas.addEventListener('click', () => (canvas.requestPointerLock?.() as Promise<void> | undefined)?.catch?.(() => {}));
+  // a click captures the mouse; with it captured, a click on a highlighted animal in free flight locks on (as A does), and
+  // nothing else (a click is not A while watching: it would take the reins); on the map (its mouse free) a click chooses
+  canvas.addEventListener('click', () => {
+    if (!waiting && !menu.open && !shop.showing && viewer.state.mode === 'map') return void viewsDo('choose');
+    if (document.pointerLockElement !== canvas) return void (canvas.requestPointerLock?.() as Promise<void> | undefined)?.catch?.(() => {});
+    if (!waiting && !menu.open && !shop.showing && viewer.state.mode === 'free') viewsDo(viewAction('a', 'free', wire.highlighted !== null));
+  });
 
   /** No input: the camera eases to a stop while the menu has the controls. */
   const STILL: FlyIntent = { move: { x: 0, y: 0, z: 0 }, look: { yaw: 0, pitch: 0 }, fast: false, toggleWalk: false };
@@ -526,6 +629,13 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
     const intent = open ? STILL : intentFrom(pad, held, mouse, dt, wasToggle);
     wasToggle = toggleDown(pad, held);
     camTime += dt;
+    // the views' hands: the look orbits or looks round, RT / LT (E / Q) nearer and farther, the left stick (WASD) lets go;
+    // with the reins, the left stick steers, RB (Shift) runs and RT / LT fly up and down
+    const moved = intent.move.x !== 0 || intent.move.z !== 0, zoom = intent.move.y;
+    hands = {
+      look: intent.look, zoom, moved, any: moved || zoom !== 0 || intent.look.yaw !== 0 || intent.look.pitch !== 0,
+      stick: { x: intent.move.x, y: intent.move.z }, run: intent.fast,
+    };
     const sticks = pad.lx !== 0 || pad.ly !== 0 || pad.rx !== 0 || pad.ry !== 0 || ['w', 'a', 's', 'd'].some(held);
     // the arrival's clock and phases run from its glide's start; the stick or the mouse ends it at once, from any phase
     const taken = !open && (sticks || mouse.dx !== 0 || mouse.dy !== 0);
@@ -562,22 +672,38 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
       fly.apply(camera);
       return;
     }
-    // a Fly there's follow: behind the animal until the player takes the camera, 30 s pass or the animal has gone
-    if (watch) {
-      const a = residents.animal(watch.id);
-      watch.time += dt;
-      if (!a || taken || watch.time >= FOLLOW_S) watch = null;
-      else {
-        const p = a.obj.root.position, target = { x: p.x, y: p.y, z: p.z };
-        watch.cam ??= new FollowCam(fly.pos, { x: p.x, y: p.y + 0.5, z: p.z }, target, a.recipe.life.sizeM);
-        setPose(watch.cam.update(dt, target, valley));
-        fly.vel = { x: 0, y: 0, z: 0 };
-        fly.apply(camera);
-        return;
-      }
-    }
+    if (viewer.state.mode !== 'free') return; // the views have the camera (see `ride`, once the animals have moved)
     fly.update(dt, intent, valley);
     fly.apply(camera);
+  };
+  /**
+   * The views' turn, after the animals have moved this frame (so Close and Eyes ride where the animal is now, not where
+   * it was): their pose for the camera, or free flight keeps it; the highlight only in free flight with nothing else
+   * holding the camera (a glide, an arrival, the menu, the workshop).
+   */
+  const ride = (dt: number) => {
+    if (waiting) return;
+    const aiming = !glide && !arrival.active && !menu.open && !shop.showing;
+    const pose: Pose | null = wire.frame(dt, hands, fly, animalRate(clock), aiming);
+    if (pose) {
+      setPose(pose);
+      fly.apply(camera);
+      camera.rotation.z = pose.roll ?? 0; // a flier's bank (Close)
+    }
+    mapView.draw(); // the map's marks, where the camera now is
+    mapLift += Math.max(-dt / MAP_LIFT_S, Math.min(dt / MAP_LIFT_S, viewer.mapIn - mapLift));
+    trim(mapLift > MAP_TRIM_AT);
+  };
+  /** While the map is up, what it cannot see from up there is not drawn: the ground cover, the near plants, the animals' contact shadows. */
+  let trimmed = false;
+  const trim = (on: boolean) => {
+    if (on === trimmed) return;
+    trimmed = on;
+    for (const l of [GROUND_COVER_LAYER, NEAR_LAYER]) {
+      if (on) camera.layers.disable(l);
+      else camera.layers.enable(l);
+    }
+    residents.shadows.visible = !on;
   };
 
   const resize = () => {
@@ -614,19 +740,22 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   const tick = (dt: number) => {
     clock.update(dt);
     drive(dt);
+    // the arrival is over: the player's speed comes back (once the reins, if taken since, have given theirs back first)
+    if (arriving === 0 && !arrival.active && !reinsClock.held) timeHold.release();
+    residents.update(dt * animalRate(clock), dt, camera, clock.hours); // the animals live at the clock's speed (none when paused)
+    ride(dt); // the views ride along with the animals as they are now
     plants.fade.eye.value.copy(camera.position); // the trees' mid/far cross-fade follows the camera
     terrain.update(camera);
     updateWind(wind, dt, VALLEY.seed);
     setWind(windU, wind);
     veg.update(camera, dt);
     cover.update(camera);
-    if (arriving === 0 && !arrival.active) timeHold.release(); // the arrival is over: the player's speed comes back
-    residents.update(dt * animalRate(clock), dt, camera, clock.hours); // the animals live at the clock's speed (none when paused)
     shop.turn(dt);
     realTime += dt;
     // captions wait while something else has the screen (the menu, the workshop, a release arriving, the start screen) or are off
     const away = !captionsOn || waiting || !!menu.open || shop.showing || arriving > 0 || arrival.active;
-    caption.show(queue.update(realTime, away), input.using === 'pad' ? 'X Fly there' : 'F Fly there');
+    // while watching an animal the line still names moments, without Fly there (X is the Sense button then)
+    caption.show(queue.update(realTime, away), viewer.state.mode !== 'free' ? '' : input.using === 'pad' ? 'X Fly there' : 'F Fly there');
     bring.setStage(shop.showing || arriving > 0 || arrival.active); // Ruling R21: the join card waits for the stage and the arrival
     light(dt);
     hear(dt);
@@ -668,7 +797,7 @@ async function start(step: Parameters<typeof loadValley>[2], say: (text: string)
   return { renderer, post, backend, data, cached, valley, scene, camera, sky, clock, light, tex, sets, terrain, backdrop, lake, river, view, goTo, fly, input, tick,
     wind, veg, plants, bake, impostors, cover, residents, compileRest, audio, sound, listener, release, label, bring, showMenu: menu.show, closeMenu: menu.close, menu: () => menu.open,
     builder, shop, workshop, hooks, list,
-    arrival };
+    arrival, views: viewer, viewsWire: wire, mapView, quietRelease: menu.quietRelease };
 }
 export type World = Awaited<ReturnType<typeof start>>;
 

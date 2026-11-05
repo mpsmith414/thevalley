@@ -156,20 +156,26 @@ describe('flock', () => {
   };
 
   it('steps away from a mate too close', () => {
-    const off = flock(at('deer#1', 0, 0), [at('deer#2', 1, 0)], t, TICK);
+    const off = flock(at('deer#1', 0, 0), [at('deer#2', 1, 0)], null, t, TICK);
     expect(off.x).toBeLessThan(0);
   });
 
   it('draws a straggler toward its group', () => {
-    const off = flock(at('deer#1', 0, 0), [at('deer#2', 40, 0), at('deer#3', 40, 4)], t, TICK);
+    const off = flock(at('deer#1', 0, 0), [at('deer#2', 40, 0), at('deer#3', 40, 4)], null, t, TICK);
     expect(off.x).toBeGreaterThan(0);
   });
 
   it('leans along the way the leader is heading', () => {
     const leader = at('deer#0', 3, 0, Math.PI / 2, 2);
-    leader.leader = true;
-    const off = flock(at('deer#1', 0, 0), [leader], t, TICK);
+    const off = flock(at('deer#1', 0, 0), [leader], leader, t, TICK);
     expect(off.x).toBeGreaterThan(0);
+  });
+
+  it('does not lean along a leader that leads no one this tick (a steered one)', () => {
+    const leader = at('deer#0', 3, 0, Math.PI / 2, 2);
+    leader.leader = true;
+    const off = flock(at('deer#1', 0, 0), [leader], null, t, TICK);
+    expect(off.x).toBeLessThanOrEqual(0);
   });
 });
 
