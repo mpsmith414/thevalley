@@ -546,4 +546,93 @@ describe('Views', () => {
     expect(flat(r.pose, a)).toBeGreaterThan(followFraming(1.6).back * 1.3);
     expect(flat(r.pose, a)).toBeLessThan(followFraming(1.6).back * 2.5);
   });
+
+  describe('directed moves and place', () => {
+    const A: Pose = { pos: { x: 0, y: 10, z: 0 }, yaw: 0, pitch: -0.2 }, B: Pose = { pos: { x: 20, y: 10, z: 0 }, yaw: 0, pitch: -0.2 };
+
+    it('direct then update returns the pose of the move and calls onEnd once, then holds', () => {
+      const r = rig({}), ends: number[] = [];
+      r.views.direct({ kind: 'drift', from: A, to: B, s: 1 }, () => ends.push(1));
+      expect(r.views.state.mode).toBe('directed');
+      r.step();
+      expect(r.out!.pos.x).toBeLessThan(1);
+      r.run(0.5);
+      expect(r.out!.pos.x).toBeGreaterThan(5);
+      expect(ends).toHaveLength(0);
+      r.run(1);
+      r.run(1);
+      expect(ends).toHaveLength(1);
+      expect(r.out!.pos.x).toBeCloseTo(20); // holds the last pose
+      expect(r.views.state.mode).toBe('directed');
+    });
+
+    it('ignores the player in a move', () => {
+      const r = rig({});
+      r.views.direct({ kind: 'hold', pose: A, s: 5 });
+      r.run(1, { look: { yaw: 1, pitch: 1 }, zoom: 1, moved: true, any: true });
+      expect(r.views.state.mode).toBe('directed');
+      expect(r.out!.pos).toEqual(A.pos);
+    });
+
+    it('lock, place, letGo or openMap during a move ends it without onEnd', () => {
+      const a = deer(), ends: number[] = [];
+      for (const end of [(v: Views) => v.lock('a'), (v: Views) => v.place('a', 'follow'), (v: Views) => v.letGo(), (v: Views) => v.openMap(), (v: Views) => v.direct({ kind: 'hold', pose: B, s: 0.1 })]) {
+        const r = rig({ a });
+        r.views.direct({ kind: 'hold', pose: A, s: 0.5 }, () => ends.push(1));
+        r.run(0.2);
+        end(r.views);
+        r.run(1);
+      }
+      expect(ends).toHaveLength(0);
+    });
+
+    it('direct hands the reins back and clears the sense', () => {
+      const a = deer(), r = rig({ a });
+      let handed = 0;
+      r.views.onReinsOff = () => handed++;
+      r.locked('a');
+      r.views.reins(true);
+      r.views.sense('hearing');
+      r.views.direct({ kind: 'hold', pose: A, s: 1 });
+      expect(handed).toBe(1);
+      expect(r.views.state).toMatchObject({ mode: 'directed', reins: false, sense: null });
+    });
+
+    it('place locks at once: the first frame is the settled pose of the view, no glide', () => {
+      const a = deer(), r = rig({ a }, { pos: { x: 300, y: 80, z: 300 }, yaw: 2, pitch: 0 });
+      r.views.place('a', 'follow');
+      expect(r.views.state).toMatchObject({ mode: 'locked', id: 'a', view: 'follow' });
+      r.step();
+      const { back, up } = followFraming(1.6);
+      expect(Math.hypot(r.out!.pos.x - 0, r.out!.pos.z - back)).toBeLessThan(0.5);
+      expect(r.out!.pos.y).toBeCloseTo(up, 0);
+      expect(r.views.shown).toBe('follow');
+    });
+
+    it('place in Close and Eyes gives their usual pose; a stick held does not take the camera', () => {
+      const a = deer(), r = rig({ a });
+      r.views.place('a', 'close');
+      r.step({ ...idle, moved: true, any: true });
+      expect(r.views.state.mode).toBe('locked'); // held from before: not taken
+      expect(r.out!.pos.z).toBeCloseTo(1.2 * 1.4, 1);
+      r.step(); // let go
+      r.step({ ...idle, moved: true, any: true });
+      expect(r.views.state.mode).toBe('free'); // a fresh push takes it
+      const b = deer(), r2 = rig({ b });
+      r2.views.place('b', 'eyes');
+      r2.step();
+      expect(gap(r2.out!, { pos: b.eye.pos, yaw: 0, pitch: 0 })).toBeLessThan(0.05);
+    });
+
+    it('place on a gone animal is as lock would: the caption, then free flight', () => {
+      const r = rig({ g: deer(0, 0, { gone: 'earth' }) });
+      r.views.place('g');
+      expect(r.step()).toBeNull();
+      expect(r.said).toEqual(['The deer has gone back to the earth.']);
+      expect(r.views.state.mode).toBe('free');
+      r.views.place('nobody');
+      expect(r.step()).toBeNull();
+      expect(r.views.state.mode).toBe('free');
+    });
+  });
 });

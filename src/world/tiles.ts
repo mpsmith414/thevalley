@@ -117,13 +117,16 @@ const newBucket = (): Bucket => ({ data: new Float32Array(16 * GPU_STRIDE), coun
  * reused (its buckets for `kinds` are emptied first and grow by doubling).
  * With `split` (the camera and an edge, m), near tiles are split instance by instance: only plants within `edge` of the
  * camera are near, and the rest join the mid band (a near tile reaches up to 90 m past its band's edge); mid plants
- * `far` or more from the camera are left out.
+ * `far` or more from the camera are left out. With `split.second` (a second eye), each plant is measured against the
+ * nearer of the two points that see its tile: `seenBy` (one per tile) says which, 1 the camera, 2 the second eye, 3 both
+ * (without it, both); an eye that does not see a tile takes none of its plants away from the eye that does.
  * With `remap` (variant → variant), plants are drawn with another variant's model, scaled to keep their own height (fewer
  * meshes, so fewer draw calls, where the difference cannot be seen).
  */
 export function collectInstances(tiles: readonly TileData[], bands: readonly Band[], want: Band,
-  o: { kinds: readonly number[]; density: readonly number[]; heights?: readonly number[]; split?: { x: number; y: number; z: number; edge: number; far?: number };
-    remap?: readonly number[] },
+  o: { kinds: readonly number[]; density: readonly number[]; heights?: readonly number[];
+    split?: { x: number; y: number; z: number; edge: number; far?: number;
+      second?: { x: number; y: number; z: number }; seenBy?: ArrayLike<number> }; remap?: readonly number[] },
   out?: Bucket[]): Bucket[] {
   const buckets = out ?? Array.from({ length: PLANT_KINDS.length * VARIANTS }, newBucket);
   const take = new Uint8Array(PLANT_KINDS.length);
@@ -135,19 +138,28 @@ export function collectInstances(tiles: readonly TileData[], bands: readonly Ban
       b.box.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
     }
   }
-  const sp = o.split, e2 = sp ? sp.edge * sp.edge : 0, f2 = sp?.far ? sp.far * sp.far : Infinity;
+  const sp = o.split, e2 = sp ? sp.edge * sp.edge : 0, f2 = sp?.far ? sp.far * sp.far : Infinity, s2 = sp?.second, by = sp?.seenBy;
   for (let t = 0; t < tiles.length; t++) {
     // 0: take all; 1: only those within the edge; −1: only those beyond it (and, in the mid band, all short of `far`)
     const part = bands[t] === want ? (sp && want === 'near' ? 1 : sp && want === 'mid' ? -1 : 0)
       : sp && want === 'mid' && bands[t] === 'near' ? -1 : NaN;
     if (part !== part) continue;
     const { kind, variant, data } = tiles[t].plants;
+    const eyes = s2 ? (by ? by[t] : 3) : 1; // which points this tile's plants are measured against: 1 the camera, 2 the second eye
     for (let i = 0; i < kind.length; i++) {
       const k = kind[i];
       if (!take[k]) continue;
       const s = i * INSTANCE_STRIDE;
       if (part) {
-        const dx = data[s] - sp!.x, dy = data[s + 1] - sp!.y, dz = data[s + 2] - sp!.z, d2 = dx * dx + dy * dy + dz * dz;
+        let d2 = Infinity;
+        if (eyes & 1) {
+          const dx = data[s] - sp!.x, dy = data[s + 1] - sp!.y, dz = data[s + 2] - sp!.z;
+          d2 = dx * dx + dy * dy + dz * dz;
+        }
+        if (eyes & 2) {
+          const ex = data[s] - s2!.x, ey = data[s + 1] - s2!.y, ez = data[s + 2] - s2!.z;
+          d2 = Math.min(d2, ex * ex + ey * ey + ez * ez);
+        }
         if ((d2 < e2) !== (part > 0) || d2 >= f2) continue;
       }
       if (thinned(data[s + 7], i, o.density[k])) continue;
@@ -204,6 +216,8 @@ function checked(materials: PlantMaterials, kind: PlantKind, group: 'bark' | 'le
 }
 
 const CLASSES: PlantClass[] = ['tree', 'shrub', 'prop'];
+/** How far (degrees) an eye facing `dir` has turned from `last` (as far as can be when there is no `last` yet). */
+const turn = (dir: Vector3, last: Vector3) => (last.lengthSq() ? (Math.acos(Math.min(1, dir.dot(last))) * 180) / Math.PI : Infinity);
 const LODS: Band[] = ['near', 'mid'];
 
 /**
@@ -216,6 +230,9 @@ const LODS: Band[] = ['near', 'mid'];
  * (`MID_VARIANTS`).
  * Near meshes are on `NEAR_LAYER`, mid meshes on `MID_LAYER` (mid trees also on `MID_TREE_LAYER`); mid shrubs, logs and
  * stumps cast no shadow.
+ * With a second eye (`update`'s `second`: the invitation's peek, the documentary's pre-warm), a tile is kept if either eye
+ * sees it and banded by the nearer eye that does, and its plants are split by the nearer eye that sees it; a new, cleared or moved second eye
+ * re-bands at once. The impostors still face the main camera.
  */
 export class VegetationTiles {
   readonly object = new Group();
@@ -232,14 +249,24 @@ export class VegetationTiles {
   private readonly splitPos = new Vector3(Infinity, 0, 0);
   private readonly lastPos = new Vector3(Infinity, 0, 0);
   private readonly lastDir = new Vector3();
+  /** The second eye at the last re-band (null: none), where it was and the way it faced, and where it was at the last split. */
+  private lastSecond: Camera | null = null;
+  private readonly lastPos2 = new Vector3(Infinity, 0, 0);
+  private readonly lastDir2 = new Vector3();
+  private readonly splitPos2 = new Vector3(Infinity, 0, 0);
+  /** Which eyes saw each tile at the last re-band (1 the camera, 2 the second eye): its plants are split by those only. */
+  private readonly seenBy: Uint8Array;
   private readonly frustum = new Frustum();
+  private readonly frustum2 = new Frustum();
   private readonly m4 = new Matrix4();
   private readonly v = new Vector3();
+  private readonly v2 = new Vector3();
   private readonly box = new Box3();
 
   constructor(data: ValleyData, models: PlantModelSet, materials: PlantMaterials, private readonly q: WorldQuality) {
     this.object.name = 'vegetation';
     this.tiles = data.tiles;
+    this.seenBy = new Uint8Array(this.tiles.length);
     this.heights = models.map((m) => m.height);
     this.density = PLANT_KINDS.map((k) => ({ tree: q.treeDensity, shrub: q.shrubDensity, prop: 1 })[classOf(k)]);
     this.kindsOf = { tree: [], shrub: [], prop: [] };
@@ -272,26 +299,42 @@ export class VegetationTiles {
     }));
   }
 
-  /** Re-band and refill if due. Returns true when anything was refilled. */
-  update(camera: Camera, dt: number): boolean {
+  /**
+   * Re-band and refill if due, for `camera` and the `second` eye if there is one (a change of second eye is due at once).
+   * Returns true when anything was refilled.
+   */
+  update(camera: Camera, dt: number, second: Camera | null = null): boolean {
     this.since += dt;
     const p = camera.position, dir = camera.getWorldDirection(this.v);
-    const turned = this.lastDir.lengthSq() ? (Math.acos(Math.min(1, dir.dot(this.lastDir))) * 180) / Math.PI : Infinity;
-    if (this.since < EVERY && p.distanceTo(this.lastPos) < MOVE && turned < TURN) return false;
+    const p2 = second?.position, dir2 = second?.getWorldDirection(this.v2);
+    const changed = second !== this.lastSecond || (!!second && (p2!.distanceTo(this.lastPos2) >= MOVE || turn(dir2!, this.lastDir2) >= TURN));
+    if (!changed && this.since < EVERY && p.distanceTo(this.lastPos) < MOVE && turn(dir, this.lastDir) < TURN) return false;
+    const resplit = second !== this.lastSecond;
     this.since = 0;
     this.lastPos.copy(p);
     this.lastDir.copy(dir);
+    this.lastSecond = second;
+    if (second) {
+      this.lastPos2.copy(p2!);
+      this.lastDir2.copy(dir2!);
+      second.updateMatrixWorld();
+      this.frustum2.setFromProjectionMatrix(this.m4.multiplyMatrices(second.projectionMatrix, second.matrixWorldInverse));
+    }
 
     camera.updateMatrixWorld();
     this.frustum.setFromProjectionMatrix(this.m4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     const dirty = CLASSES.map(() => [false, false]);
     const rep: Record<PlantClass, PlantKind> = { tree: 'pine', shrub: 'blueberry', prop: 'boulder' };
     for (let t = 0; t < this.tiles.length; t++) {
-      const b = this.boxes[t];
-      const seen = !b.isEmpty() && this.frustum.intersectsBox(this.box.copy(b).expandByScalar(FRUSTUM_MARGIN));
-      const d = seen ? tileDistance(p, this.tiles[t].tx, this.tiles[t].tz, b.min.y, b.max.y - TALLEST) : Infinity;
+      const b = this.boxes[t], { tx, tz } = this.tiles[t];
+      const grown = b.isEmpty() ? null : this.box.copy(b).expandByScalar(FRUSTUM_MARGIN);
+      const seen = grown !== null && this.frustum.intersectsBox(grown);
+      const seen2 = grown !== null && !!second && this.frustum2.intersectsBox(grown);
+      let d = seen ? tileDistance(p, tx, tz, b.min.y, b.max.y - TALLEST) : Infinity;
+      if (seen2) d = Math.min(d, tileDistance(p2!, tx, tz, b.min.y, b.max.y - TALLEST));
+      this.seenBy[t] = (seen ? 1 : 0) | (seen2 ? 2 : 0);
       CLASSES.forEach((c, ci) => {
-        const band = seen ? bandFor(rep[c], d, this.q, this.band[ci][t]) : 'none';
+        const band = seen || seen2 ? bandFor(rep[c], d, this.q, this.band[ci][t]) : 'none';
         this.band[ci][t] = band;
         const drawn: Band = band === 'far' ? (c === 'shrub' || (c === 'tree' && d < midTreeReach(this.q)) ? 'mid' : 'none') : band;
         const was = this.drawn[ci][t];
@@ -301,8 +344,9 @@ export class VegetationTiles {
       });
     }
     // tiles hold plants up to 90 m past a band's edge: re-split near and mid by each plant's own distance as the camera moves
-    if (p.distanceTo(this.splitPos) >= SPLIT_MOVE) {
+    if (resplit || p.distanceTo(this.splitPos) >= SPLIT_MOVE || (second && p2!.distanceTo(this.splitPos2) >= SPLIT_MOVE)) {
       this.splitPos.copy(p);
+      if (second) this.splitPos2.copy(p2!);
       CLASSES.forEach((_, ci) => { dirty[ci][1] = true; if (this.drawn[ci].includes('near')) dirty[ci][0] = true; });
     }
     let any = false;
@@ -310,7 +354,8 @@ export class VegetationTiles {
       if (!dirty[ci][lod]) return;
       any = true;
       const kinds = this.kindsOf[c], e = edges(rep[c], this.q);
-      const split = { x: p.x, y: p.y, z: p.z, edge: e[0], far: c === 'tree' ? midTreeReach(this.q) : e[2] };
+      const split = { x: p.x, y: p.y, z: p.z, edge: e[0], far: c === 'tree' ? midTreeReach(this.q) : e[2], second: p2,
+        seenBy: this.seenBy };
       collectInstances(this.tiles, this.drawn[ci], lodBand, { kinds, density: this.density, heights: this.heights, split,
         remap: lod ? MID_VARIANTS : undefined }, this.buckets[lod]);
       for (const k of kinds) for (let v = 0; v < VARIANTS; v++) this.upload(lod, k * VARIANTS + v);

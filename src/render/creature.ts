@@ -1,10 +1,10 @@
 import {
-  Bone, BufferAttribute, BufferGeometry, Color, Group, Skeleton, SkinnedMesh, Vector3, type Material,
+  Bone, BufferAttribute, BufferGeometry, Color, Group, Skeleton, SkinnedMesh, Sphere, Vector3, type Material, type Object3D,
 } from 'three/webgpu';
 import type { BodyData, LodMesh, Variation } from '../builder/build';
 import type { Recipe } from '../recipe/schema';
 import type { Vec3 } from '../util/vec';
-import { createEyes, eyePlaces, lidMaterial, type Eye, type EyePlace } from '../skin/eyes';
+import { createEyes, eyeMaterial, eyePlaces, lidMaterial, type Eye, type EyePlace } from '../skin/eyes';
 import { createFurShells, furMaterial } from '../skin/fur';
 import { createSkinMaterial } from '../skin/material';
 import { packRegions } from '../skin/patterns';
@@ -12,10 +12,10 @@ import { QUALITY, type Tier } from './quality';
 import './skinning-patch'; // equal creature materials share one shader (see there)
 
 /**
- * The materials one species can share (its skin, one for all its fur shells, one for all its eyelids): more of a kind cost
- * no new shaders.
+ * The materials one species can share (its skin, one for all its fur shells, one for all its eyelids, one for all its
+ * eyes): more of a kind cost no new shaders.
  */
-export type CreatureLook = { skin: Material; fur: Material | null; lids: Material | null };
+export type CreatureLook = { skin: Material; fur: Material | null; lids: Material | null; eyes: Material };
 
 export type CreatureObject = {
   root: Group;
@@ -96,6 +96,34 @@ export function lodGeometry(l: LodMesh, body: BodyData, eyes: EyePlace[] = []): 
   return g;
 }
 
+/** A pose reaches at most this many times the rest skeleton's half-diagonal from its middle (a gallop's stretch, a raised head, the fur). */
+const POSE_REACH = 1.5;
+/**
+ * Where any pose of `body` stays (creature space): a sphere round the middle of its rest skeleton, POSE_REACH times its
+ * half-diagonal. A skinned body's own bounds would have to be worked out again for every pose.
+ */
+export function poseReach(body: BodyData): Sphere {
+  const { min, max } = body.skeleton;
+  const centre = new Vector3((min.x + max.x) / 2, (min.y + max.y) / 2, (min.z + max.z) / 2);
+  return new Sphere(centre, (POSE_REACH * Math.hypot(max.x - min.x, max.y - min.y, max.z - min.z)) / 2);
+}
+
+/**
+ * Every creature mesh under `root` (the bodies and fur shells, which their pose bounds let a camera leave out) drawable
+ * wherever the camera looks, until the returned function puts them back: three's `compileAsync` (r186) leaves out what
+ * its camera cannot see, and a compile must see every body.
+ */
+export function uncull(root: Object3D): () => void {
+  const culled: Object3D[] = [];
+  root.traverse((o) => {
+    if ((o as SkinnedMesh).isSkinnedMesh && o.frustumCulled) {
+      o.frustumCulled = false;
+      culled.push(o);
+    }
+  });
+  return () => culled.forEach((o) => (o.frustumCulled = true));
+}
+
 /**
  * A body ready for the scene: bones at their rest positions, skin bound, shadows on. Pass `look` (from another animal of
  * the same recipe) to share its materials; the individual's tint is then set per object. `furShells` overrides the tier's
@@ -123,15 +151,18 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
   const skeleton = new Skeleton(bones);
   const pack = look ? null : packRegions(recipe, body.regions);
   const places = eyePlaces(body, recipe.skin.eyes.size);
-  const own: CreatureLook = look ?? { skin: createSkinMaterial(pack!), fur: furMaterial(pack!, places), lids: recipe.face.lids ? lidMaterial(body, recipe) : null };
+  const own: CreatureLook = look ?? {
+    skin: createSkinMaterial(pack!), fur: furMaterial(pack!, places), lids: recipe.face.lids ? lidMaterial(body, recipe) : null, eyes: eyeMaterial(recipe),
+  };
   const c = variation ? new Color(1, 1, 1).offsetHSL(variation.tint.h, variation.tint.s, variation.tint.l) : null;
   const tint = c ? new Vector3(c.r, c.g, c.b) : undefined;
+  const reach = poseReach(body);
   const meshes = body.lods.map((l) => {
     const m = new SkinnedMesh<BufferGeometry, Material>(lodGeometry(l, body, places), own.skin);
     m.userData.tint = tint;
     m.castShadow = true;
     m.receiveShadow = true;
-    m.frustumCulled = false; // skinned bounds move with the pose
+    m.boundingSphere = reach; // every pose stays inside it, so each camera (and each shadow cascade) leaves out the animals it cannot see
     root.add(m);
     m.bind(skeleton);
     return m;
@@ -143,6 +174,8 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     const s = createFurShells(m, own.fur, count);
     s.forEach((x) => {
       x.userData.tint = tint;
+      x.boundingSphere = reach;
+      x.frustumCulled = true;
       root.add(x);
     });
     return s;
@@ -164,7 +197,7 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     console.warn('a borrowed creature look has no lid material for a recipe with lids: making one for this animal');
     ownLids = lidMaterial(body, recipe);
   }
-  const eyes = createEyes(body, recipe, bones, tint, own.lids ?? ownLids);
+  const eyes = createEyes(body, recipe, bones, tint, own.lids ?? ownLids, own.eyes);
 
   const obj: CreatureObject = {
     root, look: own, meshes, bones, skeleton,
@@ -193,10 +226,10 @@ export function createCreatureObject(body: BodyData, recipe: Recipe, tier: Tier,
     },
     dispose() {
       meshes.forEach((m) => m.geometry.dispose());
-      // the eyes' sphere, their material and the lids' cap are this animal's own (the lid material is the species')
+      // the eyes' sphere and the lids' cap are this animal's own (the eye and lid materials are the species')
       const e = eyes[0];
-      if (e) [e.geometry, e.material as Material, e.lids[0]?.geometry, ownLids].forEach((x) => x?.dispose());
-      if (!look) [own.skin, own.fur, own.lids].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
+      if (e) [e.geometry, e.lids[0]?.geometry, ownLids].forEach((x) => x?.dispose());
+      if (!look) [own.skin, own.fur, own.lids, own.eyes].forEach((m) => m?.dispose()); // shared materials belong to whoever made them
       root.removeFromParent();
     },
   };

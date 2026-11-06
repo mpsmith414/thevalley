@@ -12,6 +12,7 @@ import type { Viewpoint } from '../valley/types';
 import { neighbours, stepNeighbour, type Candidate } from './aim';
 import { ViewBlend } from './blend';
 import { CLOSE_LOOK, CloseCam } from './close';
+import { movePose, type Move } from './directed';
 import { EYES_LOOK, EyesCam } from './eyes';
 import { FOLLOW_CLEAR, FOLLOW_EASE_BACK_S, FollowCam, followFraming, type FollowOpts } from './follow';
 import { Dive, RISE_S, between } from './map';
@@ -22,9 +23,9 @@ import type { AnimalPose, Pose, SenseName } from './types';
 export type ViewName = 'follow' | 'close' | 'eyes';
 /**
  * Who has the camera: free flight, the glide to an animal, riding along, steering it, the map, or the dive down from the
- * map to a spot (then free flight).
+ * map to a spot (then free flight), or the documentary's own move (`directed`).
  */
-export type Mode = 'free' | 'gliding' | 'locked' | 'reins' | 'map' | 'diving';
+export type Mode = 'free' | 'gliding' | 'locked' | 'reins' | 'map' | 'diving' | 'directed';
 
 /**
  * The animal the views ride, as the valley sees it this frame: its pose (see AnimalPose), its eye point and the way its
@@ -60,8 +61,8 @@ export type ViewInput = { look: { yaw: number; pitch: number }; zoom: number; mo
 /** What is drawn: one of the views, or the wide Follow a chase in Close or Eyes eases out to. */
 export type Shown = ViewName | 'wide';
 
-/** A view switch takes this long (s): a move, not a cut. */
-const SWITCH_S = 0.7;
+/** A view switch (and an eased join into the documentary's move) takes this long (s): a move, not a cut. */
+export const SWITCH_S = 0.7;
 /** Stepping to a neighbour glides across in 1 s, plus 1 s per this many metres between them, at most 2 s. */
 const NEIGHBOUR_M = 150;
 /** The reins hand back after this many real seconds with no input. */
@@ -171,6 +172,13 @@ export class Views {
   private stickHeld = false;
   /** The camera's pose last frame. */
   private last: Pose | null = null;
+  /**
+   * The documentary's move now playing ('directed'): the move, how long it has gone (s), what to call at its end (it then
+   * holds the last pose), and the eased join into it still to begin on its first frame (s; 0: none).
+   */
+  private move: { m: Move; t: number; onEnd?: () => void; ended: boolean; ease: number } | null = null;
+  /** The next view is shown at once, from the first frame, with no eased switch (see `place`). */
+  private placed = false;
 
   constructor(private readonly deps: ViewsDeps) {}
 
@@ -200,6 +208,30 @@ export class Views {
     this.orbit = null;
     this.zoom = 1;
     this.glideTo(id, view);
+  }
+
+  /**
+   * Lock on to animal `id` at once, for a hard cut: no glide, the view's camera starts settled at its spot (Follow at its
+   * framing spot). A stick held from before does not take the camera. A gone animal is as with `lock`.
+   */
+  place(id: string, view: ViewName = 'follow'): void {
+    this.release();
+    this.orbit = null;
+    this.zoom = 1;
+    this.glideTo(id, view);
+    const a = this.deps.animal(id);
+    if (a && !a.gone) (this.mode = 'locked'), (this.placed = true);
+  }
+
+  /**
+   * Play the documentary's move `m` (the reins are handed back and any lock or sense ends; the player's input is ignored):
+   * `update` gives its pose, `onEnd` is called once at its end, and the camera then holds the last pose. With `ease`
+   * (s), the camera blends from where it is into the move over that time, as a view switch does; without, it starts at once.
+   */
+  direct(m: Move, onEnd?: () => void, opts?: { ease?: number }): void {
+    this.release();
+    this.mode = 'directed';
+    this.move = { m, t: 0, onEnd, ended: false, ease: opts?.ease ?? 0 };
   }
 
   /** Change view (an eased move); during a chase's wide Follow the choice waits for the chase to end. */
@@ -237,6 +269,7 @@ export class Views {
   openMap(): void {
     if (this.mode === 'map') return;
     this.handBack();
+    this.move = null;
     const watching = this.id !== null && (this.mode === 'gliding' || this.mode === 'locked');
     this.beforeMap = { mode: watching ? 'locked' : 'free', id: this.id, view: this.view, sense: this.senseOn, pose: null };
     this.mode = 'map';
@@ -292,6 +325,7 @@ export class Views {
     if (this.mode !== 'gliding') this.up = 0; // (a dive from the map sets it as it goes)
     if (this.mode === 'free') return null;
     if (this.mode === 'map') return this.mapFrame(dt, from);
+    if (this.mode === 'directed') return (this.last = this.moveFrame(dt, from));
     if (this.mode === 'diving') return this.diveFrame(dt, input, from);
     const a = this.deps.animal(this.id!);
     if (!a || a.gone) {
@@ -314,6 +348,19 @@ export class Views {
       from = pose; // arrived: the view takes over from here, this frame
     }
     return (this.last = this.ride(dt, a, input, from, rate));
+  }
+
+  /**
+   * One frame of the documentary's move: its pose (blended in from the camera's pose `from` on its first frame, when it
+   * eases in), calling `onEnd` once when it is over (the last pose then holds).
+   */
+  private moveFrame(dt: number, from: Pose): Pose {
+    const mv = this.move!;
+    if (mv.ease > 0) this.blend.start(from, mv.ease), (mv.ease = 0);
+    mv.t = Math.min(mv.t + dt, mv.m.s);
+    const pose = movePose(mv.m, mv.t, this.deps.world);
+    if (mv.t >= mv.m.s && !mv.ended) (mv.ended = true), mv.onEnd?.();
+    return this.blended(pose, dt);
   }
 
   /** Glide to animal `id`'s Follow spot, then ride along in `view` (the orbit and zoom stand); a stick held from flying there waits to be let go. */
@@ -377,6 +424,7 @@ export class Views {
   private newAnimal(): void {
     this.glide = null;
     this.dive = false;
+    this.placed = false;
     this.showing = null;
     this.follow = this.close = this.eyes = null;
     this.wide = false;
@@ -398,7 +446,7 @@ export class Views {
     this.handBack();
     this.mode = 'free';
     this.id = null;
-    this.beforeMap = this.rise = this.down = null;
+    this.beforeMap = this.rise = this.down = this.move = null;
     this.up = 0;
     this.newAnimal();
     this.blend = new ViewBlend();
@@ -452,12 +500,18 @@ export class Views {
         // the faster rate only while it moves: a still animal's orbit should not swing 16 times as fast
         rate: moving ? rate : 1,
         wide: this.showing === 'wide' || f.wide,
+        farthest: f.farthest,
       });
     }
+    return this.blended(pose, dt);
+  }
+
+  /** `pose` through the eased switch under way, if one is. */
+  private blended(pose: Pose, dt: number): Pose {
     if (!this.blend.active) return pose;
     const out = this.blend.apply(pose, dt);
     // a straight blend could cut a hill: keep it above the ground (or as low as the view it goes to, under the water)
-    const floor = Math.min(surfaceAt(world, out.pos.x, out.pos.z) + BLEND_CLEAR, pose.pos.y);
+    const floor = Math.min(surfaceAt(this.deps.world, out.pos.x, out.pos.z) + BLEND_CLEAR, pose.pos.y);
     return { ...out, pos: { ...out.pos, y: Math.max(out.pos.y, floor) } };
   }
 
@@ -472,7 +526,8 @@ export class Views {
       const s = followSpot(a, this.deps.world);
       this.follow = new FollowCam(s.pos, s.look, a.pos, a.size, a.flying);
     }
-    this.blend.start(from, this.switchS);
+    if (this.placed) this.placed = false;
+    else this.blend.start(from, this.switchS);
     this.switchS = SWITCH_S;
   }
 

@@ -76,6 +76,21 @@ function setup(opts: { light?: number; world?: FlyWorld; sensing?: (id: string) 
 const small = nearPlane(1.6);
 
 describe('ViewsWire', () => {
+  it('free flight highlights the animal ahead with its tag, but never while the documentary runs (quiet)', () => {
+    const t = setup();
+    t.camera.position.set(0, 2, 12); // looking along -z, at the deer
+    const pose: Pose = { pos: { x: 0, y: 2, z: 12 }, yaw: 0, pitch: 0 };
+    const frames = (n: number) => { for (let i = 0; i < n; i++) t.wire.frame(dt, idle, pose, 1, true); };
+    frames(30);
+    expect(t.shown.tag).toBe('Deer');
+    t.wire.quiet = true;
+    frames(1);
+    expect(t.shown.tag).toBeNull();
+    expect(t.wire.highlighted).toBeNull();
+    frames(30);
+    expect(t.shown.tag).toBeNull();
+  });
+
   it('keeps the camera planes and the body as they are in Follow, and gives them back on letting go', () => {
     const t = setup();
     t.views.lock('a');

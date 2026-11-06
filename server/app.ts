@@ -14,6 +14,7 @@ import { Declined, type DesignerModel } from './model';
 import { lanHost } from './net';
 import type { Relay } from './relay';
 import { relayRoutes } from './relay-routes';
+import { voiceRoutes, type Synth, type VoiceCache } from './voice';
 
 const MAX_BODY = 12 * 1024 * 1024;
 
@@ -54,8 +55,9 @@ async function twice<S extends z.ZodType, T>(call: () => Promise<unknown>, schem
 }
 
 /** `opts.cap` limits how many creatures `/api/read` will read per day; without it reads are uncapped. `opts.relay` mounts
- * the phone relay's routes; `opts.host` is the address phones reach this PC at (default: its first LAN address; `server/index.ts` adds the `PHONE_HOST` override). */
-export function createApp(model: DesignerModel, opts?: { cap?: DailyCap; relay?: Relay; host?: () => string; heartbeatMs?: number }): Hono {
+ * the phone relay's routes; `opts.host` is the address phones reach this PC at (default: its first LAN address; `server/index.ts` adds the `PHONE_HOST` override).
+ * `opts.voice` mounts the narrator's voice (`/api/voice`). */
+export function createApp(model: DesignerModel, opts?: { cap?: DailyCap; relay?: Relay; host?: () => string; heartbeatMs?: number; voice?: { synth: Synth; cache: VoiceCache } }): Hono {
   const cap = opts?.cap;
   const app = new Hono();
   app.use('/api/*', bodyLimit({ maxSize: MAX_BODY, onError: (c) => c.json({ error: 'too big' }, 413) }));
@@ -104,6 +106,8 @@ export function createApp(model: DesignerModel, opts?: { cap?: DailyCap; relay?:
   }
 
   if (opts?.relay) relayRoutes(app, opts.relay, cap ?? new DailyCap({}), { host: opts.host ?? (() => lanHost(networkInterfaces())), heartbeatMs: opts.heartbeatMs });
+
+  if (opts?.voice) voiceRoutes(app, opts.voice.synth, opts.voice.cache);
 
   app.post('/api/look-again', async (c) => {
     const req = LookAgainRequestSchema.safeParse(await c.req.json().catch(() => null));

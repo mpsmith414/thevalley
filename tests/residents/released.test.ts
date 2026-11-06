@@ -130,12 +130,16 @@ describe('Residents with released creatures', () => {
         root.traverse((o) => ((o as { isMesh?: boolean }).isMesh ? (meshes++, o.visible || hidden++) : 0));
         expect(meshes).toBeGreaterThan(0);
         expect(hidden, 'every level of detail drawable while compiling').toBe(0);
+        let culled = 0;
+        root.traverse((o) => ((o as { isSkinnedMesh?: boolean }).isSkinnedMesh && o.frustumCulled ? culled++ : 0));
+        expect(culled, 'every body seen wherever the compile camera looks (the stage stands at the origin)').toBe(0);
         compiled = { children: root.children.length, inScene: root.parent === res.object, animals: res.animals.length, agents: res.sim.agents.length };
       },
     });
     expect(compiled).toEqual({ children: 3, inScene: false, animals: NATIVES, agents: NATIVES }); // compiled before it joined the valley
     const family = res.familyOf('c-q');
     expect(family).toHaveLength(3);
+    for (const a of family) a.obj.root.traverse((o) => (o as { isSkinnedMesh?: boolean }).isSkinnedMesh && expect(o.frustumCulled).toBe(true)); // culled again once in
     family.forEach((a, k) => {
       expect(a.rig.position.x).toBeCloseTo(entry[k].x, 6);
       expect(a.rig.position.z).toBeCloseTo(entry[k].z, 6);

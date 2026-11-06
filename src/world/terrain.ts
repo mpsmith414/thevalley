@@ -62,12 +62,23 @@ function levelGeometry(cells: number[]): BufferGeometry {
   return g;
 }
 
+/** The ground: its levels in the scene, centred on the camera each frame, or for a moment on another point (a second eye). */
+export type Terrain = {
+  object: Group;
+  /** Centre the levels on `camera`. */
+  update(camera: Camera): void;
+  /** Centre the levels on (x, z) (for a second eye's render); the function returned puts them back exactly as they were. */
+  centreOn(x: number, z: number): () => void;
+  /** Where each level sits now (for checking). */
+  places(): LevelPlace[];
+};
+
 /**
  * Geometry clipmap terrain: `LEVELS` square levels of `N × N` cells, each twice as coarse as the last, following the camera.
  * Heights come from the height texture in the vertex shader; the outer fifth of each level morphs onto the next level's grid.
  * The ground's look comes from `createGroundMaterial` (the biome-blended photo textures in `sets`).
  */
-export function createTerrain(tex: ValleyTextures, tier: Tier, sets: GroundSets): { object: Group; update(camera: Camera): void } {
+export function createTerrain(tex: ValleyTextures, tier: Tier, sets: GroundSets): Terrain {
   const object = new Group();
   object.name = 'terrain';
   const half = tex.size / 2;
@@ -88,13 +99,23 @@ export function createTerrain(tex: ValleyTextures, tier: Tier, sets: GroundSets)
     return { centre, shift };
   });
 
+  const place = (x: number, z: number) => levelCentres(x, z, tex.cell).forEach((p, k) => {
+    levels[k].centre.value.set(p.centre.x, p.centre.z);
+    levels[k].shift.value.set(p.shift.x, p.shift.z);
+  });
   return {
     object,
-    update(camera) {
-      levelCentres(camera.position.x, camera.position.z, tex.cell).forEach((p, k) => {
-        levels[k].centre.value.set(p.centre.x, p.centre.z);
-        levels[k].shift.value.set(p.shift.x, p.shift.z);
+    update: (camera) => place(camera.position.x, camera.position.z),
+    centreOn(x, z) {
+      const was = levels.map((l) => [l.centre.value.x, l.centre.value.y, l.shift.value.x, l.shift.value.y]);
+      place(x, z);
+      return () => levels.forEach((l, k) => {
+        l.centre.value.set(was[k][0], was[k][1]);
+        l.shift.value.set(was[k][2], was[k][3]);
       });
     },
+    places: () => levels.map((l, k) => ({
+      spacing: tex.cell * 2 ** k, centre: { x: l.centre.value.x, z: l.centre.value.y }, shift: { x: l.shift.value.x, z: l.shift.value.y },
+    })),
   };
 }

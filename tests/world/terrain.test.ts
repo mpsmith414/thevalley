@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { LEVELS, N, levelCentres, morphFactor, ringCells, snapOrigin } from '../../src/world/terrain';
+import { MeshStandardNodeMaterial, PerspectiveCamera } from 'three/webgpu';
+import { float } from 'three/tsl';
+import { describe, expect, it, vi } from 'vitest';
+import { LEVELS, N, createTerrain, levelCentres, morphFactor, ringCells, snapOrigin } from '../../src/world/terrain';
 import { mulberry32 } from '../../src/util/rng';
 
 const CELL = 1600 / 2048;
+
+vi.mock('../../src/world/ground', () => ({ createGroundMaterial: () => new MeshStandardNodeMaterial() }));
 
 describe('clipmap helpers', () => {
   it('snapOrigin lands on a multiple of 2·spacing within 2·spacing of the camera', () => {
@@ -67,5 +71,22 @@ describe('clipmap helpers', () => {
       }
       expect(levels[0].shift).toEqual({ x: 0, z: 0 });
     }
+  });
+});
+
+describe('the terrain', () => {
+  const terrain = () => createTerrain({ size: 1600, cell: CELL, heightAtNode: () => float(0) } as never, 'low', null as never);
+
+  it('centreOn moves the levels and its undo restores them exactly', () => {
+    const t = terrain(), camera = new PerspectiveCamera();
+    camera.position.set(123.456, 50, -321.789);
+    t.update(camera);
+    const before = t.places();
+    expect(before).toEqual(levelCentres(123.456, -321.789, CELL));
+    const undo = t.centreOn(-600.3, 410.7);
+    expect(t.places()).toEqual(levelCentres(-600.3, 410.7, CELL));
+    expect(t.places()[0].centre).not.toEqual(before[0].centre);
+    undo();
+    expect(t.places()).toEqual(before);
   });
 });

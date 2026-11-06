@@ -19,6 +19,8 @@ export const CHIME_NOTES = [784, 1047, 1319];
 const CHIME_GAP = 0.18, CHIME_NOTE = 0.4, CHIME = 0.18;
 /** Seconds between owl calls at night. */
 const OWL_GAP = [25, 70] as const;
+/** While the narrator speaks the layers sit this far down (-6 dB), reached within 0.4 s (time constant DUCK_TAU). */
+export const DUCK_GAIN = 0.501, DUCK_TAU = 0.13;
 const VOLUME_KEY = 'valley.volume', MUTED_KEY = 'valley.muted';
 
 /** Move `g` towards `target` over `dt` seconds with time constant `tau`. */
@@ -47,6 +49,8 @@ export type Soundscape = {
   mute(on: boolean): void;
   /** A short soft two-note bell (a creature has arrived), through the master volume: silent when muted. */
   chime(): void;
+  /** Lower the six layers by 6 dB while the narrator speaks (`true`), or let them back up. The chime and the narrator are not ducked. */
+  duck(on: boolean): void;
   /** Where other sounds join the mix under the master volume (silent when muted), or null when there is no sound at all. */
   readonly output: AudioNode | null;
 };
@@ -61,11 +65,13 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
   master.connect(ctx.destination);
   const setMaster = () => master.gain.setTargetAtTime(muted ? 0 : volume, ctx.currentTime, 0.05);
 
+  const ducker = ctx.createGain(); // the six layers meet here on their way to the master
+  ducker.connect(master);
   const out = {} as Record<Layer, GainNode>, gain = {} as Record<Layer, number>, source = {} as Record<Layer | 'owl', Source>;
   for (const k of LAYERS) {
     out[k] = ctx.createGain();
     out[k].gain.value = 0;
-    out[k].connect(master);
+    out[k].connect(ducker);
     gain[k] = 0;
     source[k] = 'loading';
   }
@@ -307,6 +313,7 @@ export function createSoundscape(ctx: BaseAudioContext, opts: { base?: string; s
       setMaster();
     },
     chime,
+    duck: (on) => ducker.gain.setTargetAtTime(on ? DUCK_GAIN : 1, ctx.currentTime, DUCK_TAU),
     output: master,
   };
 }
@@ -335,6 +342,7 @@ export function silentSoundscape(): Soundscape {
       remember(MUTED_KEY, muted);
     },
     chime() {},
+    duck() {},
     output: null,
   };
 }

@@ -192,6 +192,24 @@ describe('Residents', () => {
     expect(away.obj.root.matrixWorld.elements[14]).toBeCloseTo(away.obj.root.position.z, 6);
   });
 
+  it('compiles one of each kind seen wherever the compile camera looks, then culls them again', async () => {
+    const res = await spawned();
+    res.update(1 / 15, 1 / 15, meadowCamera(2), 9); // most are out of view (and would be culled)
+    const skinned = (a: (typeof res.animals)[number]) => {
+      const m: { frustumCulled: boolean }[] = [];
+      a.obj.root.traverse((o) => ((o as { isSkinnedMesh?: boolean }).isSkinnedMesh ? m.push(o) : 0));
+      return m;
+    };
+    let kinds = 0;
+    res.compile(() => {
+      const shown = res.animals.filter((a) => a.obj.root.visible);
+      kinds = new Set(shown.map((a) => a.species)).size;
+      for (const a of shown) for (const m of skinned(a)) expect(m.frustumCulled, a.id).toBe(false);
+    });
+    expect(kinds).toBe(new Set(res.animals.map((a) => a.species)).size);
+    for (const a of res.animals) for (const m of skinned(a)) expect(m.frustumCulled, a.id).toBe(true);
+  });
+
   it('clears every animal, so a spawn after a failed one leaves one body for each', async () => {
     const res = await spawned();
     const bodies = res.animals.map((a) => a.obj), freed = bodies.map((o) => vi.spyOn(o, 'dispose'));
@@ -370,6 +388,76 @@ describe('Residents', () => {
     g.doing = 'watch';
     res.update(0.01, 0.01, camera, 9);
     expect(frog.obj.root.visible).toBe(true);
+  });
+
+  describe('the second eye', () => {
+    /** The rabbit, a camera on it (the second eye), and a main camera 40 m off it looking the other way. */
+    const setUp = async (tier: 'low' | 'high' = 'low') => {
+      const res = new Residents(valley, VALLEY, HOMES, fakeBuilder, tier, new Scene());
+      await res.spawn();
+      const rabbit = res.animals.find((a) => a.id === 'rabbit#1')!, { x, z } = res.sim.get(rabbit.id)!.motion, y = valley.heightAt(x, z);
+      const main = new PerspectiveCamera(55, 16 / 9, 0.1, 8000);
+      main.position.set(x + 40, y + 3, z);
+      main.lookAt(x + 400, y + 3, z);
+      main.updateMatrixWorld();
+      const views: { seen: (id: string) => boolean; seenAt?: (p: { x: number; z: number }) => boolean }[] = [];
+      const setView = res.sim.setView.bind(res.sim);
+      vi.spyOn(res.sim, 'setView').mockImplementation((v) => (views.push(v), setView(v)));
+      return { res, rabbit, main, second: cameraOn(x, z), at: { x, z }, view: () => views[views.length - 1] };
+    };
+
+    it('an animal seen only by the second eye is drawn (band full) but not seen by the simulation', async () => {
+      const { res, rabbit, main, second, at, view } = await setUp();
+      res.update(1 / 15, 1 / 15, main, 9);
+      expect(rabbit.band).toBe('paused');
+      res.setSecondEye(second);
+      const spy = vi.spyOn(rabbit.rig, 'update');
+      res.update(1 / 15, 1 / 15, main, 9);
+      expect(rabbit.band).toBe('full');
+      expect(rabbit.mainBand).toBe('paused');
+      expect(rabbit.obj.root.visible).toBe(true);
+      expect(rabbit.obj.root.parent).toBe(res.object);
+      expect(spy).toHaveBeenCalled();
+      expect(view().seen(rabbit.id)).toBe(false); // the simulation still has the main camera's bands only
+      expect(view().seenAt!(at)).toBe(false);
+      expect(res.candidates().find((c) => c.id === rabbit.id)!.drawn).toBe(true);
+    });
+
+    it('clearing the second eye returns it to paused', async () => {
+      const { res, rabbit, main, second } = await setUp();
+      res.setSecondEye(second);
+      res.update(1 / 15, 1 / 15, main, 9);
+      expect(rabbit.band).toBe('full');
+      res.setSecondEye(null);
+      res.update(1 / 15, 1 / 15, main, 9);
+      expect(rabbit.band).toBe('paused');
+      expect(rabbit.obj.root.visible).toBe(false);
+      expect(rabbit.obj.root.parent).toBeNull();
+    });
+
+    it('takes its detail and fur from the nearer eye that sees it', async () => {
+      const { res, rabbit, second } = await setUp('high');
+      const { x, z } = res.sim.get(rabbit.id)!.motion, far = cameraOn(x, z, 200); // in view, but far: the coarse mesh, no fur
+      res.update(1 / 15, 1 / 15, far, 9);
+      expect(rabbit.mainBand).not.toBe('paused');
+      expect(rabbit.obj.lod).toBe(2);
+      expect(rabbit.obj.furOn).toBe(false);
+      res.setSecondEye(second);
+      res.update(1 / 15, 1 / 15, far, 9);
+      expect(rabbit.band).toBe('full');
+      expect(rabbit.obj.lod).toBe(0);
+      expect(rabbit.obj.furOn).toBe(true);
+    });
+
+    it('changes nothing for the simulation: the same lives with a second eye as without', async () => {
+      const run = async (withSecond: boolean) => {
+        const { res, main, second } = await setUp();
+        if (withSecond) res.setSecondEye(second);
+        for (let f = 0; f < 120; f++) res.update(1 / 30, 1 / 30, main, 12);
+        return res.sim.agents.map((g) => [g.id, g.doing, g.motion.x.toFixed(4), g.motion.z.toFixed(4)]);
+      };
+      expect(await run(true)).toEqual(await run(false));
+    });
   });
 
   it('is deterministic', async () => {

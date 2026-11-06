@@ -62,19 +62,19 @@ export function plural(name: string): string {
 }
 
 /** "The deer" / "A red fox" for natives; "Spotty Longlegs and family" / "Spotty Longlegs" for a released creature. */
-function subject(w: Who): string {
+export function subject(w: Who): string {
   if (!w.native) return w.plural ? `${w.name} and family` : w.name;
   const name = w.name.toLowerCase();
   return w.plural ? `The ${plural(name)}` : `${/^[aeiou]/.test(name) ? 'An' : 'A'} ${name}`;
 }
 
 /** "The deer" / "The red fox" for natives (the one we are watching); a released creature by its name, as `subject`. */
-function the(w: Who): string {
+export function the(w: Who): string {
   return w.native && !w.plural ? `The ${w.name.toLowerCase()}` : subject(w);
 }
 
 /** One animal of a kind, as the object of a line: "a deer" for a native, its own name for a released creature. */
-function one(w: Who): string {
+export function one(w: Who): string {
   return subject({ ...w, plural: false }).replace(/^(An?) /, (x) => x.toLowerCase());
 }
 

@@ -57,6 +57,19 @@ Built with TypeScript, [three.js](https://threejs.org/) (WebGPU), Vite and a sma
   and Smell and Hearing at most 0.3 ms, the map draws in 6 ms against the busiest viewpoint's 21 ms, and no switch
   (view, sense, the map) took a frame over 50 ms.
 
+## The documentary
+
+- **The valley films itself:** put the controller down for three minutes (or choose **Watch the documentary** in the menu,
+  or press LB / P) and a quiet director takes over the camera. It picks the best thing going on, a stalk, a herd at the
+  water, ducks rafting up, and films it from a well-chosen spot: an establishing shot, a tracking shot, a look through the
+  animal's eyes, a cut-away before any chase ends, a time-lapse when it has been quiet and at night until the sky lightens.
+  Touch anything and the valley is yours again at once.
+- **A narrator:** a calm voice speaks a short line now and then, with the words as subtitles. The voice is made by a small
+  speech model that runs on the home server, so it needs `npm run dev` or `npm run home` (without the server the lines
+  appear as words only). The model downloads once, about 300 MB, the first time the server starts.
+- **Moments elsewhere:** while you fly, a small card in the corner offers a moment far away, with a picture of it and
+  **Go there**.
+
 ## Requirements
 
 - Node.js 22.9 or newer
@@ -115,6 +128,10 @@ app, and the keyboard's microphone key works for talking.
 | Walk height on / off | Y | G |
 | Previous / next viewpoint | D-pad left / right | Arrow left / right, or 1–8 |
 | Menu | Start | Esc |
+| Watch the documentary (free flight) | LB | P |
+| In the documentary: take over | Any stick or button | Any key, or move the mouse |
+| In the documentary: follow this animal | A | Enter / Space |
+| In the documentary: menu | Start | Esc |
 | In the menu: move, choose, back | D-pad, A, B | Arrow keys, Enter, Backspace |
 | Sound off / on | (menu) | M |
 | Time a step slower / faster | D-pad down / up | [ / ], or arrow down / up |
@@ -135,9 +152,10 @@ app, and the keyboard's microphone key works for talking.
 | With the reins: hand them back | B | Backspace / R |
 
 The menu has the time of day and its speed (Paused, Slow, Normal, Fast and Fastest, where a whole day takes 90
-seconds), quality, volume, captions on or off, **Add a creature**, **Creatures** (visit, send off exploring or bring
+seconds), quality, volume, **Watch the documentary**, **Add a creature**, **Creatures** (visit, send off exploring or bring
 back each released creature), a daily limit on new creatures and the **Valley** page (start the valley again, back it
-up to a file, restore a backup).
+up to a file, restore a backup). The **Documentary** page holds four remembered choices: when it starts by itself (after 3
+minutes, after 10, or never), the narrator (voice and words, words only, or off), time-lapses, and moment invitations.
 
 The valley remembers itself: the animals, the hour and the speed are saved in the browser, so it carries on where it left
 off. A quiet caption at the bottom names the good moments (a stalk, a chase, a raft of ducks); press **Fly there** to

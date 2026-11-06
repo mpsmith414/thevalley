@@ -8,11 +8,14 @@ import { designCreature, tweakCreature } from '../designer/loop';
 import type { ImageIn, KidCards } from '../designer/types';
 import type { Recipe } from '../recipe/schema';
 import { viewpointPose } from '../camera/viewpoints';
+import { CAMERA_FOV, framingDistance } from '../director/shots';
+import { findVantage } from '../director/vantage';
+import { mulberry32 } from '../util/rng';
 import type { QualityChoice, Tier } from '../render/quality';
 import { stored } from '../shared/settings';
 import { ANIMAL_S_PER_HOUR, TICK, type Agent, type Needs, type Pt } from '../sim/types';
 import { VALLEY } from '../valley/layout';
-import { DEFAULT_SPEED, PRESETS } from '../world/clock';
+import { DEFAULT_SPEED, PRESETS, sunDirection } from '../world/clock';
 import type { World } from './main';
 import { gpuDone, type Pacing } from './pacing';
 
@@ -108,6 +111,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     pace.reset(); // full resolution (the live loop's scaler takes over again after)
     tick(0);
     await renderer.compileAsync(scene, camera); // new materials compile in the background; wait for them
+    for (let i = 0; i < 2; i++) w.peek.frame(0); // an open peek settles a frame, then draws: the shot shows it in its corner
     post.render();
     const url = canvas.toDataURL('image/png'); // same task as the render, before the frame is presented
     await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: url });
@@ -119,6 +123,7 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     pace.reset();
     tick(0);
     await renderer.compileAsync(scene, camera);
+    for (let i = 0; i < 2; i++) w.peek.frame(0);
     post.render();
     const out = document.createElement('canvas');
     out.width = canvas.width;
@@ -241,6 +246,20 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
     at(x + (dx / n) * d, z + (dz / n) * d, 2, x, z, a.rig.restHeight);
     return true;
   };
+  /**
+   * Open the peek on animal `id` (null closes it): from a vantage `findVantage` picks round it, as far off as lets it fill
+   * `fill` of the picture's height, looking at it. Returns the pose, or false if there is no such animal. `peek.picture` is
+   * the peek itself (its `cadence`, `frame`, `showing`).
+   */
+  const peek = Object.assign((id: string | null, fill = 0.3) => {
+    if (id === null) return (w.peek.close(), null);
+    const a = w.residents.viewAnimal(id)?.pose;
+    if (!a) return false;
+    const d = framingDistance(a.size, fill, CAMERA_FOV);
+    const pose = findVantage(a, w.valley, { dist: [d * 0.9, d * 1.2], up: [a.size * 0.4 + d * 0.15, a.size * 0.4 + d * 0.35], sun: sunDirection(clock.hour), rng: mulberry32(1) });
+    w.peek.open(pose);
+    return pose;
+  }, { picture: w.peek });
   const simDev = simHooks(w, at, time);
   const fpsNow = () => (fps.length ? [...fps].sort((a, b) => a - b)[Math.floor(fps.length / 2)] : 0);
   Object.assign(window, {
@@ -251,8 +270,22 @@ export function devHooks(w: World, pace: Pacing, loop: Loop, ctx: DevContext) {
       /** The views controller (`views.lock(id, view)`, `setView`, `letGo`, `state`…), and free flight aimed at an animal. */
       views: w.views,
       aimAt,
-      time, tour, perf, frames,
+      time, tour, perf, frames, peek,
       sim: simDev,
+      /**
+       * The documentary: `start()`, `stop()`, `next()` (skip to the next scene), `stories()` (the scored list), `say(text)`
+       * (speak a line now), `timelapse()`; and its `planner`, `book` and `voice` to look at.
+       */
+      director: {
+        ...w.director.dev,
+        /** An invitation card for animal `id` now, whatever the wait (free flight; the card shows once its spot is warm). */
+        peek: (id: string) => {
+          const c = w.director.dev.cardFor(id);
+          if (!c) return false;
+          w.moments.show(c.story, c.line);
+          return c.story.id;
+        },
+      },
       /** Stage a scene for a shot (as `sim.stage`). */
       stage: simDev.stage,
       /** Paint every leaf card (colour above, height below, on a sky-grey ground) and save the sheet as .shots/<name>.png. */

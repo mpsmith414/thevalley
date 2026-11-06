@@ -1,16 +1,18 @@
 import { Quaternion, Vector3, type Material, type Object3D, type SkinnedMesh } from 'three/webgpu';
 import { describe, expect, it, vi } from 'vitest';
 import { buildBody, individualVariation } from '../../src/builder/build';
-import { createCreatureObject, type CreatureObject } from '../../src/render/creature';
+import { createCreatureObject, poseReach, uncull, type CreatureObject } from '../../src/render/creature';
 import { eyePlaces } from '../../src/skin/eyes';
 import { fox } from '../../src/cast/fox';
 import { cross, dot, norm, sub, type Vec3 } from '../../src/util/vec';
 import { jawWeight } from '../fixtures/jaw';
-import { blob, quadruped } from '../fixtures/recipes';
+import { mulberry32 } from '../../src/util/rng';
+import { bird, blob, quadruped } from '../fixtures/recipes';
 
 // two coarse levels of detail are enough: the first gets 16 fur shells on High, the second 8
 const body = buildBody(quadruped, [2, 2]);
 const bones = body.skeleton.bones;
+const birdBody = buildBody(bird, [2]);
 const foxBody = buildBody(fox, [0]); // the fox at full detail: its face, jaw and eyes
 const variation = (seed: number) => individualVariation(quadruped, seed, bones.length, bones.map((b) => b.partId));
 const shells = (o: CreatureObject) => o.root.children.filter((c): c is SkinnedMesh => c.name.startsWith('fur'));
@@ -30,6 +32,49 @@ describe('the creature geometry', () => {
     expect(g.attributes.tangent.array).toBe(body.lods[0].groom);
     expect(g.attributes.feature.itemSize).toBe(4);
     expect(g.attributes.feature.array).toBe(body.lods[0].feature);
+  });
+});
+
+describe('the bounds every pose stays in', () => {
+  it('lets each camera leave the animal out when it cannot see it: the body and its shells share one sphere', () => {
+    const o = createCreatureObject(body, quadruped, 'high');
+    const all = [...o.meshes, ...shells(o)];
+    expect(shells(o).length).toBeGreaterThan(0);
+    for (const m of all) {
+      expect(m.frustumCulled).toBe(true);
+      expect(m.boundingSphere).toBe(o.meshes[0].boundingSphere);
+    }
+  });
+
+  it('holds every skinned vertex of a strongly posed body: a stretched quadruped, a bird with its wings swung', () => {
+    const rng = mulberry32(7);
+    for (const [b, r] of [[body, quadruped], [birdBody, bird]] as const) {
+      const o = createCreatureObject(b, r, 'high');
+      const reach = poseReach(b);
+      for (let trial = 0; trial < 4; trial++) {
+        // every joint turned up to 0.6 rad about a random axis: far past a gallop's stretch or a wingbeat
+        for (const bone of o.bones) {
+          const axis = new Vector3(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
+          bone.quaternion.setFromAxisAngle(axis, (rng() * 2 - 1) * 0.6);
+        }
+        o.root.updateMatrixWorld(true);
+        const v = new Vector3();
+        for (const m of o.meshes) {
+          const n = m.geometry.attributes.position.count;
+          for (let i = 0; i < n; i++) expect(reach.distanceToPoint(m.getVertexPosition(i, v)), r.id).toBeLessThan(0);
+        }
+      }
+    }
+  });
+
+  it('lets a compile see every body wherever its camera looks (uncull), then culls them again', () => {
+    const o = createCreatureObject(body, quadruped, 'high');
+    const all = [...o.meshes, ...shells(o)];
+    const recull = uncull(o.root);
+    for (const m of all) expect(m.frustumCulled).toBe(false);
+    for (const e of o.eyes) expect(e.frustumCulled).toBe(true); // plain meshes keep their own bounds
+    recull();
+    for (const m of all) expect(m.frustumCulled).toBe(true);
   });
 });
 
@@ -77,6 +122,8 @@ describe('createCreatureObject with a shared look', () => {
       expect(l.material).toBe(a.look.lids);
       expect(tint(l)).toBe(tint(b.meshes[0]));
     }
+    // the eyes: one material for the species too (a herd seen for the first time builds no new shaders)
+    for (const e of [...a.eyes, ...b.eyes]) expect(e.material).toBe(a.look.eyes);
   });
 
   it('draws every fur shell with one material, each at its own height', () => {
@@ -101,22 +148,24 @@ describe('createCreatureObject with a shared look', () => {
   it('leaves shared materials alive when a borrower goes, and frees them with their owner', () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));
     const b = createCreatureObject(body, quadruped, 'high', variation(2), a.look);
-    const skinGone = disposed(a.look.skin), furGone = disposed(a.look.fur!), lidsGone = disposed(a.look.lids!);
+    const skinGone = disposed(a.look.skin), furGone = disposed(a.look.fur!), lidsGone = disposed(a.look.lids!), eyesGone = disposed(a.look.eyes);
     b.dispose();
     expect(skinGone()).toBe(false);
     expect(furGone()).toBe(false);
     expect(lidsGone()).toBe(false);
+    expect(eyesGone()).toBe(false);
     a.dispose();
     expect(skinGone()).toBe(true);
     expect(furGone()).toBe(true);
     expect(lidsGone()).toBe(true);
+    expect(eyesGone()).toBe(true);
   });
 
-  it("frees each animal's own eye resources (eyeball, its material, the lids' cap) with it", () => {
+  it("frees each animal's own eye resources (eyeball, the lids' cap) with it", () => {
     const a = createCreatureObject(body, quadruped, 'high', variation(1));
     const b = createCreatureObject(body, quadruped, 'high', variation(2), a.look);
     const e = b.eyes[0];
-    const gone = [e.geometry, e.material as Material, e.lids[0].geometry].map((x) => disposed(x as Material));
+    const gone = [e.geometry, e.lids[0].geometry].map((x) => disposed(x as unknown as Material));
     const aEye = disposed(a.eyes[0].geometry as unknown as Material);
     b.dispose();
     gone.forEach((g) => expect(g()).toBe(true));

@@ -35,7 +35,11 @@ export function lidAngles(amount: number, out = { upper: 0, lower: 0 }): { upper
 /** Scratch for the blink, which runs every frame. */
 const lidScratch = { upper: 0, lower: 0 };
 
-function eyeMaterial(recipe: Recipe): MeshPhysicalNodeMaterial {
+/**
+ * One eye material for a whole species: the iris's colour round the pupil's shape, glossy. Shared by every animal of the
+ * kind, so a herd seen for the first time builds no new shaders.
+ */
+export function eyeMaterial(recipe: Recipe): MeshPhysicalNodeMaterial {
   const iris = uniform(new Color(recipe.skin.eyes.color));
   const [px, py] = PUPIL[recipe.skin.eyes.pupil];
   const p = positionLocal.normalize(); // the eye looks along local +z
@@ -106,11 +110,11 @@ export function eyePlaces(body: BodyData, eyeSize: number): EyePlace[] {
 
 /**
  * Bright, glossy eyes on every eye bone, looking outward along the bone, each with an upper and a lower lid when the
- * recipe has lids (`face.lids`). Pass the animal's `tint` (set on the lids, as on its body) and its species' `lids`
- * material (from `lidMaterial`; one is made if none is given).
+ * recipe has lids (`face.lids`). Pass the animal's `tint` (set on the lids, as on its body) and its species' `lids` and
+ * `eyes` materials (from `lidMaterial` and `eyeMaterial`; they are made if not given).
  */
-export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?: Vector3, lids?: Material | null): Eye[] {
-  const mat = eyeMaterial(recipe);
+export function createEyes(body: BodyData, recipe: Recipe, bones: Bone[], tint?: Vector3, lids?: Material | null, eyes?: Material): Eye[] {
+  const mat = eyes ?? eyeMaterial(recipe);
   const geo = new SphereGeometry(1, 24, 16);
   const lidMat = recipe.face.lids ? (lids ?? lidMaterial(body, recipe)) : null;
   // a hemispherical cap over y > 0: unrotated, its rim lies in the eye's y = 0 plane, its front edge at elevation 0

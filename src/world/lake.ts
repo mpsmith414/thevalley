@@ -1,5 +1,5 @@
 import { LinearSRGBColorSpace, Mesh, NodeMaterial, type Camera, type RenderTarget, Shape, ShapeGeometry, Vector2, type LightShadow, type Node, type Scene, type Texture } from 'three/webgpu';
-import { cameraPosition, float, positionWorld, reflector, screenSize, smoothstep, vec2 } from 'three/tsl';
+import { Fn, If, cameraPosition, float, positionWorld, reflector, screenSize, smoothstep, uniform, vec2, vec3 } from 'three/tsl';
 import { probe } from '../render/probe';
 import type { Tier } from '../render/quality';
 import { offsetPolygon } from '../valley/geom';
@@ -29,6 +29,25 @@ function shareMirrorPipelines(mirror: Updater) {
   };
 }
 /**
+ * Hold the scene's shadow maps as they are (the key light's, and the cascades' stand-in lights: plain Object3Ds with a
+ * shadow among `scene.children`) until `release`: a render from another camera then reuses the main view's maps instead
+ * of drawing them all again for itself (r186 draws a shadow map once per camera per frame). `cascaded` and `standIns` say
+ * what was found, for the probe below.
+ */
+export function holdShadows(scene: Scene): { cascaded: boolean; standIns: number; release(): void } {
+  const held: LightShadow[] = [];
+  let cascaded = false, standIns = 0;
+  for (const o of scene.children) {
+    const shadow = (o as { shadow?: LightShadow & { shadowNode?: unknown } }).shadow;
+    if (!shadow) continue;
+    if ((o as { isLight?: boolean }).isLight) cascaded ||= !!shadow.shadowNode; // a custom shadow node: the CSM cascades
+    else standIns++;
+    if (shadow.autoUpdate) { shadow.autoUpdate = false; held.push(shadow); } // (at night the sky holds them all already)
+  }
+  return { cascaded, standIns, release: () => { for (const shadow of held) shadow.autoUpdate = true; } };
+}
+
+/**
  * The mirror renders the scene again from below the water, and three would re-render every shadow map for that camera
  * (doubling the shadow passes). Hold the shadow maps during the mirror's render: it uses the main view's.
  */
@@ -36,18 +55,10 @@ function keepShadows(mirror: Updater, scene: Scene) {
   const render = mirror.updateBefore.bind(mirror);
   let frames = 0;
   mirror.updateBefore = (frame) => {
-    const held: LightShadow[] = [];
-    let cascaded = false, standIns = 0;
-    for (const o of scene.children) { // the key light, and the cascades' stand-in lights (plain Object3Ds with a shadow)
-      const shadow = (o as { shadow?: LightShadow & { shadowNode?: unknown } }).shadow;
-      if (!shadow) continue;
-      if ((o as { isLight?: boolean }).isLight) cascaded ||= !!shadow.shadowNode; // a custom shadow node: the CSM cascades
-      else standIns++;
-      if (shadow.autoUpdate) { shadow.autoUpdate = false; held.push(shadow); } // (at night the sky holds them all already)
-    }
+    const hold = holdShadows(scene);
     // the cascades add their stand-ins to the scene on the first render, so look from the second frame on
-    if (++frames > 2) probe(!cascaded || standIns > 0, "the lake's mirror found no shadow-cascade lights in scene.children, so it re-renders every shadow map (lake.ts keepShadows)");
-    try { return render(frame); } finally { for (const shadow of held) shadow.autoUpdate = true; }
+    if (++frames > 2) probe(!hold.cascaded || hold.standIns > 0, "the lake's mirror found no shadow-cascade lights in scene.children, so it re-renders every shadow map (lake.ts keepShadows)");
+    try { return render(frame); } finally { hold.release(); }
   };
 }
 
@@ -57,9 +68,11 @@ function keepShadows(mirror: Updater, scene: Scene) {
  * sky (other tiers: the environment map), with a foam line where it meets the land.
  * `update(t, light, wind)`: the time in seconds, the light of the moment and the wind. `mirrorLayers(f)`: the layers the
  * mirror draws for a camera (High tier only), so costly layers (the plants) can be left out when the lake is far away.
+ * `mirror(false)`: until `mirror(true)`, the water mirrors the sky as on the other tiers and the planar mirror is not drawn
+ * (a render from a second camera, such as the peek's: the mirror draws once a frame, for the main view).
  */
 export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene: Scene, lake: Lake = VALLEY.lake):
-  { object: Mesh; update(t: number, light: LightState, wind?: WindState): void; mirrorLayers(layers: (camera: Camera) => number): void } {
+  { object: Mesh; update(t: number, light: LightState, wind?: WindState): void; mirrorLayers(layers: (camera: Camera) => number): void; mirror(on: boolean): void } {
   void d; // the ground under the lake is read from `tex`
   const level = lake.level;
   const shape = new Shape(offsetPolygon(lake.outline, SKIRT).map((p) => new Vector2(p.x, -p.z)));
@@ -79,6 +92,7 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
   let reflection: (R: Node<'vec3'>, lit: Node<'vec3'>) => Node<'vec3'> = (R, lit) => skyReflection(env, R, lit, 0.05);
   const mesh = new Mesh(geo, mat);
   let layers: ((camera: Camera) => number) | null = null;
+  const planar = uniform(1); // 1: the planar mirror; 0: the sky's reflection (see `mirror`)
   if (WORLD_QUALITY[tier].reflections === 'planar') {
     const mirror = reflector({ resolutionScale: 0.5, bounces: false, samples: 4 });
     // Above the waterline the mirror holds its view from under the land: the sky, as the land's underside is culled. A
@@ -99,15 +113,27 @@ export function createLake(d: ValleyData, tex: ValleyTextures, tier: Tier, scene
       // update did not happen, so the frame's real render still draws the mirror (it updates once per frame).
       if (frame.renderer) probe('_isPreCompiling' in (frame.renderer as object), "renderer._isPreCompiling is gone, so the lake's mirror renders (and compiles one pipeline at a time) during compileAsync (lake.ts)");
       if ((frame.renderer as { _isPreCompiling?: boolean } | undefined)?._isPreCompiling) return false;
+      if (planar.value === 0) return false; // the sky's reflection for now: the main view's render still draws the mirror
       if (layers) base.getVirtualCamera(frame.camera).layers.mask = layers(frame.camera);
       return render(frame);
     };
-    reflection = () => mirror.rgb as Node<'vec3'>;
+    // a branch on the uniform: with the mirror off the water reads the sky instead (a function, so the ray and the light are
+    // worked out before the branch and nothing is declared inside it)
+    const sky = reflection;
+    const pick = Fn(([R, lit]: [Node<'vec3'>, Node<'vec3'>]) => {
+      const c = vec3(0).toVar();
+      If(planar.greaterThan(0), () => c.assign(mirror.rgb)).Else(() => c.assign(sky(R, lit)));
+      return c;
+    });
+    reflection = (R, lit) => pick(R, lit) as unknown as Node<'vec3'>;
   }
   mat.colorNode = shadeWater(u, depth, N, reflection);
 
   mesh.name = 'lake';
   mesh.position.y = level;
   mesh.renderOrder = 1; // after the ground (opaque) and before the river where it runs in
-  return { object: mesh, update: (t, light, wind) => setWater(u, t, light, wind), mirrorLayers: (f) => (layers = f) };
+  return {
+    object: mesh, update: (t, light, wind) => setWater(u, t, light, wind), mirrorLayers: (f) => (layers = f),
+    mirror: (on) => void (planar.value = on ? 1 : 0),
+  };
 }

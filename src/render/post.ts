@@ -1,5 +1,5 @@
-import { ColorManagement, DepthTexture, RenderPipeline, RenderTarget, type Camera, type ColorSpace, type Node, type PassNode, type Scene, type TextureNode, type WebGPURenderer } from 'three/webgpu';
-import { pass, renderOutput, vec4 } from 'three/tsl';
+import { ColorManagement, DepthTexture, RenderPipeline, RenderTarget, Texture, Vector4, type Camera, type ColorSpace, type Node, type PassNode, type Scene, type TextureNode, type UniformNode, type WebGPURenderer } from 'three/webgpu';
+import { Fn, If, abs, float, max, mix, pass, renderOutput, screenUV, texture, uniform, vec4 } from 'three/tsl';
 import { bloom, type default as BloomNode } from 'three/addons/tsl/display/BloomNode.js';
 import { NEUTRAL_GRADE, gradeNode, gradeUniforms, type Grade, type GradeUniforms } from './grade';
 import { lensColourNode, lensSceneNode, lensUniforms, type LensUniforms } from './lens';
@@ -20,9 +20,40 @@ export const POST: Record<Tier, PostSettings> = {
 
 /**
  * The picture's last stage. `render()` draws the scene (or, for a one-off such as a snapshot, another `scene` and `camera`)
- * through the pipeline; `grade` holds the colour grade's uniforms, `lens` the Eyes view's lens's (all off but in Eyes).
+ * through the pipeline; `grade` holds the colour grade's uniforms, `lens` the Eyes view's lens's (all off but in Eyes),
+ * `peek` the corner the peek is laid into (closed but while it shows; see peek.ts).
  */
-export type Post = { render(scene?: Scene, camera?: Camera): void; grade: GradeUniforms; lens: LensUniforms; setTier(t: Tier): void; dispose(): void };
+export type Post = { render(scene?: Scene, camera?: Camera): void; grade: GradeUniforms; lens: LensUniforms; peek: PeekUniforms; setTier(t: Tier): void; dispose(): void };
+
+/**
+ * The corner the post pipeline lays the peek into: `strength` 0 (closed: the picture is untouched and the work is
+ * skipped) to 1, `rect` its place as a share of the screen (x, y from the top-left, width, height) and `map` its picture.
+ */
+export type PeekUniforms = { strength: UniformNode<'float', number>; rect: UniformNode<'vec4', Vector4>; map: TextureNode };
+
+/** The corner's uniforms, closed (the peek sets its picture into `map` when it is made). */
+export function peekUniforms(): PeekUniforms {
+  return { strength: uniform(0), rect: uniform(new Vector4(0, 0, 0, 0)), map: texture(new Texture()) };
+}
+
+/**
+ * The HDR picture `color` with the peek laid into its corner (before tone mapping, so the peek is tone mapped and graded
+ * with the rest). With `strength` 0 a branch on the uniform skips it all.
+ */
+export function peekNode(color: Node, u: PeekUniforms): Node {
+  return Fn(() => {
+    const out = vec4(color as Node<'vec4'>).toVar();
+    If(u.strength.greaterThan(0), () => {
+      const p = screenUV.sub(u.rect.xy).div(u.rect.zw).toVar(); // 0..1 across the corner
+      const off = abs(p.sub(0.5));
+      If(max(off.x, off.y).lessThanEqual(0.5), () => {
+        // the top level by name: a branch on the pixel's place may not take a texture's derivatives
+        out.assign(mix(out, u.map.sample(p).level(float(0)), u.strength));
+      });
+    });
+    return out;
+  })();
+}
 
 /** The scene pass's MSAA samples: as asked, or one on WebGL 2 when the context cannot multisample a half-float target. */
 function passSamples(renderer: WebGPURenderer, want: number): number {
@@ -38,18 +69,19 @@ function passSamples(renderer: WebGPURenderer, want: number): number {
  * exposure and output colour space), the lens's colour and the grade on the display-referred picture. The lens is built
  * in once with its strengths as uniforms (see `lens.ts`): off, it hands the picture on untouched. The pass's target
  * matches the renderer's own frame buffer target (half float, 4 samples, linear working colour space, depth24plus), so
- * the pipelines `compileTogether` builds for the canvas are the ones the pass draws with. The pipeline's own quad
+ * the pipelines `compileTogether` builds for the canvas are the ones the pass draws with. The peek (peek.ts), when it
+ * shows, is laid into its corner after the lens's shape and before the tone mapping. The pipeline's own quad
  * materials compile on the first `render()`.
  *
  * If this three build cannot place the output transform itself (see `pipelineOutput`), it draws straight with
  * `renderer.render`: no bloom, no grade, no lens.
  */
 export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camera, tier: Tier, grade: Grade = NEUTRAL_GRADE): Post {
-  const u = gradeUniforms(grade), lens = lensUniforms();
+  const u = gradeUniforms(grade), lens = lensUniforms(), peek = peekUniforms();
   const pipeline = new RenderPipeline(renderer);
   if (!pipelineOutput(pipeline)) {
     pipeline.dispose();
-    return { render: (s = scene, c = camera) => renderer.render(s, c), grade: u, lens, setTier: () => {}, dispose: () => {} };
+    return { render: (s = scene, c = camera) => renderer.render(s, c), grade: u, lens, peek, setTier: () => {}, dispose: () => {} };
   }
   pipeline.outputColorTransform = false; // renderOutput below does it, so the grade can follow
   let scenePass: PassNode | null = null, glow: BloomNode | null = null;
@@ -76,7 +108,7 @@ export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camer
     // the scene's depth and camera, for the look from under the water
     depth = scenePass.getTextureNode('depth');
     const view = { depth, camera: () => scenePass!.camera };
-    const seen = lensSceneNode(hdr, picture, glowTex, lens, view);
+    const seen = peekNode(lensSceneNode(hdr, picture, glowTex, lens, view), peek);
     pipeline.outputNode = gradeNode(lensColourNode(renderOutput(seen), lens), u);
     pipeline.needsUpdate = true;
   };
@@ -115,6 +147,7 @@ export function createPost(renderer: WebGPURenderer, scene: Scene, camera: Camer
     },
     grade: u,
     lens,
+    peek,
     setTier: build, // tiers change on a reload today; this rebuilds the graph (bloom on or off, samples) when called
     dispose() {
       scenePass?.dispose();

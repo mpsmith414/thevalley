@@ -155,8 +155,22 @@ body { background: #b9c8cf; color: #14405c; }
   opacity: 0; transition: opacity 0.6s ease, transform 0.6s ease;
 }
 .caption.in { opacity: 1; transform: translate(-50%, 0); }
+.caption.subtitle { max-width: min(70vw, 1200px); justify-content: center; text-align: center; }
 .caption-hint { flex: none; padding: 4px 16px; border-radius: 999px; background: #5fae4a; color: #fff; font-size: 0.8em; font-weight: 900; white-space: nowrap; }
 .caption-hint:empty { display: none; }
+/* ---------- invitations (free flight): a frame round the peek's picture in the bottom-left corner, its line and hint under it.
+   invite-ui.ts places it at peekRect (the picture is the canvas's, under the transparent frame); the text is sized to the card's
+   width (cqw), into the room peekRect leaves under the picture. It never reaches the join card (bottom-right). ---------- */
+.invite { position: absolute; container-type: inline-size; pointer-events: none; color: #14405c; opacity: 0; transition: opacity 0.6s ease; }
+.invite.in { opacity: 1; }
+.invite-pic { border: 5px solid #ffffffe0; border-bottom: none; border-radius: 12px 12px 0 0; }
+.invite-text { display: grid; justify-items: start; gap: 1.2cqw; padding: 1.4cqw 3cqw 2.6cqw; border-radius: 0 0 12px 12px; background: #ffffffe0; }
+.invite-line {
+  font-size: 5.4cqw; font-weight: 800; line-height: 1.2; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-clamp: 2;
+}
+.invite-hint { padding: 0.6cqw 3.4cqw; border-radius: 999px; background: #5fae4a; color: #fff; font-size: 4.2cqw; font-weight: 900; white-space: nowrap; }
+.invite-hint:empty { display: none; }
 /* ---------- the views: the name tag over the highlighted animal, and the card (with the button hints) while watching one ---------- */
 .view-tag {
   position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 12px; padding: 7px 10px 7px 20px; border-radius: 999px;
@@ -233,7 +247,32 @@ body { background: #b9c8cf; color: #14405c; }
   background: #ffffffc0; color: #3f8a2e; font-size: 18px; font-weight: 900; box-shadow: 0 3px 12px #0002; opacity: 0; transition: opacity 0.8s ease;
 }
 .map-hints.in { opacity: 1; }
+/* ---------- the documentary: letterbox bars to about 2:1, the lower-third title, the take-over hint, the dip through black ---------- */
+#ui > .doc-bar, #ui > .doc-dip, #ui > .doc-title, #ui > .doc-hint { pointer-events: none; }
+.doc-bar {
+  --bar: max(0px, calc((100vh - 50vw) / 2)); position: absolute; left: 0; right: 0; height: var(--bar); background: #000;
+  transition: transform 0.9s ease;
+}
+.doc-bar.top { top: 0; transform: translateY(-100%); }
+.doc-bar.bottom { bottom: 0; transform: translateY(100%); }
+.doc-bar.in { transform: none; }
+.doc-dip { position: absolute; inset: 0; background: #000; opacity: 0; transition: opacity 0.3s ease-in-out; }
+.doc-dip.in { opacity: 1; }
+.doc-dip.in.now { transition: none; } /* a cut-away: black at once, the chase never seen fading out */
+.doc-title {
+  position: absolute; left: 6vw; bottom: 26vh; display: grid; gap: 4px; color: #fff; text-shadow: 0 2px 10px #000a, 0 0 2px #0008;
+  opacity: 0; transform: translateX(-12px); transition: opacity 1.2s ease, transform 1.2s ease;
+}
+.doc-title.in { opacity: 1; transform: none; }
+.doc-title-kicker { font-size: 20px; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; opacity: 0.85; }
+.doc-title-text { font-size: 40px; font-weight: 800; white-space: nowrap; }
+.doc-hint {
+  position: absolute; left: 50%; top: calc(max(0px, (100vh - 50vw) / 2) + 18px); transform: translateX(-50%); padding: 8px 24px;
+  border-radius: 999px; background: #ffffffc0; color: #3f8a2e; font-size: 20px; font-weight: 900; white-space: nowrap;
+  box-shadow: 0 3px 12px #0002; opacity: 0; transition: opacity 0.8s ease;
+}
+.doc-hint.in { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
-  .menu, .menu-btn, .label-pill, .caption, .view-tag, .view-card, .view-hints, .view-sense-line, .view-arc, .map, .map-name, .map-hints, .map-cursor::before { transition: none !important; animation: none !important; }
+  .menu, .menu-btn, .label-pill, .caption, .view-tag, .view-card, .view-hints, .view-sense-line, .view-arc, .map, .map-name, .map-hints, .map-cursor::before, .doc-bar, .doc-title, .doc-hint, .invite { transition: none !important; animation: none !important; }
   .menu-btn.focused, .menu-btn:focus-visible { transform: none; }
 }

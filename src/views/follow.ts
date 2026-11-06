@@ -55,9 +55,10 @@ const MOVING = 0.3;
  * What the player (or the show) asks of the follow this frame; none of it, and it is the arrival's follow. `orbit`: yaw
  * is the offset (radians) from straight behind, pitch the elevation above the horizon (5°–60°). `distance`: the factor on
  * the framing's distance (0.6–2.5). `rate`: the animals' rate (1 = Normal), which raises the speed cap and quickens the
- * camera's ease to keep up. `wide`: the chase framing, 2.5× the distance and swung 70° to the side.
+ * camera's ease to keep up. `wide`: the chase framing, 2.5× the distance and swung 70° to the side. `farthest`: the
+ * most (m) it stands from the lead, the framing brought in to it (the documentary's, so its animal shows; never the player's).
  */
-export type FollowOpts = { orbit?: { yaw: number; pitch: number }; distance?: number; rate?: number; wide?: boolean };
+export type FollowOpts = { orbit?: { yaw: number; pitch: number }; distance?: number; rate?: number; wide?: boolean; farthest?: number };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const wrap = (a: number) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
 
@@ -132,8 +133,11 @@ export class FollowCam {
     const altitude = target.y - surfaceAt(world, target.x, target.z);
     const { back: base, up: baseUp, lookUp } = followFraming(this.size, this.flies ? { altitude } : undefined);
     const zoom = opts.wide ? WIDE_DISTANCE : clamp(opts.distance ?? 1, DISTANCE_MIN, DISTANCE_MAX);
-    const back = base * zoom, up = baseUp * zoom, orbit = (opts.orbit?.yaw ?? 0) + (opts.wide ? WIDE_SWING : 0);
+    const orbit = (opts.orbit?.yaw ?? 0) + (opts.wide ? WIDE_SWING : 0);
     const tilt = opts.orbit ? Math.tan(clamp(opts.orbit.pitch, PITCH_MIN, PITCH_MAX)) : 0;
+    let back = base * zoom, up = baseUp * zoom;
+    const reach = Math.hypot(back, opts.orbit ? back * tilt : up);
+    if (opts.farthest && reach > opts.farthest) (back *= opts.farthest / reach), (up *= opts.farthest / reach);
     const aim = { x: target.x, y: target.y + lookUp, z: target.z };
     const spot = (swing: number, near: number, rise: number): Vec3 => {
       const a = this.heading + Math.PI + orbit + swing, x = target.x + Math.cos(a) * back * near, z = target.z + Math.sin(a) * back * near;
@@ -173,7 +177,13 @@ export class FollowCam {
     let sx = (want!.x - this.pos.x) * k, sy = (want!.y - this.pos.y) * k, sz = (want!.z - this.pos.z) * k;
     const step = Math.hypot(sx, sy, sz), cap = FOLLOW_MAX_SPEED * rate * dt;
     if (step > cap) (sx *= cap / step), (sy *= cap / step), (sz *= cap / step);
-    let x = this.pos.x + sx, z = this.pos.z + sz;
+    let x = this.pos.x + sx, y = this.pos.y + sy, z = this.pos.z + sz;
+    // the documentary's cap holds lag and all: a fast lead draws the camera along rather than leaving it far behind
+    const far = Math.hypot(x - aim.x, y - aim.y, z - aim.z);
+    if (opts.farthest && far > opts.farthest) {
+      const f = opts.farthest / far;
+      (x = aim.x + (x - aim.x) * f), (y = aim.y + (y - aim.y) * f), (z = aim.z + (z - aim.z) * f);
+    }
     // off the bark (a small push: it was heading round it anyway)
     for (const t of world.trunksNear(x, z, BARK)) {
       const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz), min = t.r + BARK;
@@ -182,7 +192,7 @@ export class FollowCam {
       x = t.x + ux * min;
       z = t.z + uz * min;
     }
-    this.pos = { x, y: Math.max(this.pos.y + sy, surfaceAt(world, x, z) + FOLLOW_CLEAR), z };
+    this.pos = { x, y: Math.max(y, surfaceAt(world, x, z) + FOLLOW_CLEAR), z };
 
     const kl = 1 - Math.exp(-ease / TAU_LOOK);
     this.look = { x: this.look.x + (aim.x - this.look.x) * kl, y: this.look.y + (aim.y - this.look.y) * kl, z: this.look.z + (aim.z - this.look.z) * kl };

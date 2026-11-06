@@ -146,6 +146,30 @@ describe('collectInstances', () => {
     for (const x of d) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThan(60); }
   });
 
+  it('with a second point in the split, measures each plant against the nearer of the two', () => {
+    const a = { x: -800 + 3 * 64, y: 5, z: -800 + 4 * 64 + 32 }, b = { x: -800 + 3 * 64 + 50, y: 5, z: -800 + 4 * 64 + 10 };
+    const split = { ...a, edge: 20, far: 60, second: b }, bands: Band[] = ['near', 'near', 'none'];
+    const o = { kinds: [K('pine')], density: full, split };
+    const near = collectInstances(tiles, bands, 'near', o), mid = collectInstances(tiles, bands, 'mid', o);
+    const nearest = (b2: ReturnType<typeof collectInstances>) => b2.flatMap((x) => Array.from({ length: x.count }, (_, i) => {
+      const p = [x.data[i * GPU_STRIDE], x.data[i * GPU_STRIDE + 1], x.data[i * GPU_STRIDE + 2]];
+      return Math.min(Math.hypot(p[0] - a.x, p[1] - a.y, p[2] - a.z), Math.hypot(p[0] - b.x, p[1] - b.y, p[2] - b.z));
+    }));
+    const dn = nearest(near), dm = nearest(mid), fromA = (b2: ReturnType<typeof collectInstances>) => b2.flatMap((x) => Array.from({ length: x.count },
+      (_, i) => Math.hypot(x.data[i * GPU_STRIDE] - a.x, x.data[i * GPU_STRIDE + 1] - a.y, x.data[i * GPU_STRIDE + 2] - a.z)));
+    expect(fromA(near).some((d) => d >= 20)).toBe(true); // near only for the second point
+    for (const d of dn) expect(d).toBeLessThan(20);
+    for (const d of dm) { expect(d).toBeGreaterThanOrEqual(20); expect(d).toBeLessThan(60); }
+    // every pine of the two tiles is near, mid or past `far` from both points
+    let past = 0;
+    for (const t of tiles.slice(0, 2)) for (let i = 0; i < t.plants.kind.length; i++) {
+      const s = i * INSTANCE_STRIDE, d = t.plants.data;
+      if (t.plants.kind[i] !== K('pine')) continue;
+      if (Math.min(Math.hypot(d[s] - a.x, d[s + 1] - a.y, d[s + 2] - a.z), Math.hypot(d[s] - b.x, d[s + 1] - b.y, d[s + 2] - b.z)) >= 60) past++;
+    }
+    expect(total(near) + total(mid) + past).toBe(150 + 100);
+  });
+
   it('can fold variants together, rescaling each plant to keep its height', () => {
     const heights = Array.from({ length: PLANT_KINDS.length * VARIANTS }, (_, i) => 10 + (i % VARIANTS));
     const remap = [1, 1, 3, 3, 5, 5];
@@ -227,6 +251,65 @@ describe('VegetationTiles', () => {
     expect(veg.stats().mid).toBe(want);
     expect(reach).toBeGreaterThan(q.midTree);
     expect(reach).toBeLessThan(q.midTree * 1.1);
+  });
+
+  describe('the second eye', () => {
+    /** A camera at (x, 5, 0) looking along +x (`dir` 1) or −x (−1). */
+    const eyeAt = (x: number, dir = 1) => {
+      const c = new PerspectiveCamera(55, 1, 0.1, 8000);
+      c.position.set(x, 5, 0);
+      c.lookAt(x + dir * 1000, 5, 0);
+      c.updateMatrixWorld();
+      return c;
+    };
+
+    it('a tile only the second eye sees is drawn at its near band', () => {
+      const veg = make(), main = eyeAt(-100, -1); // looking away
+      veg.update(main, 1);
+      expect(veg.stats().tiles.tree.near).toBe(0);
+      expect(veg.stats().mid).toBe(0);
+      expect(veg.update(main, 0, eyeAt(-20))).toBe(true); // a new second eye re-bands at once
+      expect(veg.stats().tiles.tree.near).toBe(1);
+      expect(veg.stats().near).toBeGreaterThan(0);
+      expect(veg.update(main, 0, null)).toBe(true); // and so does clearing it
+      expect(veg.stats().tiles.tree.near).toBe(0);
+      expect(veg.stats().near + veg.stats().mid).toBe(0);
+    });
+
+    it('an eye that does not see a tile takes none of its plants from the eye that does (both ways round)', () => {
+      // the tile (x −32..32) is mid for an eye at x −150; an eye at x 80 facing away is within the near edge of its east side
+      const alone = make();
+      alone.update(eyeAt(-150), 1);
+      const mid = alone.stats().mid;
+      expect(mid).toBeGreaterThan(150);
+      expect(alone.stats().near).toBe(0);
+      const d = fakeTile(12, 12, 200, [K('pine')], 4).plants.data; // make()'s tile
+      let inside = 0; // plants within the near edge of the eye facing away
+      for (let s = 0; s < d.length; s += INSTANCE_STRIDE) if (Math.hypot(d[s] - 80, d[s + 1] - 5, d[s + 2]) < q.nearTree) inside++;
+      expect(inside).toBeGreaterThan(0);
+      const seenByMain = make();
+      seenByMain.update(eyeAt(-150), 1, eyeAt(80));
+      expect([seenByMain.stats().near, seenByMain.stats().mid]).toEqual([0, mid]);
+      const seenBySecond = make();
+      seenBySecond.update(eyeAt(80), 1, eyeAt(-150));
+      expect([seenBySecond.stats().near, seenBySecond.stats().mid]).toEqual([0, mid]);
+    });
+
+    it('plants near the second eye are collected even when far from the main one', () => {
+      const veg = make(), main = eyeAt(-100);
+      veg.update(main, 1);
+      expect(veg.stats().near).toBe(0); // every pine is past the near edge of the main camera
+      const all = veg.stats().mid;
+      expect(all).toBeGreaterThan(150);
+      const second = eyeAt(0);
+      veg.update(main, 0, second);
+      expect(veg.stats().near).toBeGreaterThan(0);
+      expect(veg.stats().near + veg.stats().mid).toBe(all); // split between the two, none lost or doubled
+      expect(veg.update(main, 0, second)).toBe(false); // the same eye, unmoved: nothing to do
+      second.position.x += 9;
+      second.updateMatrixWorld();
+      expect(veg.update(main, 0, second)).toBe(true); // moved past the threshold: re-banded
+    });
   });
 
   it('puts the mid trees on the mid-tree layer as well, and disposes cleanly', () => {

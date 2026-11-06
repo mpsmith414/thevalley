@@ -5,6 +5,7 @@ import type { Button } from '../shared/input';
 import { NO_CREATURES, type PageNav } from '../bring/creatures-menu';
 import { LIMITS } from '../bring/protocol';
 import { PRESETS } from '../world/clock';
+import type { DocSettings } from '../director/wire';
 
 /** The time-of-day jumps. */
 export const TIMES = [
@@ -36,15 +37,17 @@ export const tierLabel = (t: Tier) => TIER_LABEL[t];
 /**
  * What the menu shows: the clock, the quality setting (and the tier running now), the sound, whether the join card is
  * showing (it shows by itself while phones are connected; the menu's row can switch it off or on), and the daily creature
- * limit with today's count, and whether the moment captions are on.
+ * limit with today's count, and the documentary's settings (with whether the narrator's voice can be had).
  */
 export type MenuState = {
   speed: number; paused: boolean; quality: QualityChoice; tier: Tier; volume: number; muted: boolean;
-  bring: boolean; dailyLimit: number; today: number; captions: boolean;
+  bring: boolean; dailyLimit: number; today: number; doc: DocSettings; voice: 'unknown' | 'yes' | 'no';
 };
 export type MenuItem = { id: string; label: string; hint?: string; selected?: boolean; disabled?: boolean; aria?: string };
+/** The Documentary page's rows. */
+export type DocRowId = 'idle' | 'narrator' | 'timelapses' | 'invitations';
 export type MenuRow = {
-  id: 'resume' | 'time' | 'speed' | 'quality' | 'volume' | 'captions' | 'bring' | 'limit' | 'more'; title?: string; items: MenuItem[]; note?: string;
+  id: 'resume' | 'watch' | 'time' | 'speed' | 'quality' | 'volume' | 'bring' | 'limit' | 'more' | DocRowId; title?: string; items: MenuItem[]; note?: string;
   /** Volume only: the level out of 10, and whether it is muted (the level then shows dimmed). */
   level?: number; off?: boolean;
 };
@@ -54,6 +57,7 @@ export function menuModel(s: MenuState): MenuRow[] {
   const sp = speedId(s.speed, s.paused), level = Math.round(s.volume * 10);
   return [
     { id: 'resume', items: [{ id: 'resume', label: 'Resume' }] },
+    { id: 'watch', items: [{ id: 'watch', label: 'Watch the documentary' }] },
     { id: 'time', title: 'Time of day', items: TIMES.map((t) => ({ id: t.id, label: t.label })) },
     { id: 'speed', title: 'Clock speed', items: SPEEDS.map((x) => ({ id: x.id, label: x.label, selected: x.id === sp })),
       note: SPEEDS.find((x) => x.id === sp)!.note },
@@ -65,10 +69,35 @@ export function menuModel(s: MenuState): MenuRow[] {
       { id: 'up', label: '+', aria: 'Louder', disabled: level >= 10 },
       { id: 'mute', label: s.muted ? 'Unmute' : 'Mute', selected: s.muted },
     ] },
-    { id: 'captions', title: 'Moment captions', items: [{ id: 'on', label: 'On', selected: s.captions }, { id: 'off', label: 'Off', selected: !s.captions }] },
     { id: 'bring', items: [{ id: 'add', label: 'Add a creature', selected: s.bring }, { id: 'creatures', label: 'Creatures' }] },
     { id: 'limit', title: 'Creatures a day', items: LIMITS.map((l) => ({ id: String(l), label: String(l), selected: l === s.dailyLimit })), note: `${s.today} made today` },
-    { id: 'more', items: [{ id: 'lab', label: 'Creature Lab' }, { id: 'controls', label: 'Controls' }, { id: 'valley', label: 'Valley' }] },
+    { id: 'more', items: [{ id: 'lab', label: 'Creature Lab' }, { id: 'controls', label: 'Controls' }, { id: 'valley', label: 'Valley' }, { id: 'documentary', label: 'Documentary' }] },
+  ];
+}
+
+const onOff = (on: boolean): MenuItem[] => [{ id: 'on', label: 'On', selected: on }, { id: 'off', label: 'Off', selected: !on }];
+/** The setting a Documentary page button chooses. */
+export function docChoice(row: DocRowId, id: string): Partial<DocSettings> {
+  if (row === 'idle') return { idle: id as DocSettings['idle'] };
+  if (row === 'narrator') return { narrator: id as DocSettings['narrator'] };
+  return row === 'timelapses' ? { timelapses: id === 'on' } : { invitations: id === 'on' };
+}
+/**
+ * The Documentary page's rows for a state: when it starts by itself, how the narrator speaks (the voice shows "not
+ * available" when this computer cannot make it; the choice still stands and falls back to words), the time-lapses, and
+ * the moment invitations (the captions).
+ */
+export function docModel(s: MenuState): MenuRow[] {
+  const d = s.doc;
+  return [
+    { id: 'idle', title: 'Start by itself', items: [{ id: '3', label: 'After 3 minutes', selected: d.idle === '3' }, { id: '10', label: 'After 10 minutes', selected: d.idle === '10' }, { id: 'off', label: 'Off', selected: d.idle === 'off' }] },
+    { id: 'narrator', title: 'Narrator', items: [
+      { id: 'voice', label: 'Voice and words', hint: s.voice === 'no' ? 'not available' : undefined, selected: d.narrator === 'voice' },
+      { id: 'words', label: 'Words only', selected: d.narrator === 'words' },
+      { id: 'off', label: 'Off', selected: d.narrator === 'off' },
+    ] },
+    { id: 'timelapses', title: 'Time-lapses', items: onOff(d.timelapses) },
+    { id: 'invitations', title: 'Moment invitations', items: onOff(d.invitations) },
   ];
 }
 
@@ -88,8 +117,10 @@ export type MenuHandlers = {
   /** Change the volume by `delta` (±0.1). */
   volume(delta: number): void;
   mute(): void;
-  /** Moment captions on or off. */
-  captions(on: boolean): void;
+  /** "Watch the documentary": the menu has closed, the documentary starts. */
+  watch(): void;
+  /** A Documentary page choice (the caller remembers it). */
+  documentary(s: Partial<DocSettings>): void;
   /** "Add a creature": show or hide the join card. */
   bring(): void;
   /** Choose the daily creature limit (one of `LIMITS`). */
@@ -112,6 +143,10 @@ export const CONTROLS: readonly [string, string, string][] = [
   ['Fly to place 1 to 8', '', 'Keys 1 to 8'],
   ['Clock faster / slower', 'D-pad ▲ ▼', '] / [ or Arrow keys ▲ ▼'],
   ['Menu', 'Start', 'Esc or N'],
+  ['Watch the documentary (free flight)', 'LB', 'P'],
+  ['In the documentary: take over', 'Any stick or button', 'Any key, or move the mouse'],
+  ['In the documentary: follow this animal', 'A', 'Enter / Space'],
+  ['In the documentary: menu', 'Start', 'Esc or N'],
   ['Choose in the menu', 'D-pad and A', 'Arrow keys and Enter'],
   ['Back', 'B', 'Backspace'],
   ["Fly to a caption's moment", 'X', 'F'],
@@ -168,9 +203,11 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     valleyAsk.hidden = !ask;
     ring.focus(valley.querySelector<HTMLElement>(ask ? '[data-key="valley:no"]' : '[data-key="valley:again"]'));
   };
-  const pages = { controls, creatures, valley };
+  // the Documentary page: its four choice rows, drawn with the menu
+  const documentary = h('section', { class: 'menu-panel menu-documentary', role: 'dialog', 'aria-label': 'Documentary', hidden: true });
+  const pages = { controls, creatures, valley, documentary };
   let page: keyof typeof pages | null = null;
-  const screen = h('div', { class: 'menu' }, main, controls, creatures, valley);
+  const screen = h('div', { class: 'menu' }, main, controls, creatures, valley, documentary);
   root.append(screen);
   const ring = new FocusRing(() => (page ? pages[page] : main));
   // a click or Tab moves the ring too, so the controller and the mouse agree on what is focused
@@ -186,7 +223,10 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     else if (row === 'volume') {
       if (id === 'mute') on.mute();
       else if (!current.find((r) => r.id === 'volume')!.items.find((i) => i.id === id)!.disabled) on.volume(id === 'up' ? 0.1 : -0.1);
-    } else if (row === 'captions') on.captions(id === 'on');
+    } else if (row === 'watch') {
+      on.resume();
+      on.watch();
+    } else if (row === 'idle' || row === 'narrator' || row === 'timelapses' || row === 'invitations') on.documentary(docChoice(row, id));
     else if (row === 'bring') {
       if (id === 'add') on.bring();
       else showPage('creatures');
@@ -194,45 +234,55 @@ export function openMenu(root: HTMLElement, state: MenuState, on: MenuHandlers) 
     else if (id === 'lab') on.lab();
     else if (id === 'controls') showPage('controls');
     else if (id === 'valley') showPage('valley');
+    else if (id === 'documentary') showPage('documentary');
   };
 
   let current: MenuRow[] = [];
+  /** One row of buttons (with its title and note) for the menu or the Documentary page. */
+  const rowEl = (row: MenuRow) => {
+    const buttons: HTMLElement[] = row.items.map((it) => h('button', {
+      class: `menu-btn${it.selected ? ' on' : ''}${row.id === 'resume' || row.id === 'watch' ? ' menu-resume' : ''}${it.disabled ? ' dim' : ''}`, type: 'button',
+      'data-focus': true, 'data-key': `${row.id}:${it.id}`, 'aria-label': it.aria, 'aria-disabled': it.disabled ? 'true' : undefined,
+      'aria-pressed': row.id === 'speed' || row.id === 'quality' || row.id === 'limit' || row.id === 'idle' || row.id === 'narrator' || row.id === 'timelapses' || row.id === 'invitations' || it.id === 'mute' || it.id === 'add' ? String(!!it.selected) : undefined,
+      onclick: () => act(row.id, it.id),
+    }, it.label, it.hint ? h('span', { class: 'menu-hint' }, ` · ${it.hint}`) : null));
+    if (row.level !== undefined) {
+      const pips = h('span', { class: `menu-level${row.off ? ' off' : ''}`, role: 'img', 'aria-label': row.off ? 'Sound off' : `Volume ${row.level} of 10` },
+        ...Array.from({ length: 10 }, (_, i) => h('i', { class: i < row.level! ? 'lit' : '', style: `height: ${20 + i * 4}px` })));
+      buttons.splice(1, 0, pips);
+    }
+    return h('div', { class: `menu-row menu-row-${row.id}` },
+      h('div', { class: 'menu-title' }, row.title ?? ''),
+      h('div', { class: 'menu-items' }, ...buttons),
+      row.note ? h('div', { class: 'menu-note' }, row.note) : null);
+  };
+
   const draw = (s: MenuState) => {
     const was = main.querySelector<HTMLElement>('.focused')?.dataset.key;
     current = menuModel(s);
-    main.replaceChildren(h('h2', { class: 'menu-heading' }, 'Valley menu'), ...current.map((row) => {
-      const buttons: HTMLElement[] = row.items.map((it) => h('button', {
-        class: `menu-btn${it.selected ? ' on' : ''}${row.id === 'resume' ? ' menu-resume' : ''}${it.disabled ? ' dim' : ''}`, type: 'button',
-        'data-focus': true, 'data-key': `${row.id}:${it.id}`, 'aria-label': it.aria, 'aria-disabled': it.disabled ? 'true' : undefined,
-        'aria-pressed': row.id === 'speed' || row.id === 'quality' || row.id === 'limit' || row.id === 'captions' || it.id === 'mute' || it.id === 'add' ? String(!!it.selected) : undefined,
-        onclick: () => act(row.id, it.id),
-      }, it.label, it.hint ? h('span', { class: 'menu-hint' }, ` · ${it.hint}`) : null));
-      if (row.level !== undefined) {
-        const pips = h('span', { class: `menu-level${row.off ? ' off' : ''}`, role: 'img', 'aria-label': row.off ? 'Sound off' : `Volume ${row.level} of 10` },
-          ...Array.from({ length: 10 }, (_, i) => h('i', { class: i < row.level! ? 'lit' : '', style: `height: ${20 + i * 4}px` })));
-        buttons.splice(1, 0, pips);
-      }
-      return h('div', { class: `menu-row menu-row-${row.id}` },
-        h('div', { class: 'menu-title' }, row.title ?? ''),
-        h('div', { class: 'menu-items' }, ...buttons),
-        row.note ? h('div', { class: 'menu-note' }, row.note) : null);
-    }));
+    main.replaceChildren(h('h2', { class: 'menu-heading' }, 'Valley menu'), ...current.map(rowEl));
+    const docWas = documentary.querySelector<HTMLElement>('.focused')?.dataset.key;
+    documentary.replaceChildren(h('h2', { class: 'menu-heading' }, 'Documentary'), ...docModel(s).map(rowEl),
+      h('button', { class: 'menu-btn menu-back', type: 'button', 'data-focus': true, 'data-key': 'back', onclick: () => showPage(null) }, 'Back'));
+    const docKeep = docWas && documentary.querySelector<HTMLElement>(`[data-key="${docWas}"]`);
+    if (docKeep) ring.focus(docKeep);
     const keep = was && main.querySelector<HTMLElement>(`[data-key="${was}"]`);
     if (keep) ring.focus(keep);
   };
-  /** Show a page (Controls, Creatures or Valley) in place of the menu, or go back to the menu with the focus on the button that opened it. */
+  /** Show a page (Controls, Creatures, Valley or Documentary) in place of the menu, or go back to the menu with the focus on the button that opened it. */
   const showPage = (next: keyof typeof pages | null) => {
     const was = page;
     page = next;
     controls.hidden = next !== 'controls';
     creatures.hidden = next !== 'creatures';
     valley.hidden = next !== 'valley';
+    documentary.hidden = next !== 'documentary';
     if (next === 'valley') confirmAgain(false); // always opens on its buttons, never on the question
     main.hidden = next !== null;
     if (next === 'creatures') on.creatures?.(creatures, { back: () => showPage(null), focus: (el) => ring.focus(el) });
     if (next === 'valley') ring.focus(valley.querySelector<HTMLElement>('[data-focus]:not([hidden])'));
     else if (next) ring.reset(); // (the Creatures page moves it to its first creature once it has drawn)
-    else ring.focus(main.querySelector<HTMLElement>(`[data-key="${was === 'creatures' ? 'bring:creatures' : was === 'valley' ? 'more:valley' : 'more:controls'}"]`));
+    else ring.focus(main.querySelector<HTMLElement>(`[data-key="${was === 'creatures' ? 'bring:creatures' : was === 'valley' ? 'more:valley' : was === 'documentary' ? 'more:documentary' : 'more:controls'}"]`));
   };
 
   draw(state);

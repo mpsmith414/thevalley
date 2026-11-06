@@ -6,7 +6,7 @@ import type { GalleryItem, ValleyRecord } from '../lab/gallery';
 import { CreatureRig, type DrivenPose } from '../motion/rig';
 import type { Recipe } from '../recipe/schema';
 import { castUnder, createContactShadows, footprint } from '../render/contact';
-import { createCreatureObject, type CreatureLook, type CreatureObject } from '../render/creature';
+import { createCreatureObject, uncull, type CreatureLook, type CreatureObject } from '../render/creature';
 import { QUALITY, type Tier } from '../render/quality';
 import { plural } from '../sim/moments';
 import { URGENT_FEAR } from '../sim/needs';
@@ -62,6 +62,10 @@ const DEPARTED = 8;
 const SCENT_ALOFT = 1;
 
 export type Band = 'full' | 'quarter' | 'paused';
+/** How much a band gives: the better of two eyes' bands is the one an animal is shown at. */
+const RANK: Record<Band, number> = { paused: 0, quarter: 1, full: 2 };
+/** The band an animal `d` m off is in for an eye that sees it (`seen`) or not. */
+const bandAt = (seen: boolean, d: number): Band => (seen && d < FULL_RANGE ? 'full' : seen && d < QUARTER_RANGE ? 'quarter' : 'paused');
 
 /** A released creature with its saved home: its family lives in the valley. */
 export type Family = GalleryItem & { valley: ValleyRecord & { home: HomeRange } };
@@ -97,7 +101,10 @@ export class Glance {
 
 /** One resident: the body and rig showing one animal of the simulation (`id`), and where it lives. */
 export type Resident = { id: string; species: string; home: HomeRange; recipe: Recipe; obj: CreatureObject; rig: CreatureRig;
+  /** The band it is shown at: the better of the main camera's and the second eye's (drawn, animated, detail and fur). */
   band: Band;
+  /** The main camera's band alone: what the simulation is told it sees (the second eye never counts as seen). */
+  mainBand: Band;
   /** Which of every 4 frames it updates on in the quarter band. */
   slot: number;
   glance: Glance;
@@ -126,6 +133,8 @@ function between(a: DrivenPose, b: DrivenPose, t: number, out: DrivenPose): Driv
 const newPose = (): DrivenPose => ({ x: 0, z: 0, yaw: 0, speed: 0, turnRate: 0, altitude: 0, flying: false });
 
 const frustum = new Frustum(), viewProj = new Matrix4(), sphere = new Sphere(), eye = new Vector3();
+/** The second eye's view of the last update (see `setSecondEye`). */
+const frustum2 = new Frustum(), eye2 = new Vector3();
 /** Where the last banded animal's body stands (on the ground, the water, or in the air at its height). */
 const standing = new Vector3();
 const shown = newPose(), from = newPose(), sub = newPose();
@@ -176,12 +185,17 @@ export class Residents {
   private colours = new Map<string, string>();
   /** Every animal's recent trail, recorded as the simulation steps: only for the eye (the Smell sense's scent trails). */
   private trails = new TrailStore();
-  /** The camera as the simulation sees it: where it is, which animals it sees (by the last bands) and whether it sees a point. */
+  /**
+   * The camera as the simulation sees it: where it is, which animals it sees (by the main camera's last bands) and whether
+   * it sees a point. Only the main camera: the second eye never changes where newcomers come and when leavers go.
+   */
   private view = {
     eye: { x: 0, z: 0 },
-    seen: (id: string) => (this.byId.get(id)?.band ?? 'paused') !== 'paused',
+    seen: (id: string) => (this.byId.get(id)?.mainBand ?? 'paused') !== 'paused',
     seenAt: (p: Pt) => this.sees(p),
   };
+  /** A second camera somewhere else (the invitation's peek, the documentary's pre-warm), or none. */
+  private second: Camera | null = null;
 
   constructor(
     private valley: Valley,
@@ -267,11 +281,14 @@ export class Residents {
       stage.add(m.obj.root);
       m.obj.root.traverse((o) => (o.visible = true));
     }
+    const recull = uncull(stage); // the stage stands at the origin, wherever the compile's camera looks
     try {
       await opts.compile(stage);
     } catch (e) {
       this.discard(made);
       throw e;
+    } finally {
+      recull();
     }
     for (const m of made) {
       m.obj.root.removeFromParent();
@@ -359,7 +376,7 @@ export class Residents {
     this.wearers.get(obj.look)!.n++;
     const a: Resident = {
       id: g.id, species: g.species, home: kind.homes[g.home] ?? kind.homes[0], recipe: kind.recipe, obj, rig,
-      band: 'paused', slot: this.animals.length % 4, glance: new Glance(mulberry32(g.seed)),
+      band: 'paused', mainBand: 'paused', slot: this.animals.length % 4, glance: new Glance(mulberry32(g.seed)),
       shade: this.spare.pop() ?? -1, foot: footprint(kind.body.skeleton), shaded: false,
     };
     obj.root.visible = false;
@@ -418,6 +435,14 @@ export class Residents {
   }
 
   /**
+   * A second camera (`null`: none) the animals are also shown to from the next update: each is drawn and animated at the
+   * better band of the two eyes, with the nearer eye's detail and fur. The simulation is not told of it.
+   */
+  setSecondEye(camera: Camera | null): void {
+    this.second = camera;
+  }
+
+  /**
    * `dtAnimal` animal seconds on (at most 2 go to the simulation) and `dtReal` real ones (the glances), the valley clock
    * at `hours`, seen from `camera`: the simulation steps, animals come and go with it, and each animal in view shows its
    * motion, smoothed between the simulation's ticks, and its pose. With no animal time (paused) no rig moves.
@@ -431,6 +456,12 @@ export class Residents {
     camera.getWorldPosition(eye);
     this.view.eye.x = eye.x;
     this.view.eye.z = eye.z;
+    const second = this.second;
+    if (second) {
+      second.updateMatrixWorld();
+      frustum2.setFromProjectionMatrix(viewProj.multiplyMatrices(second.projectionMatrix, second.matrixWorldInverse));
+      second.getWorldPosition(eye2);
+    }
     this.sim.setView(this.view);
     const dt = Math.min(Math.max(0, dtAnimal), MAX_STEP);
     this.sim.step(dt, hours);
@@ -522,16 +553,22 @@ export class Residents {
     }
   }
 
-  /** Sets `a.band` for an animal showing motion `p` (and `standing`, where its body stands), and returns how far it is from the camera (m). */
+  /**
+   * Sets `a.mainBand` and `a.band` for an animal showing motion `p` (and `standing`, where its body stands), and returns how
+   * far it is from the nearer eye that sees it (m; the main camera when neither does).
+   */
   private band(a: Resident, p: DrivenPose): number {
     const v = this.valley, size = a.recipe.life.sizeM;
     const afloat = !p.flying && (a.rig.swimmer || a.rig.floater) && v.isWater(p.x, p.z);
     standing.set(p.x, afloat ? v.waterLevelAt(p.x, p.z) : v.heightAt(p.x, p.z) + p.altitude, p.z);
     sphere.center.set(p.x, standing.y + size * 0.3, p.z);
     sphere.radius = size;
-    const d = sphere.center.distanceTo(eye), seen = frustum.intersectsSphere(sphere);
-    a.band = seen && d < FULL_RANGE ? 'full' : seen && d < QUARTER_RANGE ? 'quarter' : 'paused';
-    return d;
+    const d = sphere.center.distanceTo(eye);
+    a.band = a.mainBand = bandAt(frustum.intersectsSphere(sphere), d);
+    if (!this.second) return d;
+    const d2 = sphere.center.distanceTo(eye2), band2 = bandAt(frustum2.intersectsSphere(sphere), d2);
+    if (RANK[band2] > RANK[a.band]) a.band = band2;
+    return band2 === 'paused' || (a.mainBand !== 'paused' && d <= d2) ? d : d2;
   }
 
   /** Whether the camera of the last update sees point `p` (within the bands' reach): where a newcomer must not appear. */
@@ -576,20 +613,24 @@ export class Residents {
 
   /**
    * Start `fn` (a compile that gathers what it compiles before it returns, as `compileTogether` does) with one animal of
-   * each species drawable at every level of detail with its fur, and the rest hidden: a species shares its materials, so
-   * that covers them all and nothing compiles mid-flight later. The animals are back as they were when this returns.
+   * each species drawable at every level of detail with its fur, wherever the camera looks, and the rest hidden: a species
+   * shares its materials, so that covers them all and nothing compiles mid-flight later. The animals are back as they were
+   * when this returns.
    */
   compile<T>(fn: () => T): T {
     const firsts = new Set(this.animals.filter((a, i) => this.animals.findIndex((b) => b.species === a.species) === i)); // natives and released
+    const recull: (() => void)[] = [];
     for (const a of this.animals) {
       a.obj.root.visible = firsts.has(a);
       if (!firsts.has(a)) continue;
       this.stow(a, false);
       a.obj.root.traverse((o) => (o.visible = true));
+      recull.push(uncull(a.obj.root)); // wherever it stands, the compile's camera sees it
     }
     try {
       return fn();
     } finally {
+      recull.forEach((f) => f());
       for (const a of this.animals) {
         const g = this.sim.get(a.id);
         a.obj.root.visible = a.band !== 'paused' && !(g && this.hidden(g));
@@ -646,6 +687,11 @@ export class Residents {
     };
     this.watched.set(id, v);
     return v;
+  }
+
+  /** How the valley names a species (a native's kid card, "Deer"; a released creature's own name), and whether it is a native. */
+  speciesName(species: string): { name: string; native: boolean } {
+    return { name: this.names.get(species) ?? NO_NAME, native: this.natives.has(species) };
   }
 
   /** Resident `a`'s body as the views see it (see `AnimalPose`), where it is drawn now, its heading in the camera's convention. */

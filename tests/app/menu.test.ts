@@ -1,18 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import { SPEEDS, TIMES, menuModel, speedId, type MenuState } from '../../src/app/menu';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CONTROLS, SPEEDS, TIMES, docChoice, docModel, menuModel, speedId, type MenuState } from '../../src/app/menu';
+import { DOC_DEFAULTS, watchFromMenu } from '../../src/director/wire';
+import { readDocSettings, saveDocSettings } from '../../src/director/settings';
 import { PRESETS } from '../../src/world/clock';
 
 const state = (over: Partial<MenuState> = {}): MenuState => ({
-  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, bring: false, dailyLimit: 10, today: 3, captions: true, ...over,
+  speed: 1 / 60, paused: false, quality: 'auto', tier: 'high', volume: 0.8, muted: false, bring: false, dailyLimit: 10, today: 3, doc: { ...DOC_DEFAULTS }, voice: 'yes', ...over,
 });
 const row = (s: MenuState, id: string) => menuModel(s).find((r) => r.id === id)!;
 const selected = (s: MenuState, id: string) => row(s, id).items.filter((i) => i.selected).map((i) => i.id);
 
 describe('menuModel', () => {
   it('lists the rows in the spec order', () => {
-    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'time', 'speed', 'quality', 'volume', 'captions', 'bring', 'limit', 'more']);
-    expect(row(state(), 'more').items.map((i) => i.id)).toEqual(['lab', 'controls', 'valley']);
-    expect(row(state(), 'more').items.map((i) => i.label)).toEqual(['Creature Lab', 'Controls', 'Valley']);
+    expect(menuModel(state()).map((r) => r.id)).toEqual(['resume', 'watch', 'time', 'speed', 'quality', 'volume', 'bring', 'limit', 'more']);
+    expect(row(state(), 'more').items.map((i) => i.id)).toEqual(['lab', 'controls', 'valley', 'documentary']);
+    expect(row(state(), 'more').items.map((i) => i.label)).toEqual(['Creature Lab', 'Controls', 'Valley', 'Documentary']);
+    expect(row(state(), 'watch').items.map((i) => i.label)).toEqual(['Watch the documentary']);
+    expect(menuModel(state()).some((r) => r.title === 'Moment captions')).toBe(false); // moved to the Documentary page
   });
 
   it('jumps to dawn, noon, golden hour and night', () => {
@@ -69,14 +73,6 @@ describe('menuModel', () => {
     expect(selected(state({ bring: true }), 'bring')).toEqual(['add']);
   });
 
-  it('has Moment captions On or Off, On by default', () => {
-    const c = row(state(), 'captions');
-    expect(c.title).toBe('Moment captions');
-    expect(c.items.map((i) => [i.id, i.label])).toEqual([['on', 'On'], ['off', 'Off']]);
-    expect(selected(state(), 'captions')).toEqual(['on']);
-    expect(selected(state({ captions: false }), 'captions')).toEqual(['off']);
-  });
-
   it('offers the daily limit 5, 10, 20 or 50 with the one in use marked and the count so far', () => {
     const l = row(state({ dailyLimit: 20, today: 7 }), 'limit');
     expect(l.title).toBe('Creatures a day');
@@ -85,4 +81,93 @@ describe('menuModel', () => {
     expect(l.note).toBe('7 made today');
     expect(row(state({ dailyLimit: 5, today: 0 }), 'limit').note).toBe('0 made today');
   });
+});
+
+const docRow = (s: MenuState, id: string) => docModel(s).find((r) => r.id === id)!;
+const docSelected = (s: MenuState, id: string) => docRow(s, id).items.filter((i) => i.selected).map((i) => i.id);
+
+describe('the Documentary page', () => {
+  it('has four rows, with the defaults marked', () => {
+    expect(docModel(state()).map((r) => r.id)).toEqual(['idle', 'narrator', 'timelapses', 'invitations']);
+    expect(docRow(state(), 'idle').items.map((i) => i.label)).toEqual(['After 3 minutes', 'After 10 minutes', 'Off']);
+    expect(docRow(state(), 'narrator').items.map((i) => i.label)).toEqual(['Voice and words', 'Words only', 'Off']);
+    expect(docRow(state(), 'invitations').title).toBe('Moment invitations');
+    expect(docSelected(state(), 'idle')).toEqual(['3']);
+    expect(docSelected(state(), 'narrator')).toEqual(['voice']);
+    expect(docSelected(state(), 'timelapses')).toEqual(['on']);
+    expect(docSelected(state(), 'invitations')).toEqual(['on']);
+  });
+
+  it('marks what is chosen', () => {
+    const doc = { idle: 'off', narrator: 'words', timelapses: false, invitations: false } as const;
+    const s = state({ doc });
+    expect([docSelected(s, 'idle'), docSelected(s, 'narrator'), docSelected(s, 'timelapses'), docSelected(s, 'invitations')]).toEqual([['off'], ['words'], ['off'], ['off']]);
+  });
+
+  it('says the voice is not available only when the voice client says no', () => {
+    const hint = (voice: MenuState['voice']) => docRow(state({ voice }), 'narrator').items[0].hint;
+    expect(hint('no')).toBe('not available');
+    expect(hint('yes')).toBeUndefined();
+    expect(hint('unknown')).toBeUndefined();
+    expect(docRow(state({ voice: 'no' }), 'narrator').items[0].disabled).toBeFalsy(); // still selectable
+  });
+
+  it('turns each button into the setting it chooses', () => {
+    expect(docChoice('idle', '10')).toEqual({ idle: '10' });
+    expect(docChoice('idle', 'off')).toEqual({ idle: 'off' });
+    expect(docChoice('narrator', 'words')).toEqual({ narrator: 'words' });
+    expect(docChoice('timelapses', 'off')).toEqual({ timelapses: false });
+    expect(docChoice('invitations', 'on')).toEqual({ invitations: true });
+  });
+
+  it('adds the documentary to the controls table', () => {
+    const rows = Object.fromEntries(CONTROLS.map(([what, pad, keys]) => [what, [pad, keys]]));
+    expect(rows['Watch the documentary (free flight)']).toEqual(['LB', 'P']);
+    expect(rows['In the documentary: follow this animal']).toEqual(['A', 'Enter / Space']);
+    expect(rows['In the documentary: menu']).toEqual(['Start', 'Esc or N']);
+  });
+});
+
+describe('the remembered documentary settings', () => {
+  const store = (init: Record<string, string> = {}) => {
+    const m = new Map(Object.entries(init));
+    vi.stubGlobal('localStorage', { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) });
+    return m;
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reads the defaults when nothing is stored', () => {
+    store();
+    expect(readDocSettings()).toEqual(DOC_DEFAULTS);
+  });
+
+  it('keeps each choice under its own key, the invitations on the old captions key', () => {
+    const m = store();
+    saveDocSettings({ idle: '10', narrator: 'words', timelapses: false, invitations: false });
+    expect([...m]).toEqual([['valley.docIdle', '"10"'], ['valley.narrator', '"words"'], ['valley.timelapses', '"off"'], ['valley.captions', '"off"']]);
+    expect(readDocSettings()).toEqual({ idle: '10', narrator: 'words', timelapses: false, invitations: false });
+  });
+
+  it('reads an old stored captions Off as invitations Off', () => {
+    store({ 'valley.captions': '"off"' });
+    expect(readDocSettings()).toEqual({ ...DOC_DEFAULTS, invitations: false });
+  });
+
+  it('reads junk as the defaults', () => {
+    store({ 'valley.docIdle': '"7"', 'valley.narrator': '5', 'valley.timelapses': '"maybe"', 'valley.captions': 'not json' });
+    expect(readDocSettings()).toEqual(DOC_DEFAULTS);
+  });
+});
+
+describe('Watch the documentary from the menu', () => {
+  const run = (mode: string, arrival = false, on = false) => {
+    const log: string[] = [];
+    const ok = watchFromMenu({ arrival, on, mode, letGo: () => log.push('letGo'), start: () => log.push('start') });
+    return { ok, log };
+  };
+  it('starts from free flight as it is', () => expect(run('free')).toEqual({ ok: true, log: ['start'] }));
+  it.each(['locked', 'reins', 'map', 'gliding'])('lets go from %s first, then starts', (mode) => expect(run(mode)).toEqual({ ok: true, log: ['letGo', 'start'] }));
+  it('is refused during an arrival', () => expect(run('free', true)).toEqual({ ok: false, log: [] }));
+  it.each(['directed', 'locked'])('does nothing while the documentary already runs (%s): its shot goes on', (mode) =>
+    expect(run(mode, false, true)).toEqual({ ok: true, log: [] }));
 });
